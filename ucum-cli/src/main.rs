@@ -146,12 +146,16 @@ fn canonical_value(value: f64, res: &EvalResult) -> f64 {
 fn handle_convert(value: f64, from: String, to: String) -> anyhow::Result<()> {
     let from_str = from.as_str();
     let to_str = to.as_str();
-    
+
     let from_res = parse_and_eval(&from)?;
     let to_res = parse_and_eval(&to)?;
 
     if from_res.dim != to_res.dim {
-        anyhow::bail!("Incompatible dimensions between '{}' and '{}'", from_str, to_str);
+        anyhow::bail!(
+            "Incompatible dimensions between '{}' and '{}'",
+            from_str,
+            to_str
+        );
     }
 
     let canonical = canonical_value(value, &from_res);
@@ -208,48 +212,44 @@ fn handle_explain(code: &str) -> anyhow::Result<()> {
 }
 
 fn handle_list_units(filter: Option<&str>) -> anyhow::Result<()> {
-
-    
     println!("Supported UCUM Units:");
     println!("====================\n");
-    
+
     // Get all known unit codes from the test cases
     let test_units = [
         // Base units
-        "m", "kg", "s", "A", "K", "mol", "cd",
-        // Common derived units
+        "m", "kg", "s", "A", "K", "mol", "cd", // Common derived units
         "g", "N", "J", "W", "Pa", "Hz", "V", "Ω", "C", "F", "S", "Wb", "T", "H",
         // Common non-SI units
         "L", "h", "min", "d", "a_t", "a_j", "deg", "rad", "sr", "gon",
         // Temperature units
-        "Cel", "degF", "degR", "degRe",
-        // Other common units
-        "%", "ppm", "ppb", "ppt", "ppq", "bit", "byte", "B", "bit_s", "Bd", "Bq",
-        "Ci", "Gy", "kat", "lm", "lx", "Sv", "W", "Wb", "st", "min", "h", "d", "a_j",
-        "a_t", "a_g", "a", "wk", "mo_j", "mo_s", "mo_g", "mo_t", "t", "ar", "l", "L",
-        "ar", "bar", "u", "Da", "eV", "pc", "AU", "ua", "bit_s", "Bd", "Bq", "Ci",
-        "R", "RAD", "REM", "G", "m[H2O]", "m[Hg]", "[in_i]", "[ft_i]", "[yd_i]",
-        "[mi_i]", "[nmi_i]", "[acr_us]", "[acr_br]", "[acr_br]"
+        "Cel", "degF", "degR", "degRe", // Other common units
+        "%", "ppm", "ppb", "ppt", "ppq", "bit", "byte", "B", "bit_s", "Bd", "Bq", "Ci", "Gy",
+        "kat", "lm", "lx", "Sv", "W", "Wb", "st", "min", "h", "d", "a_j", "a_t", "a_g", "a", "wk",
+        "mo_j", "mo_s", "mo_g", "mo_t", "t", "ar", "l", "L", "ar", "bar", "u", "Da", "eV", "pc",
+        "AU", "ua", "bit_s", "Bd", "Bq", "Ci", "R", "RAD", "REM", "G", "m[H2O]", "m[Hg]", "[in_i]",
+        "[ft_i]", "[yd_i]", "[mi_i]", "[nmi_i]", "[acr_us]", "[acr_br]", "[acr_br]",
     ];
-    
+
     println!("Units (partial list, filtering available):");
     println!("----------------------------------------");
-    
+
     for code in test_units.iter() {
         if let Some(filter_str) = filter {
             if !code.to_lowercase().contains(&filter_str.to_lowercase()) {
                 continue;
             }
         }
-        
+
         if let Some(unit) = find_unit(code) {
             let special = if unit.offset != 0.0 {
                 format!(" (offset: {})", unit.offset)
             } else {
                 String::new()
             };
-            
-            println!("{:<10} = {}{}", 
+
+            println!(
+                "{:<10} = {}{}",
                 code,
                 if unit.factor != 1.0 {
                     format!("{} ", unit.factor)
@@ -262,10 +262,10 @@ fn handle_list_units(filter: Option<&str>) -> anyhow::Result<()> {
             println!("{:<10} = <not found in registry>", code);
         }
     }
-    
+
     println!("\nNote: This is a partial list. Use the filter option to search for specific units.");
     println!("Example: octofhir-ucum list-units --filter temp");
-    
+
     Ok(())
 }
 
