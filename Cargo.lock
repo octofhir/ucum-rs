@@ -721,6 +721,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "octofhir-ucum-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap_complete",
+ "octofhir-ucum-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "octofhir-ucum-core"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "lazy_static",
+ "nom",
+ "quick-xml",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde-xml-rs",
+ "serde_derive",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1303,38 +1335,6 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
-
-[[package]]
-name = "ucum-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "clap_complete",
- "serde",
- "serde_json",
- "thiserror",
- "ucum-core",
-]
-
-[[package]]
-name = "ucum-core"
-version = "0.1.0"
-dependencies = [
- "indexmap",
- "lazy_static",
- "nom",
- "quick-xml",
- "regex",
- "reqwest",
- "serde",
- "serde-xml-rs",
- "serde_derive",
- "serde_json",
- "thiserror",
- "tokio",
- "url",
-]
 
 [[package]]
 name = "unicode-ident"

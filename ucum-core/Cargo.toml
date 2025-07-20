@@ -1,8 +1,12 @@
 [package]
-name = "ucum-core"
+name = "octofhir-ucum-core"
 version = "0.1.0"
 edition = "2024"
 description = "UCUM (Unified Code for Units of Measure) core library for FHIRPath quantity operations"
+license = "MIT"
+documentation = "https://docs.rs/octofhir-ucum-core"
+homepage = "https://github.com/octofhir/ucum-rs"
+repository = "https://github.com/octofhir/ucum-rs"
 
 [features]
 default = ["std"]

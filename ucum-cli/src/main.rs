@@ -1,7 +1,7 @@
 use clap::CommandFactory;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io;
-use ucum_core::{EvalResult, evaluate, find_unit, parse_expression};
+use octofhir_ucum_core::{EvalResult, evaluate, find_unit, parse_expression};
 
 /// Command‐line interface for UCUM utilities.
 #[derive(Parser, Debug)]
@@ -198,7 +198,7 @@ fn handle_arithmetic(left: String, op: ArithOp, right: String, value: f64) -> an
 }
 
 fn handle_explain(code: &str) -> anyhow::Result<()> {
-    use ucum_core::find_unit;
+    use octofhir_ucum_core::find_unit;
     if let Some(unit) = find_unit(code) {
         println!("Unit code:      {}", unit.code);
         println!("Dimension:      {}", unit.dim);

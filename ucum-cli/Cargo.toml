@@ -1,11 +1,15 @@
 [package]
-name = "ucum-cli"
+name = "octofhir-ucum-cli"
 version.workspace = true
 edition.workspace = true
 description = "UCUM (Unified Code for Units of Measure) command-line interface"
+license = "MIT"
+documentation = "https://github.com/octofhir/ucum-rs"
+homepage = "https://github.com/octofhir/ucum-rs"
+repository = "https://github.com/octofhir/ucum-rs"
 
 [dependencies]
-ucum-core = { path = "../ucum-core" }
+octofhir-ucum-core = { path = "../ucum-core" }
 clap = { workspace = true }
 clap_complete = "4"
 serde = { workspace = true }
