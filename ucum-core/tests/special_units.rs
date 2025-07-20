@@ -1,4 +1,4 @@
-use ucum_core::{EvalResult, UnitExpr, UnitFactor, evaluate};
+use octofhir_ucum_core::{EvalResult, UnitExpr, UnitFactor, evaluate};
 
 fn eval_ratio(expr: UnitExpr) -> f64 {
     evaluate(&expr).unwrap().factor

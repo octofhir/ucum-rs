@@ -1,6 +1,6 @@
 [package]
 name = "octofhir-ucum-core"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "UCUM (Unified Code for Units of Measure) core library for FHIRPath quantity operations"
 license = "MIT"

@@ -1,6 +1,6 @@
-use ucum_core::{evaluate, parse_expression};
+use octofhir_ucum_core::{evaluate, parse_expression, Dimension, EvalResult};
 
-fn eval(expr: &str) -> ucum_core::EvalResult {
+fn eval(expr: &str) -> EvalResult {
     let ast = parse_expression(expr).expect("parse ok");
     evaluate(&ast).expect("eval ok")
 }
@@ -17,7 +17,7 @@ fn prefix_unit_factor() {
 #[test]
 fn square_bracket_unit_dimensionless() {
     let iu = eval("[IU]");
-    assert_eq!(iu.dim, ucum_core::Dimension([0; 7]));
+    assert_eq!(iu.dim, Dimension([0; 7]));
     assert!((iu.factor - 1.0).abs() < 1e-12);
 }
 

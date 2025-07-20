@@ -1,4 +1,4 @@
-use ucum_core::{UnitExpr, parse_expression};
+use octofhir_ucum_core::{UnitExpr, parse_expression};
 
 fn sym(s: &str) -> UnitExpr {
     UnitExpr::Symbol(s.to_string())

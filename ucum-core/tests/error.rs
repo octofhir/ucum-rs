@@ -1,4 +1,4 @@
-use ucum_core::{UcumError, parse_expression};
+use octofhir_ucum_core::{UcumError, parse_expression};
 
 #[test]
 fn multiple_slash_error() {

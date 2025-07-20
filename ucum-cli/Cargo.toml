@@ -9,7 +9,7 @@ homepage = "https://github.com/octofhir/ucum-rs"
 repository = "https://github.com/octofhir/ucum-rs"
 
 [dependencies]
-octofhir-ucum-core = { path = "../ucum-core" }
+octofhir-ucum-core = { path = "../ucum-core" } # Uncomment for local development
 clap = { workspace = true }
 clap_complete = "4"
 serde = { workspace = true }

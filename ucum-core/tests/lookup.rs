@@ -1,4 +1,4 @@
-use ucum_core::{Dimension, find_prefix, find_unit};
+use octofhir_ucum_core::{Dimension, find_prefix, find_unit};
 
 #[test]
 fn prefix_lookup() {

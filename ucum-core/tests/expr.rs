@@ -1,4 +1,4 @@
-use ucum_core::{UnitExpr, UnitFactor, parse_expression};
+use octofhir_ucum_core::{UnitExpr, UnitFactor, parse_expression};
 
 fn sym<S: Into<String>>(s: S) -> UnitExpr {
     UnitExpr::Symbol(s.into())

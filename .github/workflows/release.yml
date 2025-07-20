@@ -22,6 +22,8 @@ jobs:
             sleep 10
             cargo search ucum-core | grep ucum-core && break
           done
+      - name: Set ucum-cli dependency to publish mode
+        run: ./toggle-ucum-core-dep.sh publish
       - name: Publish ucum-cli
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
