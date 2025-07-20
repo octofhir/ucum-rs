@@ -1,134 +1,83 @@
-# UCUM Rust Library
+# UCUM-RS
 
-A Rust implementation of UCUM (Unified Code for Units of Measure) for FHIRPath quantity operations, implementing the official UCUM.g4 grammar specification.
+Unified Code for Units of Measure (UCUM) implementation in Rust 2024 edition.
+
+## Quick Start
+
+```sh
+# Add to your project
+cargo add ucum-core
+
+# Or use the CLI
+cargo install --path ucum-cli
+
+# Example: Convert 100 kPa to mm[Hg]
+octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
+```
+
+## Features
+
+| Feature                | Status   | Notes                                  |
+|------------------------|----------|----------------------------------------|
+| SI base/derived units  | ✅       | Full support                           |
+| Customary units        | ✅       | Imperial, US customary, etc.           |
+| Specialized units      | ✅       | Medical, laboratory, information units |
+| Prefix handling        | ✅       | e.g., kPa, mL, µg                      |
+| Expression parsing     | ✅       | Grammar-based, robust error messages   |
+| Unit conversion        | ✅       | Handles factors, offsets, temperature  |
+| CLI tool               | ✅       | `ucum-cli` binary                      |
+| FHIR integration demo  | 🚧       | Planned                                |
+| WASM support           | 🚧       | Feature-gated, planned                 |
+| Property-based tests   | ✅       | `proptest`                             |
+| Fuzzing                | 🚧       | Planned                                |
+
+## Contribution Guide
+
+1. **Clone the repo:**
+
+   ```sh
+   git clone https://github.com/YOUR_ORG/ucum-rs.git
+   cd ucum-rs
+   ```
+
+2. **Build:**
+
+   ```sh
+   cargo build --all
+   ```
+
+3. **Test:**
+
+   ```sh
+   cargo test --all
+   ```
+
+4. **Run CLI:**
+
+   ```sh
+   cargo run --package ucum-cli -- convert --value 1 --from m --to cm
+   ```
+
+5. **Docs:**
+
+   ```sh
+   cargo doc --open
+   ```
+
+6. **Formatting & Linting:**
+
+   ```sh
+   cargo fmt --all
+   cargo clippy --all -- -D warnings
+   ```
 
 ## Project Structure
 
-This is a Rust workspace with two packages:
-
-- **`ucum-core`**: The core UCUM library providing parsing, validation, and unit operations
-- **`ucum-cli`**: A command-line interface for UCUM operations
-
-## Features
-
-### UCUM Core Library
-
-- **Grammar Compliance**: Full implementation of the UCUM.g4 grammar specification
-- **Term Structure**: Supports division (`/`), concatenation (`.`), and components
-- **Components**: Handles parenthesized expressions, annotations, and simple units
-- **Annotations**: Supports semantic annotations in curly braces `{}`
-- **Square Brackets**: Handles special symbols in square brackets `[]`
-- **Exponents**: Supports positive and negative exponents
-- **Terminal Symbols**: Validates all allowed characters per grammar
-
-### UCUM CLI
-
-- **Validate**: Validate UCUM expressions
-- **AST**: Get Abstract Syntax Tree for UCUM expressions
-- **List**: List available units with optional filtering
-- **Convert**: Convert between units (planned)
-
-## Usage
-
-### Using the Core Library
-
-```rust
-use ucum_core::{UcumParser, UcumRegistry};
-
-// Create a parser
-let parser = UcumParser::new();
-
-// Parse UCUM expressions
-match parser.parse("mg") {
-    Ok(result) => println!("Parsed: {:?}", result),
-    Err(e) => eprintln!("Error: {}", e),
-}
-
-// Work with registry
-let registry = UcumRegistry::new().unwrap_or_default();
-println!("Registry contains {} units", registry.len());
-```
-
-### Using the CLI
-
-```bash
-# Validate a UCUM expression
-cargo run --bin octofhir-ucum -- validate "mg"
-
-# Get AST for a UCUM expression (debug format)
-cargo run --bin octofhir-ucum -- ast "kg/m2"
-
-# Get AST for a UCUM expression (JSON format)
-cargo run --bin octofhir-ucum -- ast "kg/m2" --format json
-
-# List available units
-cargo run --bin octofhir-ucum -- list
-
-# Get help
-cargo run --bin octofhir-ucum -- --help
-```
-
-### Validate Command Exit Codes
-
-The `validate` command returns appropriate exit codes for use in scripts:
-
-- **Exit code 0**: Expression is valid
-- **Exit code 1**: Expression is invalid (with error details)
-
-### AST Command Formats
-
-The `ast` command supports two output formats:
-
-- **debug** (default): Human-readable debug format showing the parsed structure
-- **json**: JSON format for programmatic processing
-
-The AST shows the complete parsed structure including:
-
-- **Component**: Basic unit components
-- **Division**: Division operations (`/`)
-- **Concatenation**: Concatenation operations (`.`)
-- **Annotatable**: Units with optional exponents
-- **SimpleUnitSymbols**: Basic unit symbols
-
-## Examples
-
-Run the included examples:
-
-```bash
-# Basic usage example
-cargo run --example basic_usage --package ucum-core
-
-# FHIRPath integration example
-cargo run --example fhirpath_integration --package ucum-core
-```
-
-## Building
-
-```bash
-# Build all packages
-cargo build
-
-# Build specific package
-cargo build -p ucum-core
-cargo build -p ucum-cli
-
-# Run tests
-cargo test
-```
-
-## Features
-
-The `ucum-core` package supports the following features:
-
-- `default`: Includes `builtin-data`
-- `builtin-data`: Includes built-in UCUM data
-- `network`: Enables network features (reqwest, tokio)
-- `full`: Includes all features
+- `ucum-core/` – Core library (parsing, evaluation, registry)
+- `ucum-cli/`  – Command-line interface
+- `spec/`      – UCUM specification assets
+- `docs/`      – Book-style documentation (mdBook)
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Authors
-
-OctoFHIR Team <funyloony@gmail.com>
+MIT OR Apache-2.0

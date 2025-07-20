@@ -1,16 +1,18 @@
 [package]
 name = "ucum-cli"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 description = "UCUM (Unified Code for Units of Measure) command-line interface"
 
 [dependencies]
 ucum-core = { path = "../ucum-core" }
 clap = { workspace = true }
+clap_complete = "4"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+anyhow = "1.0"
 
 [[bin]]
 name = "octofhir-ucum"
-path = "src/main.rs" 
+path = "src/main.rs"
