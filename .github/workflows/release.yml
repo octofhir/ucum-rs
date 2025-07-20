@@ -12,7 +12,17 @@ jobs:
         with:
           toolchain: stable
           override: true
-      - name: Publish to crates.io
+      - name: Publish ucum-core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
-        run: cargo publish --workspace --all-features --no-verify 
+        run: cargo publish -p ucum-core --all-features --no-verify
+      - name: Wait for ucum-core to be available
+        run: |
+          for i in {1..10}; do
+            sleep 10
+            cargo search ucum-core | grep ucum-core && break
+          done
+      - name: Publish ucum-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        run: cargo publish -p ucum-cli --all-features --no-verify 
