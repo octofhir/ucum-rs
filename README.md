@@ -76,7 +76,6 @@ octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
 - `ucum-core/` – Core library (parsing, evaluation, registry)
 - `ucum-cli/`  – Command-line interface
 - `spec/`      – UCUM specification assets
-- `docs/`      – Book-style documentation (mdBook)
 
 ## License
 
