@@ -1,0 +1,39 @@
+[package]
+name = "ucum-core"
+version = "0.1.0"
+edition = "2024"
+description = "UCUM (Unified Code for Units of Measure) core library for FHIRPath quantity operations"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+url = { workspace = true }
+regex = { workspace = true }
+lazy_static = { workspace = true }
+indexmap = { workspace = true }
+quick-xml = { version = "0.31", features = ["serialize"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
+criterion = "0.5"
+
+[features]
+default = ["builtin-data"]
+builtin-data = []
+network = ["reqwest", "tokio"]
+full = ["builtin-data", "network"]
+
+[lib]
+name = "ucum_core"
+path = "src/lib.rs"
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[[example]]
+name = "fhirpath_integration"
+path = "examples/fhirpath_integration.rs" 
