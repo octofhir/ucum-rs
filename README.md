@@ -6,10 +6,10 @@ Unified Code for Units of Measure (UCUM) implementation in Rust 2024 edition.
 
 ```sh
 # Add to your project
-cargo add ucum-core
+cargo add octofhir-ucum-core
 
 # Or use the CLI
-cargo install --path ucum-cli
+cargo install --path octofhir-ucum-cli
 
 # Example: Convert 100 kPa to mm[Hg]
 octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
@@ -25,7 +25,7 @@ octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
 | Prefix handling        | ✅       | e.g., kPa, mL, µg                      |
 | Expression parsing     | ✅       | Grammar-based, robust error messages   |
 | Unit conversion        | ✅       | Handles factors, offsets, temperature  |
-| CLI tool               | ✅       | `ucum-cli` binary                      |
+| CLI tool               | ✅       | `octofhir-ucum-cli` binary             |
 | FHIR integration demo  | 🚧       | Planned                                |
 | WASM support           | 🚧       | Feature-gated, planned                 |
 | Property-based tests   | ✅       | `proptest`                             |
@@ -55,7 +55,7 @@ octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
 4. **Run CLI:**
 
    ```sh
-   cargo run --package ucum-cli -- convert --value 1 --from m --to cm
+   cargo run --package octofhir-ucum-cli -- convert --value 1 --from m --to cm
    ```
 
 5. **Docs:**
@@ -73,8 +73,8 @@ octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
 
 ## Project Structure
 
-- `ucum-core/` – Core library (parsing, evaluation, registry)
-- `ucum-cli/`  – Command-line interface
+- `octofhir-ucum-core/` – Core library (parsing, evaluation, registry)
+- `octofhir-ucum-cli/`  – Command-line interface
 - `spec/`      – UCUM specification assets
 
 ## License
