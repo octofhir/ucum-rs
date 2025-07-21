@@ -2,11 +2,12 @@
 members = [
     "ucum-core",
     "ucum-cli",
+    "ucum-wasm",
 ]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 authors = ["OctoFHIR Team <funyloony@gmail.com>"]
 license = "MIT"

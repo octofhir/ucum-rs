@@ -199,14 +199,29 @@ fn handle_arithmetic(left: String, op: ArithOp, right: String, value: f64) -> an
 
 fn handle_explain(code: &str) -> anyhow::Result<()> {
     use octofhir_ucum_core::find_unit;
+
+    // First try direct unit lookup
     if let Some(unit) = find_unit(code) {
         println!("Unit code:      {}", unit.code);
         println!("Dimension:      {}", unit.dim);
         println!("Factor:         {}", unit.factor);
         println!("Offset:         {}", unit.offset);
         println!("Special kind:   {:?}", unit.special);
-    } else {
-        anyhow::bail!("Unit '{}' not found", code);
+        return Ok(());
+    }
+
+    // If direct lookup fails, try parsing as an expression (handles prefixed units like "mg")
+    match parse_and_eval(code) {
+        Ok(result) => {
+            println!("Unit expression: {}", code);
+            println!("Dimension:       {}", result.dim);
+            println!("Factor:          {}", result.factor);
+            println!("Offset:          {}", result.offset);
+            println!("Note:            This is a compound/prefixed unit");
+        }
+        Err(_) => {
+            anyhow::bail!("Unit '{}' not found", code);
+        }
     }
     Ok(())
 }

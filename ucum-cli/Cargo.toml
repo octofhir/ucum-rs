@@ -7,6 +7,8 @@ license = "MIT"
 documentation = "https://github.com/octofhir/ucum-rs"
 homepage = "https://github.com/octofhir/ucum-rs"
 repository = "https://github.com/octofhir/ucum-rs"
+keywords = ["fhir", "ucum", "units", "measurement", "healthcare"]
+categories = ["science", "data-structures", "parsing"]
 
 [dependencies]
 octofhir-ucum-core = { path = "../ucum-core" } # Uncomment for local development

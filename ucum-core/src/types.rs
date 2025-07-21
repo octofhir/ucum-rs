@@ -55,6 +55,26 @@ pub struct Quantity {
 
 /// Record used in generated registry for both base and derived units.
 /// Kind of special conversion required for a UCUM unit.
+///
+/// This enum represents the different kinds of special conversions that may be required
+/// for UCUM units. Most units use simple linear scaling (the `None` variant), but some
+/// units require more complex conversions.
+///
+/// ## Arbitrary Units
+///
+/// Arbitrary units (the `Arbitrary` variant) are a special case in UCUM. They are used
+/// for units that are not defined in terms of any other unit, such as international units
+/// (IU) or arbitrary units (arb'U). According to the UCUM specification (§24-26):
+///
+/// - Arbitrary units are enclosed in square brackets, e.g., `[IU]`, `[arb'U]`
+/// - They are dimensionless with a factor of 1.0
+/// - They are not commensurable with any other unit, including other arbitrary units
+/// - They can be combined with other units (e.g., `[IU]/mL`)
+/// - They can be prefixed (e.g., `k[IU]`)
+///
+/// In this implementation, arbitrary units are treated as dimensionless with a factor of 1.0,
+/// but they are marked with the `Arbitrary` variant to ensure they are not commensurable
+/// with other units.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SpecialKind {
@@ -68,6 +88,9 @@ pub enum SpecialKind {
     Ln,
     /// TAN(x)*100 scaling (prism diopter).
     TanTimes100,
+    /// Arbitrary unit (e.g., [IU], [arb'U]).
+    /// These units are not commensurable with any other unit.
+    Arbitrary,
 }
 
 impl SpecialKind {
@@ -77,8 +100,14 @@ impl SpecialKind {
         match self {
             SpecialKind::Log10 => 10.0,             // 10^(x) for B, 10^(x/10) for dB
             SpecialKind::Ln => std::f64::consts::E, // e^(x)
-            _ => 1.0,                               // For None, LinearOffset, TanTimes100
+            _ => 1.0,                               // For None, LinearOffset, TanTimes100, Arbitrary
         }
+    }
+
+    /// Returns true if this is an arbitrary unit.
+    /// Arbitrary units are not commensurable with any other unit.
+    pub fn is_arbitrary(&self) -> bool {
+        matches!(self, SpecialKind::Arbitrary)
     }
 }
 
@@ -90,4 +119,5 @@ pub struct UnitRecord {
     pub factor: f64,
     pub offset: f64,
     pub special: SpecialKind,
+    pub property: &'static str,
 }

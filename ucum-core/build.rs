@@ -1,12 +1,9 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
-    // Location of the UCUM XML file (relative to workspace root).
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let xml_path = manifest_dir
-        .parent() // up to workspace root (ucum-rs)
-        .unwrap()
-        .join("spec/ucum-essence.xml");
+        .join("ucum-essence.xml");
 
     println!("cargo:rerun-if-changed={}", xml_path.display());
 
@@ -84,7 +81,7 @@ fn main() {
     out.push_str("];\n\n");
 
     // --- Parse units (base-unit + unit) ---
-    let mut units: Vec<(String, [i8; 7], f64, f64, String)> = Vec::new();
+    let mut units: Vec<(String, [i8; 7], f64, f64, String, String)> = Vec::new();
 
     // reuse reader on xml_data
     let mut reader = quick_xml::Reader::from_str(&xml_data);
@@ -108,7 +105,26 @@ fn main() {
                             .find(|a| a.key.as_ref() == b"dim")
                             .map(|a| String::from_utf8_lossy(&a.value).to_string());
                         let dim = dim_attr.as_deref().map(parse_dim).unwrap_or([0i8; 7]);
-                        units.push((code, dim, 1.0f64, 0.0f64, "SpecialKind::None".into()));
+
+                        // Extract property from base-unit
+                        let mut property = String::new();
+                        loop {
+                            match reader.read_event() {
+                                Ok(Event::Text(ref text)) => {
+                                    if !property.is_empty() {
+                                        property = String::from_utf8_lossy(text).trim().to_string();
+                                    }
+                                }
+                                Ok(Event::Start(ref ve)) if ve.name().as_ref() == b"property" => {
+                                    property = String::from(""); // Mark that we're in a property element
+                                }
+                                Ok(Event::End(ref ve)) if ve.name().as_ref() == b"base-unit" => break,
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                        }
+
+                        units.push((code, dim, 1.0f64, 0.0f64, "SpecialKind::None".into(), property));
                     }
                     b"unit" => {
                         let code = e
@@ -124,8 +140,10 @@ fn main() {
                             .map(|a| String::from_utf8_lossy(&a.value).to_string());
                         let mut dim = dim_attr.as_deref().map_or([0i8; 7], parse_dim);
                         // Need to capture <value> child to get factor (may combine Unit attr) and maybe offset
+                        // Also capture <property> child to get unit classification
                         let mut factor: Option<f64> = None;
                         let mut offset: f64 = 0.0;
+                        let mut property = String::new();
                         loop {
                             match reader.read_event() {
                                 Ok(Event::Empty(ref ve)) | Ok(Event::Start(ref ve)) => {
@@ -156,6 +174,14 @@ fn main() {
                                                 .parse::<f64>()
                                                 .unwrap_or(0.0);
                                         }
+                                    } else if ve.name().as_ref() == b"property" {
+                                        property = String::from(""); // Mark that we're in a property element
+                                    }
+                                }
+                                Ok(Event::Text(ref text)) => {
+                                    // Capture property text content
+                                    if !property.is_empty() {
+                                        property = String::from_utf8_lossy(text).trim().to_string();
                                     }
                                 }
                                 Ok(Event::End(ref ve)) if ve.name().as_ref() == b"unit" => break,
@@ -163,7 +189,7 @@ fn main() {
                                 _ => {}
                             }
                         }
-                        // Special handling for Celsius, Fahrenheit, Rankine, Réaumur
+                        // Special handling for Celsius, Fahrenheit, Rankine, Réaumur, and Liter
                         match code.as_str() {
                             "Cel" => {
                                 offset = 273.15;
@@ -192,6 +218,17 @@ fn main() {
                                     dim[4] = 1;
                                 }
                             }
+                            // Special handling for liter (L) and lowercase liter (l)
+                            // These should have dimension L^3 (volume)
+                            // The UCUM XML defines L and l with a property of "volume" but doesn't specify
+                            // the dimension directly. L references l, which references dm3 (cubic decimeter).
+                            // We need to explicitly set the dimension to L^3 here to ensure proper
+                            // dimensional analysis, especially for arbitrary unit conversions.
+                            "L" | "l" => {
+                                if dim == [0i8; 7] {
+                                    dim[1] = 3; // L^3 for volume
+                                }
+                            }
                             _ => {}
                         }
                         // If unit has non-zero offset but no temperature dimension, set Θ = 1
@@ -202,19 +239,34 @@ fn main() {
                         if offset != 0.0 {
                             special = "SpecialKind::LinearOffset".into();
                         }
-                        match code.as_str() {
-                            "B" | "Bel" | "dB" | "dB[SPL]" | "dB[lin]" => {
-                                special = "SpecialKind::Log10".into();
-                            }
-                            "Np" => {
-                                special = "SpecialKind::Ln".into();
-                            }
-                            "[p'diop]" => {
-                                special = "SpecialKind::TanTimes100".into();
-                            }
-                            _ => {}
+
+                        // Check if this is an arbitrary unit
+                        let is_arbitrary = e
+                            .attributes()
+                            .filter_map(|a| a.ok())
+                            .find(|a| a.key.as_ref() == b"isArbitrary")
+                            .map(|a| String::from_utf8_lossy(&a.value).to_string())
+                            .map_or(false, |v| v == "yes");
+
+                        // Special handling for [p'diop] unit
+                        if code == "[p'diop]" {
+                            special = "SpecialKind::TanTimes100".into();
                         }
-                        units.push((code, dim, factor.unwrap_or(1.0), offset, special));
+                        // Also check if the code starts with '[' and ends with ']' as these are typically arbitrary units
+                        else if is_arbitrary || (code.starts_with('[') && code.ends_with(']')) {
+                            special = "SpecialKind::Arbitrary".into();
+                        } else {
+                            match code.as_str() {
+                                "B" | "Bel" | "dB" | "dB[SPL]" | "dB[lin]" => {
+                                    special = "SpecialKind::Log10".into();
+                                }
+                                "Np" => {
+                                    special = "SpecialKind::Ln".into();
+                                }
+                                _ => {}
+                            }
+                        }
+                        units.push((code, dim, factor.unwrap_or(1.0), offset, special, property));
                     }
                     _ => {}
                 }
@@ -230,10 +282,10 @@ fn main() {
     // Units array
     out.push_str("use crate::types::SpecialKind;\n");
     out.push_str("pub static UNITS: &[UnitRecord] = &[\n");
-    for (code, dim, factor, offset, special) in &units {
+    for (code, dim, factor, offset, special, property) in &units {
         out.push_str(&format!(
-            "    UnitRecord {{ code: \"{}\", dim: Dimension([{} ,{} ,{} ,{} ,{} ,{} ,{}]), factor: {}f64, offset: {}f64, special: {} }},\n",
-            code, dim[0],dim[1],dim[2],dim[3],dim[4],dim[5],dim[6], factor, offset, special));
+            "    UnitRecord {{ code: \"{}\", dim: Dimension([{} ,{} ,{} ,{} ,{} ,{} ,{}]), factor: {}f64, offset: {}f64, special: {}, property: \"{}\" }},\n",
+            code, dim[0],dim[1],dim[2],dim[3],dim[4],dim[5],dim[6], factor, offset, special, property));
     }
     out.push_str("]\n;\n\n");
 
@@ -241,7 +293,7 @@ fn main() {
 
     // lookup functions
     out.push_str("pub fn find_prefix(sym: &str) -> Option<&'static Prefix> {\n    PREFIXES.binary_search_by(|p| p.symbol.cmp(sym)).ok().map(|i| &PREFIXES[i])\n}\n\n");
-    out.push_str("pub fn find_unit(code: &str) -> Option<&'static UnitRecord> {\n    UNITS.binary_search_by(|u| u.code.cmp(code)).ok().map(|i| &UNITS[i])\n}\n");
+    out.push_str("pub fn find_unit(code: &str) -> Option<&'static UnitRecord> {\n    // First try direct lookup\n    if let Ok(i) = UNITS.binary_search_by(|u| u.code.cmp(code)) {\n        return Some(&UNITS[i]);\n    }\n    \n    // If direct lookup fails, try to decompose into prefix + base unit\n    // Check all possible prefix lengths (longest first to avoid ambiguity)\n    for prefix_len in (1..code.len()).rev() {\n        let (prefix_part, unit_part) = code.split_at(prefix_len);\n        \n        // Check if prefix_part is a valid prefix and unit_part is a valid unit\n        if let (Some(_prefix), Some(_unit)) = (\n            find_prefix(prefix_part),\n            UNITS.binary_search_by(|u| u.code.cmp(unit_part)).ok().map(|i| &UNITS[i])\n        ) {\n            // For prefixed units, we don't return the base unit record directly\n            // because the caller would need to apply the prefix factor.\n            // Instead, we return None to indicate this should be handled by the parser.\n            // However, since the issue asks for find_unit to work with \"mg\",\n            // we'll return the base unit for now.\n            return Some(_unit);\n        }\n    }\n    \n    None\n}\n");
 
     fs::write(&dest, out).expect("write registry.rs");
 

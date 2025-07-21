@@ -37,46 +37,84 @@ impl EvalResult {
     }
 
     fn from_unit(code: &str) -> Result<Self, UcumError> {
-        // Square bracket arbitrary unit → dimensionless factor 1
-        if code.starts_with('[') {
-            return Ok(Self::numeric(1.0));
-        }
-
         // First try exact match (covers symbols like "Pa" and "Cel")
+        // This prevents units like "Pa" from being incorrectly split into "P" (peta) + "a"
         if let Some(unit) = find_unit(code) {
-            use crate::types::SpecialKind::*;
-            match unit.special {
-                None | LinearOffset => {
-                    return Ok(Self {
-                        factor: unit.factor,
-                        dim: unit.dim,
-                        offset: unit.offset,
-                    });
-                }
-                Log10 | Ln | TanTimes100 => {
-                    // For non-linear special units, return a zero-dimension result
-                    // The actual conversion will be handled in the product case
-                    return Ok(Self {
-                        factor: unit.factor,
-                        dim: Self::ZERO_DIM,
-                        offset: 0.0,
-                    });
+            // Check if this is actually a direct unit match, not a prefixed unit match
+            // If the unit code matches exactly, use it directly
+            if unit.code == code {
+                use crate::types::SpecialKind::*;
+                match unit.special {
+                    None | LinearOffset => {
+                        return Ok(Self {
+                            factor: unit.factor,
+                            dim: unit.dim,
+                            offset: unit.offset,
+                        });
+                    }
+                    Arbitrary => {
+                        // For arbitrary units, return a special dimension that marks it as arbitrary
+                        // This ensures arbitrary units are only commensurable with themselves
+                        return Ok(Self {
+                            factor: unit.factor,
+                            dim: unit.dim,
+                            offset: 0.0,
+                        });
+                    }
+                    Log10 | Ln | TanTimes100 => {
+                        // For non-linear special units, return a zero-dimension result
+                        // The actual conversion will be handled in the product case
+                        return Ok(Self {
+                            factor: unit.factor,
+                            dim: Self::ZERO_DIM,
+                            offset: 0.0,
+                        });
+                    }
                 }
             }
         }
 
-        // Attempt prefix split – longest prefix first
+        // Then attempt prefix split – longest prefix first
+        // This ensures prefixed units like "mg" are handled with proper prefix factors
         if let Some((pref, rest)) = split_prefix(code) {
             if let Some(unit) = find_unit(rest) {
-                let factor = pref.factor * unit.factor;
-                let dim = unit.dim;
-                return Ok(Self {
-                    factor,
-                    dim,
-                    offset: unit.offset,
-                });
+                // For special units, handle prefixes differently
+                match unit.special {
+                    crate::types::SpecialKind::Log10 | crate::types::SpecialKind::Ln | crate::types::SpecialKind::TanTimes100 => {
+                        // For special units, return the unit factor without prefix multiplication
+                        // The prefix will be handled in the product evaluation
+                        return Ok(Self {
+                            factor: unit.factor,
+                            dim: Self::ZERO_DIM,
+                            offset: 0.0,
+                        });
+                    }
+                    _ => {
+                        // For regular units, apply prefix factor normally
+                        let factor = pref.factor * unit.factor;
+                        let dim = unit.dim;
+                        return Ok(Self {
+                            factor,
+                            dim,
+                            offset: unit.offset,
+                        });
+                    }
+                }
             }
         }
+
+        // Square bracket arbitrary unit → dimensionless factor 1
+        // This is a fallback for arbitrary units not in the registry
+        if code.starts_with('[') && code.ends_with(']') {
+            // Arbitrary units are dimensionless but should be treated as their own dimension
+            // to ensure they're only commensurable with themselves
+            return Ok(Self {
+                factor: 1.0,
+                dim: Self::ZERO_DIM, // Dimensionless but will be treated specially in operations
+                offset: 0.0,
+            });
+        }
+
         Err(UcumError::UnknownUnit(code.to_string()))
     }
 }
@@ -99,14 +137,14 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 ) {
                     if let UnitExpr::Numeric(ref v) = num_fac.expr {
                         if let UnitExpr::Symbol(ref code) = unit_fac.expr {
-                            let (pref_factor, unit) = if let Some(u) = find_unit(code) {
-                                (1.0, u)
-                            } else if let Some((pref, rest)) = split_prefix(code) {
+                            let (pref_factor, unit) = if let Some((pref, rest)) = split_prefix(code) {
                                 if let Some(u) = find_unit(rest) {
                                     (pref.factor, u)
                                 } else {
                                     return Err(UcumError::UnknownUnit(code.clone()));
                                 }
+                            } else if let Some(u) = find_unit(code) {
+                                (1.0, u)
                             } else {
                                 return Err(UcumError::UnknownUnit(code.clone()));
                             };
@@ -138,28 +176,36 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                     let ratio = if scaled_val == 0.0 {
                                         1.0
                                     } else {
-                                        (scaled_val * unit.factor).exp()
+                                        scaled_val.exp()
                                     };
                                     (ratio, EvalResult::ZERO_DIM)
                                 }
                                 crate::types::SpecialKind::TanTimes100 => {
-                                    // For [p'diop]: tan(value/100)
+                                    // For [p'diop]: 100 * tan(1 rad)
+                                    // The unit is defined as "100 * tan(1 rad)" in UCUM
+                                    // This means 1 [p'diop] = tan(1)/100, and 100 [p'diop] = tan(1)
                                     // Following the mathematical definition, tan(0) = 0
-                                    // This matches test_prism_diopter_variations
-                                    // The test_zero_special_units test has an incorrect expectation for [p'diop]
                                     if scaled_val == 0.0 {
                                         (0.0, EvalResult::ZERO_DIM)
                                     } else {
+                                        // For n [p'diop], the result should be n/100 * tan(1)
+                                        // For 100 [p'diop], this gives tan(1)
+                                        // The key is that we're scaling the input value to radians (n/100)
+                                        // and then taking the tangent of that
                                         (
-                                            (scaled_val * unit.factor / 100.0).tan(),
+                                            (scaled_val / 100.0).tan(),
                                             EvalResult::ZERO_DIM,
                                         )
                                     }
                                 }
+                                crate::types::SpecialKind::Arbitrary => {
+                                    // For arbitrary units, use the numeric value as the factor
+                                    // and preserve the unit's dimension (which is typically zero)
+                                    (*v, unit.dim)
+                                }
                                 _ => {
-                                    return Err(UcumError::ConversionError(
-                                        "unsupported special unit operation",
-                                    ));
+                                    // For regular units with numeric multiplier
+                                    (*v, unit.dim)
                                 }
                             };
 
@@ -222,9 +268,24 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                             }
                                         }
                                         _ => {
-                                            return Err(UcumError::ConversionError(
-                                                "complex expressions cannot participate in products with special units",
-                                            ));
+                                            // For complex expressions, evaluate them normally
+                                            let res = evaluate(&factor.expr)?;
+                                            if res.offset != 0.0 {
+                                                return Err(UcumError::ConversionError(
+                                                    "offset units cannot participate in products with special units",
+                                                ));
+                                            }
+
+                                            // Apply the exponent from the factor
+                                            let exp = factor.exponent as f64;
+                                            result.factor *= res.factor.powf(exp);
+
+                                            // Combine dimensions
+                                            for i in 0..result.dim.0.len() {
+                                                result.dim.0[i] = result.dim.0[i].saturating_add(
+                                                    (res.dim.0[i] as f64 * exp) as i8,
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -303,14 +364,60 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 if let UnitExpr::Symbol(unit) = &fac.expr {
                     if let Some(unit_record) = find_unit(unit) {
                         if unit_record.special != crate::types::SpecialKind::None {
-                            let ratio = unit_record.special.ratio();
-                            let dim = unit_record.dim;
+                            // Handle arbitrary units differently from other special units
+                            if unit_record.special == crate::types::SpecialKind::Arbitrary {
+                                // For arbitrary units, just add their dimension (typically zero)
+                                // but don't modify the factor (it's already 1.0)
+                                let dim = unit_record.dim;
+                                for i in 0..7 {
+                                    dim_acc[i] = dim_acc[i]
+                                        .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
+                                }
+                            } else if unit_record.special == crate::types::SpecialKind::TanTimes100 {
+                                // Special handling for TanTimes100 (prism diopter)
+                                // For [p'diop]: 100 * tan(1 rad)
+                                // The unit is defined as "100 * tan(1 rad)" in UCUM
+                                // This means 1 [p'diop] = tan(1)/100, and 100 [p'diop] = tan(1)
+                                let dim = unit_record.dim;
 
-                            // Apply special unit conversion
-                            factor_acc *= ratio.powi(fac.exponent);
-                            for i in 0..7 {
-                                dim_acc[i] = dim_acc[i]
-                                    .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
+                                // Find the numeric value associated with this unit, if any
+                                let numeric_val = factors.iter()
+                                    .find_map(|f| {
+                                        if let UnitExpr::Numeric(n) = &f.expr {
+                                            Some(*n)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or(1.0); // Default to 1.0 if no numeric value (per UCUM definition)
+
+                                // Apply the tangent calculation
+                                if numeric_val == 0.0 {
+                                    factor_acc = 0.0; // tan(0) = 0
+                                } else {
+                                    // For n [p'diop], the result should be tan(n/100)
+                                    // For 100 [p'diop], this gives tan(1)
+                                    // The key is that we're scaling the input value to radians (n/100)
+                                    // and then taking the tangent of that
+                                    factor_acc = (numeric_val / 100.0).tan();
+                                }
+
+                                // Apply dimensions
+                                for i in 0..7 {
+                                    dim_acc[i] = dim_acc[i]
+                                        .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
+                                }
+                            } else {
+                                // For other special units, apply their ratio and dimension
+                                let ratio = unit_record.special.ratio();
+                                let dim = unit_record.dim;
+
+                                // Apply special unit conversion
+                                factor_acc *= ratio.powi(fac.exponent);
+                                for i in 0..7 {
+                                    dim_acc[i] = dim_acc[i]
+                                        .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
+                                }
                             }
                         }
                     }
@@ -332,6 +439,11 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                         }
                         UnitExpr::Symbol(unit) => {
                             if let Some(unit_record) = find_unit(unit) {
+                                // For arbitrary units, we want to keep the numeric value as the factor
+                                // and use the dimensions of other units in the expression
+                                // Note: We no longer skip arbitrary units in complex expressions
+                                // as they should adopt the dimensions of other units when combined
+
                                 // For special units, use their actual dimensions
                                 // but don't apply their ratio to the factor
                                 for i in 0..7 {
@@ -339,9 +451,16 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                         unit_record.dim.0[i].saturating_mul(fac.exponent as i8),
                                     );
                                 }
-                            } else if let Some((_, rest)) = split_prefix(unit) {
+                            } else if let Some((pref, rest)) = split_prefix(unit) {
                                 // Handle prefixed units
                                 if let Some(unit_record) = find_unit(rest) {
+                                    // For prefixed arbitrary units, apply the prefix factor to the numeric value
+                                    if unit_record.special == crate::types::SpecialKind::Arbitrary {
+                                        // For prefixed arbitrary units, apply the prefix factor
+                                        // Note: We no longer skip arbitrary units in complex expressions
+                                        numeric_value *= pref.factor;
+                                    }
+
                                     for i in 0..7 {
                                         dim_acc[i] = dim_acc[i].saturating_add(
                                             unit_record.dim.0[i].saturating_mul(fac.exponent as i8),
@@ -379,15 +498,38 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
         UnitExpr::Quotient(num, den) => {
             let n = evaluate(num)?;
             let d = evaluate(den)?;
+
             if n.offset != 0.0 || d.offset != 0.0 {
                 return Err(UcumError::ConversionError(
                     "offset units not allowed in quotient expressions",
                 ));
             }
+
+            // Check if numerator is an arbitrary unit (dimensionless)
+            // For arbitrary units in the numerator, we need to adopt the inverse dimension of the denominator
+            // This is a special case for arbitrary units like [IU] that are dimensionless by definition
+            // but need to adopt the inverse dimension of what they're divided by (e.g., [IU]/mL should have
+            // dimension L^-3, the inverse of volume). This ensures proper dimensional analysis and
+            // commensurability checks when working with arbitrary units in complex expressions.
+            let is_arbitrary_numerator = match num.as_ref() {
+                UnitExpr::Symbol(sym) if sym.starts_with('[') && sym.ends_with(']') => true,
+                _ => false
+            };
+
             let mut dim_vec = [0i8; 7];
-            for i in 0..7 {
-                dim_vec[i] = n.dim.0[i] - d.dim.0[i];
+            if is_arbitrary_numerator {
+                // For arbitrary units in numerator, use negated dimension of denominator
+                // This ensures arbitrary units correctly adopt the inverse dimensions of what they're divided by
+                for i in 0..7 {
+                    dim_vec[i] = -d.dim.0[i];
+                }
+            } else {
+                // Normal case: subtract denominator dimension from numerator dimension
+                for i in 0..7 {
+                    dim_vec[i] = n.dim.0[i] - d.dim.0[i];
+                }
             }
+
             Ok(EvalResult {
                 factor: n.factor / d.factor,
                 dim: Dimension(dim_vec),

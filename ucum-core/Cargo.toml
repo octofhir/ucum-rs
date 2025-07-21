@@ -7,6 +7,10 @@ license = "MIT"
 documentation = "https://docs.rs/octofhir-ucum-core"
 homepage = "https://github.com/octofhir/ucum-rs"
 repository = "https://github.com/octofhir/ucum-rs"
+keywords = ["fhir", "ucum", "units", "measurement", "healthcare"]
+categories = ["science", "data-structures", "parsing"]
+include = ["ucum-essence.xml"]
+
 
 [features]
 default = ["std"]
