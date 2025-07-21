@@ -9,7 +9,7 @@ homepage = "https://github.com/octofhir/ucum-rs"
 repository = "https://github.com/octofhir/ucum-rs"
 keywords = ["fhir", "ucum", "units", "measurement", "healthcare"]
 categories = ["science", "data-structures", "parsing"]
-include = ["ucum-essence.xml"]
+include = ["ucum-essence.xml", "src", "examples", "README.md", "build.rs"]
 
 
 [features]

@@ -28,3 +28,8 @@ lazy_static = "1.4"
 indexmap = "2.0"
 clap = { version = "4.5.27", features = ["derive"] }
 
+[profile.release]
+# Tell `rustc` to optimize for small code size.
+opt-level = "s"
+lto = true
+
