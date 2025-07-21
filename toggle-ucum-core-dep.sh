@@ -1,11 +1,13 @@
 #!/bin/bash
-# Toggle octofhir-ucum-core dependency in ucum-cli/Cargo.toml between local and publish modes
-# Usage: ./toggle-ucum-core-dep.sh local|publish
+# Toggle octofhir-ucum-core dependency in package Cargo.toml between local and publish modes
+# Usage: ./toggle-ucum-core-dep.sh local|publish [package]
+# If package is not specified, defaults to ucum-cli
 
 set -e
 
 MODE="$1"
-CARGO_TOML="ucum-cli/Cargo.toml"
+PACKAGE="${2:-ucum-cli}"
+CARGO_TOML="$PACKAGE/Cargo.toml"
 CORE_VERSION=$(awk -F ' *= *' '/^version *=/ {gsub(/\"/, "", $2); print $2; exit}' Cargo.toml)
 
 if [[ "$MODE" == "local" ]]; then
@@ -25,7 +27,7 @@ elif [[ "$MODE" == "publish" ]]; then
   awk -v ver="$CORE_VERSION" '
     BEGIN {added=0}
     /^\[dependencies\]/ {
-      print; 
+      print;
       if (!added) {
         print "octofhir-ucum-core = { version = \"" ver "\" } # For publishing to crates.io; use path for local dev";
         print "# octofhir-ucum-core = { path = \"../ucum-core\" } # Uncomment for local development";
@@ -41,4 +43,4 @@ else
   exit 1
 fi
 
-rm -f "$CARGO_TOML.bak" 
+rm -f "$CARGO_TOML.bak"

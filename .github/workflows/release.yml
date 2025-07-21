@@ -28,6 +28,12 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: cargo publish -p octofhir-ucum-cli --all-features --no-verify  --allow-dirty
+      - name: Set ucum-fhir dependency to publish mode
+        run: ./toggle-ucum-core-dep.sh publish ucum-fhir
+      - name: Publish ucum-fhir
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        run: cargo publish -p octofhir-ucum-fhir --all-features --no-verify  --allow-dirty
 
       # WASM Package Publishing
       - name: Install wasm-pack

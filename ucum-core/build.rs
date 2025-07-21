@@ -7,7 +7,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", xml_path.display());
 
-    // Phase 3: parse prefixes from XML and emit registry. Units will follow in next step.
+    // Phase 3: parse prefixes from XML and emit registry. Units will follow in the next step.
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let dest = out_dir.join("registry.rs");
 
@@ -30,7 +30,7 @@ fn main() {
                             code = Some(String::from_utf8_lossy(&attr.value).to_string())
                         }
                     }
-                    // value element is child; capture next Value event
+                    // value element is child; capture the next Value event
                     loop {
                         match reader.read_event() {
                             Ok(Event::Start(ref ve)) if ve.name().as_ref() == b"value" => {
@@ -106,7 +106,7 @@ fn main() {
                             .map(|a| String::from_utf8_lossy(&a.value).to_string());
                         let dim = dim_attr.as_deref().map(parse_dim).unwrap_or([0i8; 7]);
 
-                        // Extract property and display name from base-unit
+                        // Extract property and display the name from base-unit
                         let mut property = String::new();
                         let mut display_name = String::new();
                         let mut in_property_tag = false;
@@ -155,7 +155,7 @@ fn main() {
                             .find(|a| a.key.as_ref() == b"dim")
                             .map(|a| String::from_utf8_lossy(&a.value).to_string());
                         let mut dim = dim_attr.as_deref().map_or([0i8; 7], parse_dim);
-                        // Need to capture <value> child to get factor (may combine Unit attr) and maybe offset
+                        // Need to capture <value> child to get a factor (may combine Unit attr) and maybe offset
                         // Also capture <property> child to get unit classification and <n> for display name
                         let mut factor: Option<f64> = None;
                         let mut offset: f64 = 0.0;

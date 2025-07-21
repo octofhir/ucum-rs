@@ -28,9 +28,9 @@ octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
 | CLI tool               | ✅       | `octofhir-ucum-cli` binary             |
 | WASM support           | ✅       | npm package: `@octofhir/ucum-wasm`     |
 | Interactive playground | ✅       | Svelte 5 web application               |
-| FHIR integration demo  | 🚧       | Planned                                |
+| FHIR integration       | ✅       | FHIR Quantity data type support        |
 | Property-based tests   | ✅       | `proptest`                             |
-| Fuzzing                | 🚧       | Planned                                |
+| Fuzzing                | ✅       | `cargo-fuzz` targets for parser/eval   |
 
 ## WASM Package
 
@@ -110,6 +110,80 @@ npm run dev
 
 The playground will be available at http://localhost:6000.
 
+## FHIR Integration
+
+The UCUM library provides integration with FHIR (Fast Healthcare Interoperability Resources) through the `octofhir-ucum-fhir` crate.
+
+### Installation
+
+```sh
+# Add to your project
+cargo add octofhir-ucum-fhir
+```
+
+### Features
+
+- **FHIR Quantity**: FHIR Quantity data type implementation
+- **Conversion**: Convert between FHIR Quantity and UCUM Quantity
+- **Unit Conversion**: Convert FHIR Quantities between different units
+- **Equivalence**: Check if two FHIR Quantities are equivalent
+- **Error Handling**: Comprehensive error handling for invalid inputs
+
+### Usage
+
+```rust
+use octofhir_ucum_fhir::{FhirQuantity, convert_quantity, are_equivalent};
+
+// Create a FHIR Quantity with a UCUM code
+let quantity = FhirQuantity::with_ucum_code(1000.0, "mg");
+
+// Convert to a different unit
+let converted = convert_quantity(&quantity, "g").unwrap();
+assert_eq!(converted.value, 1.0);
+assert_eq!(converted.code, Some("g".to_string()));
+
+// Check if two quantities are equivalent
+let quantity2 = FhirQuantity::with_ucum_code(1.0, "g");
+assert!(are_equivalent(&quantity2, &converted).unwrap());
+```
+
+## Fuzzing
+
+The UCUM library includes fuzzing infrastructure to identify potential bugs and edge cases using `cargo-fuzz`.
+
+### Setup
+
+```sh
+# Install cargo-fuzz
+cargo install cargo-fuzz
+```
+
+### Fuzzing Targets
+
+- **Parser Fuzzer**: Tests the `parse_expression` function with arbitrary input strings
+- **Evaluator Fuzzer**: Tests the `evaluate` function with valid UCUM expressions
+
+### Running the Fuzzers
+
+```sh
+# Run the parser fuzzer
+cargo fuzz run -p octofhir-ucum-fuzz fuzz_parser
+
+# Run the evaluator fuzzer
+cargo fuzz run -p octofhir-ucum-fuzz fuzz_evaluator
+```
+
+### Continuous Fuzzing
+
+For continuous fuzzing, you can set up a CI job that runs the fuzzers for a fixed amount of time:
+
+```sh
+# Run the parser fuzzer for 5 minutes
+cargo fuzz run -p octofhir-ucum-fuzz fuzz_parser -- -max_total_time=300
+```
+
+For more details, see the [ucum-fuzz README](ucum-fuzz/README.md).
+
 ## Contribution Guide
 
 1. **Clone the repo:**
@@ -170,6 +244,8 @@ The playground will be available at http://localhost:6000.
 - `octofhir-ucum-core/` – Core library (parsing, evaluation, registry)
 - `octofhir-ucum-cli/`  – Command-line interface
 - `ucum-wasm/` – WebAssembly bindings for JavaScript/TypeScript (@octofhir/ucum-wasm)
+- `ucum-fhir/` – FHIR integration (FHIR Quantity data type support)
+- `ucum-fuzz/` – Fuzzing infrastructure (cargo-fuzz targets)
 - `playground/`         – Interactive web-based playground (Svelte 5)
 - `spec/`               – UCUM specification assets
 

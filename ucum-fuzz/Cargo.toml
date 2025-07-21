@@ -1,0 +1,36 @@
+[package]
+name = "octofhir-ucum-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+octofhir-ucum-core = { path = "../ucum-core" }
+octofhir-ucum-fhir = { path = "../ucum-fhir" }
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_parser"
+path = "src/fuzz_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_evaluator"
+path = "src/fuzz_evaluator.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_fhir_quantity"
+path = "src/fuzz_fhir_quantity.rs"
+test = false
+doc = false

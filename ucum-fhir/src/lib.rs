@@ -1,0 +1,594 @@
+//! UCUM FHIR Integration Library – Rust 2024 Edition
+//!
+//! This crate provides integration between the UCUM core library and FHIR,
+//! allowing for conversion between UCUM units and FHIR Quantity data types.
+//!
+//! # Examples
+//!
+//! ```
+//! use octofhir_ucum_fhir::{FhirQuantity, ToFhirQuantity, FromFhirQuantity};
+//! use octofhir_ucum_core::{parse_expression, evaluate};
+//!
+//! // Create a FHIR Quantity
+//! let fhir_quantity = FhirQuantity {
+//!     value: 10.0,
+//!     unit: Some("mg".to_string()),
+//!     system: Some("http://unitsofmeasure.org".to_string()),
+//!     code: Some("mg".to_string()),
+//!     ..Default::default()
+//! };
+//!
+//! // Convert to UCUM Quantity
+//! let ucum_quantity = fhir_quantity.to_ucum_quantity().unwrap();
+//! assert_eq!(ucum_quantity.value, 10.0);
+//!
+//! // Convert back to FHIR Quantity
+//! let fhir_quantity2 = ucum_quantity.to_fhir_quantity().unwrap();
+//! assert_eq!(fhir_quantity2.value, 10.0);
+//! assert_eq!(fhir_quantity2.code, Some("mg".to_string()));
+//! ```
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+use octofhir_ucum_core::{
+    evaluate, parse_expression, Quantity as UcumQuantity, UcumError,
+};
+use thiserror::Error;
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/// Error type for FHIR integration.
+#[derive(Error, Debug)]
+pub enum FhirError {
+    /// Error from the UCUM core library.
+    #[error("UCUM error: {0}")]
+    UcumError(#[from] UcumError),
+
+    /// Missing required field.
+    #[error("Missing required field: {0}")]
+    MissingField(&'static str),
+
+    /// Invalid UCUM code.
+    #[error("Invalid UCUM code: {0}")]
+    InvalidCode(String),
+
+    /// Invalid system URI.
+    #[error("Invalid system URI: {0}")]
+    InvalidSystem(String),
+}
+
+/// FHIR Quantity data type.
+///
+/// This struct represents a FHIR Quantity, which is a measured amount or an amount that can
+/// potentially be measured. The FHIR Quantity data type includes a value and a unit, where
+/// the unit may be a UCUM code.
+///
+/// See the [FHIR Quantity](http://hl7.org/fhir/datatypes.html#Quantity) documentation for more details.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct FhirQuantity {
+    /// The value of the quantity.
+    pub value: f64,
+
+    /// The human-readable unit representation.
+    pub unit: Option<String>,
+
+    /// The system that defines the coded unit form.
+    /// For UCUM, this is "http://unitsofmeasure.org".
+    pub system: Option<String>,
+
+    /// The coded form of the unit, from the system.
+    /// For UCUM, this is the UCUM code.
+    pub code: Option<String>,
+
+    /// The comparator (<, <=, >=, >) for the value.
+    pub comparator: Option<String>,
+}
+
+impl Default for FhirQuantity {
+    fn default() -> Self {
+        Self {
+            value: 0.0,
+            unit: None,
+            system: None,
+            code: None,
+            comparator: None,
+        }
+    }
+}
+
+impl FhirQuantity {
+    /// Create a new FHIR Quantity with a UCUM code.
+    ///
+    /// This is a convenience method for creating a FHIR Quantity with a UCUM code.
+    /// It sets the system to "http://unitsofmeasure.org" and the code to the provided UCUM code.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The value of the quantity.
+    /// * `ucum_code` - The UCUM code for the unit.
+    ///
+    /// # Returns
+    ///
+    /// A new FHIR Quantity with the provided value and UCUM code.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use octofhir_ucum_fhir::FhirQuantity;
+    ///
+    /// let quantity = FhirQuantity::with_ucum_code(10.0, "mg");
+    /// assert_eq!(quantity.value, 10.0);
+    /// assert_eq!(quantity.code, Some("mg".to_string()));
+    /// assert_eq!(quantity.system, Some("http://unitsofmeasure.org".to_string()));
+    /// ```
+    pub fn with_ucum_code(value: f64, ucum_code: &str) -> Self {
+        Self {
+            value,
+            unit: Some(ucum_code.to_string()),
+            system: Some("http://unitsofmeasure.org".to_string()),
+            code: Some(ucum_code.to_string()),
+            comparator: None,
+        }
+    }
+
+    /// Check if this quantity uses UCUM units.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the system is "http://unitsofmeasure.org", `false` otherwise.
+    pub fn is_ucum(&self) -> bool {
+        self.system
+            .as_ref()
+            .map(|s| s == "http://unitsofmeasure.org")
+            .unwrap_or(false)
+    }
+
+    /// Convert this FHIR Quantity to a UCUM Quantity.
+    ///
+    /// # Returns
+    ///
+    /// A Result containing the UCUM Quantity, or an error if the conversion fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The system is not "http://unitsofmeasure.org"
+    /// - The code is missing
+    /// - The code is not a valid UCUM code
+    pub fn to_ucum_quantity(&self) -> Result<UcumQuantity, FhirError> {
+        // Check if this is a UCUM quantity
+        if !self.is_ucum() {
+            return Err(FhirError::InvalidSystem(
+                self.system
+                    .clone()
+                    .unwrap_or_else(|| "None".to_string()),
+            ));
+        }
+
+        // Get the UCUM code
+        let code = self
+            .code
+            .as_ref()
+            .ok_or(FhirError::MissingField("code"))?;
+
+        // Parse the UCUM expression
+        let expr = parse_expression(code)?;
+
+        // Create a UCUM Quantity
+        Ok(UcumQuantity {
+            value: self.value,
+            unit: expr,
+        })
+    }
+}
+
+/// Trait for converting to a FHIR Quantity.
+pub trait ToFhirQuantity {
+    /// Convert to a FHIR Quantity.
+    ///
+    /// # Returns
+    ///
+    /// A Result containing the FHIR Quantity, or an error if the conversion fails.
+    fn to_fhir_quantity(&self) -> Result<FhirQuantity, FhirError>;
+}
+
+/// Trait for converting from a FHIR Quantity.
+pub trait FromFhirQuantity<T> {
+    /// Convert from a FHIR Quantity.
+    ///
+    /// # Returns
+    ///
+    /// A Result containing the converted value, or an error if the conversion fails.
+    fn from_fhir_quantity(quantity: &FhirQuantity) -> Result<T, FhirError>;
+}
+
+impl ToFhirQuantity for UcumQuantity {
+    fn to_fhir_quantity(&self) -> Result<FhirQuantity, FhirError> {
+        // Convert the UnitExpr to a string
+        let code = format!("{}", self.unit);
+
+        // Create a FHIR Quantity
+        Ok(FhirQuantity {
+            value: self.value,
+            unit: Some(code.clone()),
+            system: Some("http://unitsofmeasure.org".to_string()),
+            code: Some(code),
+            comparator: None,
+        })
+    }
+}
+
+impl FromFhirQuantity<UcumQuantity> for UcumQuantity {
+    fn from_fhir_quantity(quantity: &FhirQuantity) -> Result<UcumQuantity, FhirError> {
+        quantity.to_ucum_quantity()
+    }
+}
+
+/// Convert between FHIR Quantities with different units.
+///
+/// This function converts a FHIR Quantity from one unit to another.
+///
+/// # Arguments
+///
+/// * `quantity` - The FHIR Quantity to convert.
+/// * `target_unit` - The target UCUM unit code.
+///
+/// # Returns
+///
+/// A Result containing the converted FHIR Quantity, or an error if the conversion fails.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The source quantity is not a UCUM quantity
+/// - The source or target unit is not a valid UCUM code
+/// - The units are not commensurable (have different dimensions)
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_fhir::{FhirQuantity, convert_quantity};
+///
+/// let quantity = FhirQuantity::with_ucum_code(1000.0, "mg");
+/// let converted = convert_quantity(&quantity, "g").unwrap();
+/// assert_eq!(converted.value, 1.0);
+/// assert_eq!(converted.code, Some("g".to_string()));
+/// ```
+pub fn convert_quantity(
+    quantity: &FhirQuantity,
+    target_unit: &str,
+) -> Result<FhirQuantity, FhirError> {
+    // Convert to UCUM Quantity
+    let ucum_quantity = quantity.to_ucum_quantity()?;
+
+    // Parse the target unit
+    let target_expr = parse_expression(target_unit)?;
+
+    // Evaluate both units to get their dimensions and factors
+    let source_eval = evaluate(&ucum_quantity.unit)?;
+    let target_eval = evaluate(&target_expr)?;
+
+    // Check if the units are commensurable (have the same dimension)
+    if source_eval.dim != target_eval.dim {
+        return Err(FhirError::InvalidCode(format!(
+            "Units are not commensurable: {} and {}",
+            ucum_quantity.unit, target_unit
+        )));
+    }
+
+    // Calculate the conversion factor
+    let factor = source_eval.factor / target_eval.factor;
+
+    // Create a new FHIR Quantity with the converted value
+    Ok(FhirQuantity {
+        value: ucum_quantity.value * factor,
+        unit: Some(target_unit.to_string()),
+        system: Some("http://unitsofmeasure.org".to_string()),
+        code: Some(target_unit.to_string()),
+        comparator: quantity.comparator.clone(),
+    })
+}
+
+/// Check if two FHIR Quantities are equivalent.
+///
+/// Two quantities are equivalent if they have the same value when converted to the same unit.
+///
+/// # Arguments
+///
+/// * `a` - The first FHIR Quantity.
+/// * `b` - The second FHIR Quantity.
+///
+/// # Returns
+///
+/// A Result containing a boolean indicating whether the quantities are equivalent,
+/// or an error if the comparison fails.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Either quantity is not a UCUM quantity
+/// - Either unit is not a valid UCUM code
+/// - The units are not commensurable (have different dimensions)
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_fhir::{FhirQuantity, are_equivalent};
+///
+/// let a = FhirQuantity::with_ucum_code(1.0, "g");
+/// let b = FhirQuantity::with_ucum_code(1000.0, "mg");
+/// assert!(are_equivalent(&a, &b).unwrap());
+///
+/// let c = FhirQuantity::with_ucum_code(1.0, "g");
+/// let d = FhirQuantity::with_ucum_code(2.0, "g");
+/// assert!(!are_equivalent(&c, &d).unwrap());
+/// ```
+pub fn are_equivalent(a: &FhirQuantity, b: &FhirQuantity) -> Result<bool, FhirError> {
+    // Convert to UCUM Quantities
+    let a_ucum = a.to_ucum_quantity()?;
+    let b_ucum = b.to_ucum_quantity()?;
+
+    // Evaluate both units to get their dimensions and factors
+    let a_eval = evaluate(&a_ucum.unit)?;
+    let b_eval = evaluate(&b_ucum.unit)?;
+
+    // Check if the units are commensurable (have the same dimension)
+    if a_eval.dim != b_eval.dim {
+        return Err(FhirError::InvalidCode(format!(
+            "Units are not commensurable: {} and {}",
+            a_ucum.unit, b_ucum.unit
+        )));
+    }
+
+    // Special handling for arbitrary units
+    // Different arbitrary units should not be commensurable with each other
+    // even though they have the same dimension (all zeros)
+    let a_code = a.code.as_ref().ok_or(FhirError::MissingField("code"))?;
+    let b_code = b.code.as_ref().ok_or(FhirError::MissingField("code"))?;
+
+    // Check if either unit is an arbitrary unit (enclosed in square brackets)
+    // We need to handle both standalone arbitrary units and prefixed arbitrary units
+    let a_has_arbitrary = a_code.contains('[') && a_code.contains(']');
+    let b_has_arbitrary = b_code.contains('[') && b_code.contains(']');
+
+    // If both have arbitrary units, extract and compare them
+    if a_has_arbitrary && b_has_arbitrary {
+        // Extract the arbitrary unit part (including brackets)
+        let a_arb_unit = if let Some(open_bracket) = a_code.find('[') {
+            if let Some(close_bracket) = a_code.rfind(']') {
+                &a_code[open_bracket..=close_bracket]
+            } else {
+                a_code // Shouldn't happen if properly formed
+            }
+        } else {
+            a_code // Shouldn't happen if properly formed
+        };
+
+        let b_arb_unit = if let Some(open_bracket) = b_code.find('[') {
+            if let Some(close_bracket) = b_code.rfind(']') {
+                &b_code[open_bracket..=close_bracket]
+            } else {
+                b_code // Shouldn't happen if properly formed
+            }
+        } else {
+            b_code // Shouldn't happen if properly formed
+        };
+
+        // If they're different arbitrary units, they're not commensurable
+        if a_arb_unit != b_arb_unit {
+            return Err(FhirError::InvalidCode(format!(
+                "Different arbitrary units are not commensurable: {} and {}",
+                a_code, b_code
+            )));
+        }
+    }
+
+    // Calculate the conversion factor to convert from unit B to unit A
+    // If unit A is g and unit B is mg, factor will be 0.001 (1g = 1000mg)
+    let factor = b_eval.factor / a_eval.factor;
+
+    // Compare the values using a relative comparison
+    // Use a more appropriate epsilon for floating-point comparison
+    const EPSILON: f64 = 1e-6;
+
+    // Calculate the absolute difference between a's value and b's value converted to a's unit
+    // For example, if a is 1.0g and b is 1000.0mg, we compare 1.0 with 1000.0 * 0.001 = 1.0
+    let diff = (a_ucum.value - b_ucum.value * factor).abs();
+
+    // Use a relative comparison to handle different scales
+    let max = a_ucum.value.abs().max((b_ucum.value * factor).abs());
+
+    if max < EPSILON {
+        // Both values are very close to zero, use absolute comparison
+        Ok(diff < EPSILON)
+    } else {
+        // Use relative comparison
+        Ok(diff / max < EPSILON)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fhir_quantity_with_ucum_code() {
+        let quantity = FhirQuantity::with_ucum_code(10.0, "mg");
+        assert_eq!(quantity.value, 10.0);
+        assert_eq!(quantity.code, Some("mg".to_string()));
+        assert_eq!(quantity.system, Some("http://unitsofmeasure.org".to_string()));
+    }
+
+    #[test]
+    fn test_is_ucum() {
+        let quantity = FhirQuantity::with_ucum_code(10.0, "mg");
+        assert!(quantity.is_ucum());
+
+        let quantity = FhirQuantity {
+            value: 10.0,
+            unit: Some("mg".to_string()),
+            system: Some("http://example.org".to_string()),
+            code: Some("mg".to_string()),
+            comparator: None,
+        };
+        assert!(!quantity.is_ucum());
+    }
+
+    #[test]
+    fn test_to_ucum_quantity() {
+        let quantity = FhirQuantity::with_ucum_code(10.0, "mg");
+        let ucum_quantity = quantity.to_ucum_quantity().unwrap();
+        assert_eq!(ucum_quantity.value, 10.0);
+        assert_eq!(format!("{}", ucum_quantity.unit), "mg");
+    }
+
+    #[test]
+    fn test_to_fhir_quantity() {
+        let expr = parse_expression("mg").unwrap();
+        let ucum_quantity = UcumQuantity {
+            value: 10.0,
+            unit: expr,
+        };
+        let fhir_quantity = ucum_quantity.to_fhir_quantity().unwrap();
+        assert_eq!(fhir_quantity.value, 10.0);
+        assert_eq!(fhir_quantity.code, Some("mg".to_string()));
+        assert_eq!(
+            fhir_quantity.system,
+            Some("http://unitsofmeasure.org".to_string())
+        );
+    }
+
+    #[test]
+    fn test_convert_quantity() {
+        let quantity = FhirQuantity::with_ucum_code(1000.0, "mg");
+        let converted = convert_quantity(&quantity, "g").unwrap();
+        assert_eq!(converted.value, 1.0);
+        assert_eq!(converted.code, Some("g".to_string()));
+    }
+
+    #[test]
+    fn test_are_equivalent() {
+        let a = FhirQuantity::with_ucum_code(1.0, "g");
+        let b = FhirQuantity::with_ucum_code(1000.0, "mg");
+
+        // Add debug output to understand why the test is failing
+        let a_ucum = a.to_ucum_quantity().unwrap();
+        let b_ucum = b.to_ucum_quantity().unwrap();
+
+        println!("a_ucum: value={}, unit={}", a_ucum.value, a_ucum.unit);
+        println!("b_ucum: value={}, unit={}", b_ucum.value, b_ucum.unit);
+
+        let a_eval = evaluate(&a_ucum.unit).unwrap();
+        let b_eval = evaluate(&b_ucum.unit).unwrap();
+
+        println!("a_eval: factor={}, dim={:?}", a_eval.factor, a_eval.dim);
+        println!("b_eval: factor={}, dim={:?}", b_eval.factor, b_eval.dim);
+
+        let factor = a_eval.factor / b_eval.factor;
+        println!("factor: {}", factor);
+
+        let diff = (a_ucum.value - b_ucum.value * factor).abs();
+        let max = a_ucum.value.abs().max((b_ucum.value * factor).abs());
+
+        println!("diff: {}", diff);
+        println!("max: {}", max);
+        println!("diff/max: {}", diff/max);
+        println!("EPSILON: {}", 1e-6);
+
+        assert!(are_equivalent(&a, &b).unwrap());
+
+        let c = FhirQuantity::with_ucum_code(1.0, "g");
+        let d = FhirQuantity::with_ucum_code(2.0, "g");
+        assert!(!are_equivalent(&c, &d).unwrap());
+    }
+
+    #[test]
+    fn test_error_handling() {
+        // Invalid system
+        let quantity = FhirQuantity {
+            value: 10.0,
+            unit: Some("mg".to_string()),
+            system: Some("http://example.org".to_string()),
+            code: Some("mg".to_string()),
+            comparator: None,
+        };
+        let result = quantity.to_ucum_quantity();
+        assert!(result.is_err());
+        if let Err(FhirError::InvalidSystem(system)) = result {
+            assert_eq!(system, "http://example.org");
+        } else {
+            panic!("Expected InvalidSystem error");
+        }
+
+        // Missing code
+        let quantity = FhirQuantity {
+            value: 10.0,
+            unit: Some("mg".to_string()),
+            system: Some("http://unitsofmeasure.org".to_string()),
+            code: None,
+            comparator: None,
+        };
+        let result = quantity.to_ucum_quantity();
+        assert!(result.is_err());
+        if let Err(FhirError::MissingField(field)) = result {
+            assert_eq!(field, "code");
+        } else {
+            panic!("Expected MissingField error");
+        }
+
+        // Invalid code with invalid syntax (using a character that's not allowed in UCUM)
+        let quantity = FhirQuantity::with_ucum_code(10.0, "!invalid");
+        let result = quantity.to_ucum_quantity();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_non_commensurable_units() {
+        let a = FhirQuantity::with_ucum_code(1.0, "g");
+        let b = FhirQuantity::with_ucum_code(1.0, "s");
+        let result = are_equivalent(&a, &b);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_arbitrary_units() {
+        // Test 1: Create FHIR Quantities with arbitrary units
+        let iu = FhirQuantity::with_ucum_code(10.0, "[IU]");
+        assert_eq!(iu.value, 10.0);
+        assert_eq!(iu.code, Some("[IU]".to_string()));
+
+        // Test 2: Convert FHIR Quantity with arbitrary unit to UCUM Quantity
+        let ucum_iu = iu.to_ucum_quantity().unwrap();
+        assert_eq!(ucum_iu.value, 10.0);
+        assert_eq!(format!("{}", ucum_iu.unit), "[IU]");
+
+        // Test 3: Prefixed arbitrary units
+        let kiu = FhirQuantity::with_ucum_code(1.0, "k[IU]");
+        let ucum_kiu = kiu.to_ucum_quantity().unwrap();
+        assert_eq!(ucum_kiu.value, 1.0);
+        assert_eq!(format!("{}", ucum_kiu.unit), "k[IU]");
+
+        // Test 4: Arbitrary units with volume units
+        let iu_per_ml = FhirQuantity::with_ucum_code(5.0, "[IU]/mL");
+        let iu_per_l = convert_quantity(&iu_per_ml, "[IU]/L").unwrap();
+        assert_eq!(iu_per_l.value, 5000.0); // 5 [IU]/mL = 5000 [IU]/L
+
+        // Test 5: Different arbitrary units are not equivalent
+        let iu = FhirQuantity::with_ucum_code(10.0, "[IU]");
+        let arbu = FhirQuantity::with_ucum_code(10.0, "[arb'U]");
+        let result = are_equivalent(&iu, &arbu);
+        assert!(result.is_err());
+
+        // Test 6: Same arbitrary units with different prefixes are equivalent
+        let iu = FhirQuantity::with_ucum_code(1000.0, "[IU]");
+        let kiu = FhirQuantity::with_ucum_code(1.0, "k[IU]");
+        assert!(are_equivalent(&iu, &kiu).unwrap());
+
+        // Test 7: Complex expressions with arbitrary units
+        let complex1 = FhirQuantity::with_ucum_code(10.0, "[IU]/(m2.s)");
+        let complex2 = FhirQuantity::with_ucum_code(10.0, "[IU]/(m2.s)");
+        assert!(are_equivalent(&complex1, &complex2).unwrap());
+    }
+}
