@@ -69,13 +69,27 @@ jobs:
           mkdir -p pkg/types
           cp -r types/* pkg/types/
           
-          # Copy package.json and README to pkg
-          cp package.json pkg/
+          # Copy README to pkg
           cp README.md pkg/
           
-          # Update package.json in pkg
+          # Create proper package.json for publishing
           cd pkg
-          node -e "const pkg = require('./package.json'); pkg.main = 'octofhir_ucum_wasm.js'; pkg.types = 'types/index.d.ts'; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2))"
+          node -e "
+            const sourcePkg = require('../package.json');
+            const pkg = {
+              name: sourcePkg.name,
+              version: '${{ steps.get_wasm_version.outputs.VERSION }}',
+              description: sourcePkg.description,
+              repository: sourcePkg.repository,
+              author: sourcePkg.author,
+              license: sourcePkg.license,
+              keywords: sourcePkg.keywords,
+              files: ['*.js', '*.wasm', '*.d.ts', 'types/', 'README.md'],
+              main: 'octofhir_ucum_wasm.js',
+              types: 'types/index.d.ts'
+            };
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          "
 
       - name: Publish WASM to npm
         run: |
