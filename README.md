@@ -26,7 +26,7 @@ octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
 | Expression parsing     | ✅       | Grammar-based, robust error messages   |
 | Unit conversion        | ✅       | Handles factors, offsets, temperature  |
 | CLI tool               | ✅       | `octofhir-ucum-cli` binary             |
-| WASM support           | ✅       | npm package: `octofhir-ucum-wasm`      |
+| WASM support           | ✅       | npm package: `@octofhir/ucum-wasm`     |
 | Interactive playground | ✅       | Svelte 5 web application               |
 | FHIR integration demo  | 🚧       | Planned                                |
 | Property-based tests   | ✅       | `proptest`                             |
@@ -40,13 +40,13 @@ The UCUM library is available as a WebAssembly package for use in JavaScript/Typ
 
 ```sh
 # Using npm
-npm install octofhir-ucum-wasm
+npm install @octofhir/ucum-wasm
 
 # Using yarn
-yarn add octofhir-ucum-wasm
+yarn add @octofhir/ucum-wasm
 
 # Using pnpm
-pnpm add octofhir-ucum-wasm
+pnpm add @octofhir/ucum-wasm
 ```
 
 ### Usage
@@ -59,7 +59,7 @@ import {
   convert, 
   evaluate_expression, 
   arithmetic 
-} from 'octofhir-ucum-wasm';
+} from '@octofhir/ucum-wasm';
 
 // Initialize the WASM module
 start();
@@ -169,7 +169,7 @@ The playground will be available at http://localhost:6000.
 
 - `octofhir-ucum-core/` – Core library (parsing, evaluation, registry)
 - `octofhir-ucum-cli/`  – Command-line interface
-- `octofhir-ucum-wasm/` – WebAssembly bindings for JavaScript/TypeScript
+- `ucum-wasm/` – WebAssembly bindings for JavaScript/TypeScript (@octofhir/ucum-wasm)
 - `playground/`         – Interactive web-based playground (Svelte 5)
 - `spec/`               – UCUM specification assets
 

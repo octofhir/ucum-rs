@@ -1,5 +1,5 @@
 {
-  "name": "octofhir-ucum-wasm",
+  "name": "@octofhir/ucum-wasm",
   "version": "0.1.3",
   "description": "WebAssembly bindings for the UCUM (Unified Code for Units of Measure) library",
   "repository": {

@@ -1,5 +1,5 @@
 /**
- * TypeScript definitions for octofhir-ucum-wasm
+ * TypeScript definitions for @octofhir/ucum-wasm
  */
 
 /**

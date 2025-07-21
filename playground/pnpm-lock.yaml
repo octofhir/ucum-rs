@@ -8,7 +8,7 @@ importers:
 
   .:
     dependencies:
-      octofhir-ucum-wasm:
+      '@octofhir/ucum-wasm':
         specifier: file:../ucum-wasm
         version: file:../ucum-wasm
     devDependencies:
@@ -208,6 +208,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.29':
     resolution: {integrity: sha512-uw6guiW/gcAGPDhLmd77/6lW8QLeiV5RUTsAX46Db6oLhGaVj4lhnPwb184s1bkc8kdVg/+h988dro8GRDpmYQ==}
+
+  '@octofhir/ucum-wasm@file:../ucum-wasm':
+    resolution: {directory: ../ucum-wasm, type: directory}
 
   '@rollup/rollup-android-arm-eabi@4.45.1':
     resolution: {integrity: sha512-NEySIFvMY0ZQO+utJkgoMiCAjMrGvnbDLHvcmlA33UXJpYBCvlBEbMMtV837uCkS+plG2umfhn0T5mMAxGrlRA==}
@@ -418,9 +421,6 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
-  octofhir-ucum-wasm@file:../ucum-wasm:
-    resolution: {directory: ../ucum-wasm, type: directory}
-
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
@@ -623,6 +623,8 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.4
 
+  '@octofhir/ucum-wasm@file:../ucum-wasm': {}
+
   '@rollup/rollup-android-arm-eabi@4.45.1':
     optional: true
 
@@ -790,8 +792,6 @@ snapshots:
   ms@2.1.3: {}
 
   nanoid@3.3.11: {}
-
-  octofhir-ucum-wasm@file:../ucum-wasm: {}
 
   picocolors@1.1.1: {}
 

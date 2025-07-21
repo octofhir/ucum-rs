@@ -12,7 +12,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "octofhir-ucum-wasm": "file:../ucum-wasm"
+    "@octofhir/ucum-wasm": "file:../ucum-wasm"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "6.1.0",

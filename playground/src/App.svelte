@@ -6,7 +6,7 @@
     get_unit_info,
     convert,
     arithmetic
-  } from 'octofhir-ucum-wasm';
+  } from '@octofhir/ucum-wasm';
 
   // Initialize WASM module
   onMount(async () => {
