@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-cli"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "clap",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "indexmap",
  "lazy_static",
@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-wasm"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

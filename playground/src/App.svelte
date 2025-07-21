@@ -8,11 +8,36 @@
     arithmetic
   } from '@octofhir/ucum-wasm';
 
-  // Initialize WASM module
+  // Theme management
+  let isDarkMode = $state(true);
+
+  // Initialize WASM module and theme
   onMount(async () => {
     await init();
     start();
+
+    // Load theme preference from localStorage
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme) {
+      isDarkMode = savedTheme === 'dark';
+    } else {
+      // Default to system preference
+      isDarkMode = !window.matchMedia('(prefers-color-scheme: light)').matches;
+    }
+    updateTheme();
   });
+
+  // Update theme
+  function updateTheme() {
+    document.documentElement.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
+    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+  }
+
+  // Toggle theme
+  function toggleTheme() {
+    isDarkMode = !isDarkMode;
+    updateTheme();
+  }
 
   // State for validation tab
   let validationInput = $state('');
@@ -141,7 +166,20 @@
 
 <main class="container">
   <div class="content-wrapper">
-    <h1>UCUM Playground</h1>
+    <div class="header">
+      <h1>UCUM Playground</h1>
+      <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle theme">
+        {#if isDarkMode}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3V4M12 20V21M4 12H3M6.31412 6.31412L5.5 5.5M17.6859 6.31412L18.5 5.5M6.31412 17.69L5.5 18.5M17.6859 17.69L18.5 18.5M21 12H20M16 12C16 14.2091 14.2091 16 12 16C9.79086 16 8 14.2091 8 12C8 9.79086 9.79086 8 12 8C14.2091 8 16 9.79086 16 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        {:else}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        {/if}
+      </button>
+    </div>
 
     <div class="intro">
       <p class="intro-text">
@@ -575,7 +613,6 @@
   .tabs {
     display: flex;
     gap: var(--space-sm);
-    margin-bottom: var(--space-xl);
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
@@ -586,6 +623,7 @@
   }
 
   .tabs button {
+    margin-top: 0;
     flex: 1;
     min-width: max-content;
     background: transparent;
@@ -642,6 +680,70 @@
     margin: 0;
     padding-left: var(--space-xl);
     font-weight: 500;
+  }
+
+  /* Header styles */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    max-width: 900px;
+    margin-bottom: var(--space-lg);
+  }
+
+  .header h1 {
+    margin: 0;
+    flex: 1;
+  }
+
+  .theme-toggle {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-primary);
+    padding: var(--space-sm);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .theme-toggle:hover {
+    background: var(--color-surface-elevated);
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .theme-toggle:active {
+    transform: translateY(0);
+  }
+
+  .theme-toggle svg {
+    transition: all var(--transition-fast);
+  }
+
+  @media (max-width: 640px) {
+    .header {
+      flex-direction: column;
+      gap: var(--space-md);
+      text-align: center;
+    }
+
+    .header h1 {
+      order: 1;
+    }
+
+    .theme-toggle {
+      order: 2;
+      align-self: center;
+    }
   }
 
   /* Mobile responsiveness for tabs */
