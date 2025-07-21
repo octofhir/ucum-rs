@@ -25,6 +25,11 @@ pub fn find_unit(code: &str) -> Option<&'static crate::types::UnitRecord> {
     registry::find_unit(code)
 }
 
+/// Get all units from the registry.
+pub fn get_all_units() -> &'static [crate::types::UnitRecord] {
+    registry::UNITS
+}
+
 /// Lookup a prefix by symbol.
 pub fn find_prefix(sym: &str) -> Option<&'static Prefix> {
     registry::find_prefix(sym)

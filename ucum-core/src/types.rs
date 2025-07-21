@@ -120,4 +120,5 @@ pub struct UnitRecord {
     pub offset: f64,
     pub special: SpecialKind,
     pub property: &'static str,
+    pub display_name: &'static str,
 }

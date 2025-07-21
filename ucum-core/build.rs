@@ -81,7 +81,7 @@ fn main() {
     out.push_str("];\n\n");
 
     // --- Parse units (base-unit + unit) ---
-    let mut units: Vec<(String, [i8; 7], f64, f64, String, String)> = Vec::new();
+    let mut units: Vec<(String, [i8; 7], f64, f64, String, String, String)> = Vec::new();
 
     // reuse reader on xml_data
     let mut reader = quick_xml::Reader::from_str(&xml_data);
@@ -106,17 +106,28 @@ fn main() {
                             .map(|a| String::from_utf8_lossy(&a.value).to_string());
                         let dim = dim_attr.as_deref().map(parse_dim).unwrap_or([0i8; 7]);
 
-                        // Extract property from base-unit
+                        // Extract property and display name from base-unit
                         let mut property = String::new();
+                        let mut display_name = String::new();
+                        let mut in_property_tag = false;
+                        let mut in_n_tag = false;
                         loop {
                             match reader.read_event() {
                                 Ok(Event::Text(ref text)) => {
-                                    if !property.is_empty() {
+                                    if in_property_tag {
                                         property = String::from_utf8_lossy(text).trim().to_string();
+                                        in_property_tag = false;
+                                    }
+                                    if in_n_tag {
+                                        display_name = String::from_utf8_lossy(text).trim().to_string();
+                                        in_n_tag = false;
                                     }
                                 }
                                 Ok(Event::Start(ref ve)) if ve.name().as_ref() == b"property" => {
-                                    property = String::from(""); // Mark that we're in a property element
+                                    in_property_tag = true;
+                                }
+                                Ok(Event::Start(ref ve)) if ve.name().as_ref() == b"n" => {
+                                    in_n_tag = true;
                                 }
                                 Ok(Event::End(ref ve)) if ve.name().as_ref() == b"base-unit" => break,
                                 Ok(Event::Eof) => break,
@@ -124,7 +135,12 @@ fn main() {
                             }
                         }
 
-                        units.push((code, dim, 1.0f64, 0.0f64, "SpecialKind::None".into(), property));
+                        // Default display name to code if not found
+                        if display_name.is_empty() {
+                            display_name = code.clone();
+                        }
+
+                        units.push((code, dim, 1.0f64, 0.0f64, "SpecialKind::None".into(), property, display_name));
                     }
                     b"unit" => {
                         let code = e
@@ -140,10 +156,13 @@ fn main() {
                             .map(|a| String::from_utf8_lossy(&a.value).to_string());
                         let mut dim = dim_attr.as_deref().map_or([0i8; 7], parse_dim);
                         // Need to capture <value> child to get factor (may combine Unit attr) and maybe offset
-                        // Also capture <property> child to get unit classification
+                        // Also capture <property> child to get unit classification and <n> for display name
                         let mut factor: Option<f64> = None;
                         let mut offset: f64 = 0.0;
                         let mut property = String::new();
+                        let mut display_name = String::new();
+                        let mut in_property_tag = false;
+                        let mut in_n_tag = false;
                         loop {
                             match reader.read_event() {
                                 Ok(Event::Empty(ref ve)) | Ok(Event::Start(ref ve)) => {
@@ -175,19 +194,31 @@ fn main() {
                                                 .unwrap_or(0.0);
                                         }
                                     } else if ve.name().as_ref() == b"property" {
-                                        property = String::from(""); // Mark that we're in a property element
+                                        in_property_tag = true;
+                                    } else if ve.name().as_ref() == b"n" {
+                                        in_n_tag = true;
                                     }
                                 }
                                 Ok(Event::Text(ref text)) => {
-                                    // Capture property text content
-                                    if !property.is_empty() {
+                                    // Capture property and display name text content
+                                    if in_property_tag {
                                         property = String::from_utf8_lossy(text).trim().to_string();
+                                        in_property_tag = false;
+                                    }
+                                    if in_n_tag {
+                                        display_name = String::from_utf8_lossy(text).trim().to_string();
+                                        in_n_tag = false;
                                     }
                                 }
                                 Ok(Event::End(ref ve)) if ve.name().as_ref() == b"unit" => break,
                                 Ok(Event::Eof) => break,
                                 _ => {}
                             }
+                        }
+
+                        // Default display name to code if not found
+                        if display_name.is_empty() {
+                            display_name = code.clone();
                         }
                         // Special handling for Celsius, Fahrenheit, Rankine, Réaumur, and Liter
                         match code.as_str() {
@@ -266,7 +297,7 @@ fn main() {
                                 _ => {}
                             }
                         }
-                        units.push((code, dim, factor.unwrap_or(1.0), offset, special, property));
+                        units.push((code, dim, factor.unwrap_or(1.0), offset, special, property, display_name));
                     }
                     _ => {}
                 }
@@ -282,10 +313,10 @@ fn main() {
     // Units array
     out.push_str("use crate::types::SpecialKind;\n");
     out.push_str("pub static UNITS: &[UnitRecord] = &[\n");
-    for (code, dim, factor, offset, special, property) in &units {
+    for (code, dim, factor, offset, special, property, display_name) in &units {
         out.push_str(&format!(
-            "    UnitRecord {{ code: \"{}\", dim: Dimension([{} ,{} ,{} ,{} ,{} ,{} ,{}]), factor: {}f64, offset: {}f64, special: {}, property: \"{}\" }},\n",
-            code, dim[0],dim[1],dim[2],dim[3],dim[4],dim[5],dim[6], factor, offset, special, property));
+            "    UnitRecord {{ code: \"{}\", dim: Dimension([{} ,{} ,{} ,{} ,{} ,{} ,{}]), factor: {}f64, offset: {}f64, special: {}, property: \"{}\", display_name: \"{}\" }},\n",
+            code, dim[0],dim[1],dim[2],dim[3],dim[4],dim[5],dim[6], factor, offset, special, property, display_name));
     }
     out.push_str("]\n;\n\n");
 

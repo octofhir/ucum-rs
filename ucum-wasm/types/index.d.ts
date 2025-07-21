@@ -8,6 +8,8 @@
 export interface UnitInfo {
   /** UCUM code for the unit */
   code: string;
+  /** Display name for the unit */
+  display_name: string;
   /** Conversion factor to canonical unit */
   factor: number;
   /** Offset for units with linear offset (e.g., °C) */
@@ -18,6 +20,8 @@ export interface UnitInfo {
   is_arbitrary: boolean;
   /** Dimensional vector [M, L, T, I, Θ, N, J] */
   dimensions: number[];
+  /** Property or class of the unit */
+  property: string;
 }
 
 /**

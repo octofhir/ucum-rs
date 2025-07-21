@@ -115,11 +115,13 @@ const massUnits = list_units('mass');
 ```typescript
 interface UnitInfo {
   code: string;           // UCUM code
+  display_name: string;   // Human-readable display name
   factor: number;         // Conversion factor to canonical unit
   offset: number;         // Offset for linear conversions
   is_special: boolean;    // Non-linear conversion required
   is_arbitrary: boolean;  // Arbitrary unit (e.g., [IU])
   dimensions: number[];   // Dimensional vector [M, L, T, I, Θ, N, J]
+  property: string;       // Unit property or class (e.g., "length", "mass")
 }
 ```
 

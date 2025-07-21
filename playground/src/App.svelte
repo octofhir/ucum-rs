@@ -290,6 +290,7 @@
         {#if unitInfo}
           <div class="result">
             <h3>Unit: {unitInfo.code}</h3>
+            <p><strong>Display Name:</strong> {unitInfo.display_name || unitInfo.code}</p>
             <p><strong>Class:</strong> {unitInfo.property || 'Unknown'}</p>
             <p>Factor: {unitInfo.factor}</p>
             <p>Offset: {unitInfo.offset}</p>

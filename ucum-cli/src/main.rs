@@ -203,10 +203,12 @@ fn handle_explain(code: &str) -> anyhow::Result<()> {
     // First try direct unit lookup
     if let Some(unit) = find_unit(code) {
         println!("Unit code:      {}", unit.code);
+        println!("Display name:   {}", unit.display_name);
         println!("Dimension:      {}", unit.dim);
         println!("Factor:         {}", unit.factor);
         println!("Offset:         {}", unit.offset);
         println!("Special kind:   {:?}", unit.special);
+        println!("Property:       {}", unit.property);
         return Ok(());
     }
 
@@ -227,58 +229,47 @@ fn handle_explain(code: &str) -> anyhow::Result<()> {
 }
 
 fn handle_list_units(filter: Option<&str>) -> anyhow::Result<()> {
+    use octofhir_ucum_core::get_all_units;
+
     println!("Supported UCUM Units:");
     println!("====================\n");
 
-    // Get all known unit codes from the test cases
-    let test_units = [
-        // Base units
-        "m", "kg", "s", "A", "K", "mol", "cd", // Common derived units
-        "g", "N", "J", "W", "Pa", "Hz", "V", "Ω", "C", "F", "S", "Wb", "T", "H",
-        // Common non-SI units
-        "L", "h", "min", "d", "a_t", "a_j", "deg", "rad", "sr", "gon",
-        // Temperature units
-        "Cel", "degF", "degR", "degRe", // Other common units
-        "%", "ppm", "ppb", "ppt", "ppq", "bit", "byte", "B", "bit_s", "Bd", "Bq", "Ci", "Gy",
-        "kat", "lm", "lx", "Sv", "W", "Wb", "st", "min", "h", "d", "a_j", "a_t", "a_g", "a", "wk",
-        "mo_j", "mo_s", "mo_g", "mo_t", "t", "ar", "l", "L", "ar", "bar", "u", "Da", "eV", "pc",
-        "AU", "ua", "bit_s", "Bd", "Bq", "Ci", "R", "RAD", "REM", "G", "m[H2O]", "m[Hg]", "[in_i]",
-        "[ft_i]", "[yd_i]", "[mi_i]", "[nmi_i]", "[acr_us]", "[acr_br]", "[acr_br]",
-    ];
-
-    println!("Units (partial list, filtering available):");
+    println!("Units (filtering available):");
     println!("----------------------------------------");
 
-    for code in test_units.iter() {
+    // Get all units from the registry
+    let all_units = get_all_units();
+
+    for unit in all_units {
+        // Apply filter if provided
         if let Some(filter_str) = filter {
-            if !code.to_lowercase().contains(&filter_str.to_lowercase()) {
+            if !unit.code.to_lowercase().contains(&filter_str.to_lowercase()) &&
+               !unit.display_name.to_lowercase().contains(&filter_str.to_lowercase()) &&
+               !unit.property.to_lowercase().contains(&filter_str.to_lowercase()) {
                 continue;
             }
         }
 
-        if let Some(unit) = find_unit(code) {
-            let special = if unit.offset != 0.0 {
-                format!(" (offset: {})", unit.offset)
-            } else {
-                String::new()
-            };
-
-            println!(
-                "{:<10} = {}{}",
-                code,
-                if unit.factor != 1.0 {
-                    format!("{} ", unit.factor)
-                } else {
-                    "".to_string()
-                },
-                special
-            );
+        let special = if unit.offset != 0.0 {
+            format!(" (offset: {})", unit.offset)
         } else {
-            println!("{:<10} = <not found in registry>", code);
-        }
+            String::new()
+        };
+
+        println!(
+            "{:<15} = {:<30} {}{}",
+            unit.code,
+            unit.display_name,
+            if unit.factor != 1.0 {
+                format!("{} ", unit.factor)
+            } else {
+                "".to_string()
+            },
+            special
+        );
     }
 
-    println!("\nNote: This is a partial list. Use the filter option to search for specific units.");
+    println!("\nNote: Use the filter option to search for specific units by code, name, or property.");
     println!("Example: octofhir-ucum list-units --filter temp");
 
     Ok(())

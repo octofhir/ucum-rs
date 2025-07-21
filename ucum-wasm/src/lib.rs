@@ -32,6 +32,7 @@ pub struct JsError {
 #[derive(Serialize, Deserialize)]
 pub struct UnitInfo {
     code: String,
+    display_name: String,
     factor: f64,
     offset: f64,
     is_special: bool,
@@ -67,6 +68,7 @@ fn convert_unit_record(record: &UnitRecord) -> UnitInfo {
 
     UnitInfo {
         code: record.code.to_string(),
+        display_name: record.display_name.to_string(),
         factor: record.factor,
         offset: record.offset,
         is_special,
