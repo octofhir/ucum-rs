@@ -2,7 +2,10 @@ use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
 use serde_wasm_bindgen::to_value;
 use octofhir_ucum_core::{
-    parse_expression, evaluate, find_unit, UnitRecord, EvalResult, UcumError
+    parse_expression, evaluate, find_unit, UnitRecord, EvalResult, UcumError, Quantity as UcumQuantity
+};
+use octofhir_ucum_fhir::{
+    FhirQuantity, ToFhirQuantity, FromFhirQuantity, convert_quantity, are_equivalent, FhirError
 };
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global allocator.
@@ -51,6 +54,14 @@ pub struct EvaluationResult {
 
 // Convert internal UcumError to JavaScript-friendly JsError
 fn convert_error(err: UcumError) -> JsError {
+    JsError {
+        message: err.to_string(),
+        error_type: format!("{:?}", err),
+    }
+}
+
+// Convert internal FhirError to JavaScript-friendly JsError
+fn convert_fhir_error(err: FhirError) -> JsError {
     JsError {
         message: err.to_string(),
         error_type: format!("{:?}", err),
@@ -263,4 +274,181 @@ pub fn list_units(filter: Option<String>) -> JsValue {
     // For now, we'll just return an empty array
 
     to_value(&units).unwrap()
+}
+
+// JavaScript-friendly FHIR Quantity
+#[derive(Serialize, Deserialize)]
+pub struct JsFhirQuantity {
+    value: f64,
+    unit: Option<String>,
+    system: Option<String>,
+    code: Option<String>,
+    comparator: Option<String>,
+}
+
+// JavaScript-friendly UCUM Quantity result
+#[derive(Serialize, Deserialize)]
+pub struct UcumQuantityResult {
+    value: f64,
+    unit: String,
+}
+
+// Convert between JsFhirQuantity and FhirQuantity
+fn js_to_fhir_quantity(js_quantity: &JsFhirQuantity) -> FhirQuantity {
+    FhirQuantity {
+        value: js_quantity.value,
+        unit: js_quantity.unit.clone(),
+        system: js_quantity.system.clone(),
+        code: js_quantity.code.clone(),
+        comparator: js_quantity.comparator.clone(),
+    }
+}
+
+fn fhir_to_js_quantity(fhir_quantity: &FhirQuantity) -> JsFhirQuantity {
+    JsFhirQuantity {
+        value: fhir_quantity.value,
+        unit: fhir_quantity.unit.clone(),
+        system: fhir_quantity.system.clone(),
+        code: fhir_quantity.code.clone(),
+        comparator: fhir_quantity.comparator.clone(),
+    }
+}
+
+// Create a FHIR Quantity with a UCUM code
+#[wasm_bindgen]
+pub fn create_fhir_quantity(value: f64, ucum_code: &str) -> JsValue {
+    let fhir_quantity = FhirQuantity::with_ucum_code(value, ucum_code);
+    let js_quantity = fhir_to_js_quantity(&fhir_quantity);
+    to_value(&js_quantity).unwrap()
+}
+
+// Convert a FHIR Quantity to a UCUM Quantity
+#[wasm_bindgen]
+pub fn fhir_to_ucum(js_quantity_val: JsValue) -> Result<JsValue, JsValue> {
+    // Deserialize the JavaScript object to our JsFhirQuantity struct
+    let js_quantity: JsFhirQuantity = match serde_wasm_bindgen::from_value(js_quantity_val) {
+        Ok(q) => q,
+        Err(err) => {
+            let js_error = JsError {
+                message: format!("Failed to deserialize FHIR Quantity: {}", err),
+                error_type: "DeserializationError".to_string(),
+            };
+            return Err(to_value(&js_error).unwrap());
+        }
+    };
+
+    // Convert to FhirQuantity
+    let fhir_quantity = js_to_fhir_quantity(&js_quantity);
+
+    // Convert to UcumQuantity
+    match fhir_quantity.to_ucum_quantity() {
+        Ok(ucum_quantity) => {
+            // Create a simple object with value and unit string
+            let result = UcumQuantityResult {
+                value: ucum_quantity.value,
+                unit: ucum_quantity.unit.to_string(),
+            };
+            Ok(to_value(&result).unwrap())
+        },
+        Err(err) => {
+            Err(to_value(&convert_fhir_error(err)).unwrap())
+        }
+    }
+}
+
+// Convert a UCUM Quantity to a FHIR Quantity
+#[wasm_bindgen]
+pub fn ucum_to_fhir(value: f64, unit: &str) -> Result<JsValue, JsValue> {
+    // Parse the unit expression
+    let expr = match parse_expression(unit) {
+        Ok(expr) => expr,
+        Err(err) => return Err(to_value(&convert_error(err)).unwrap()),
+    };
+
+    // Create a UCUM Quantity
+    let ucum_quantity = UcumQuantity {
+        value,
+        unit: expr,
+    };
+
+    // Convert to FHIR Quantity
+    match ucum_quantity.to_fhir_quantity() {
+        Ok(fhir_quantity) => {
+            let js_quantity = fhir_to_js_quantity(&fhir_quantity);
+            Ok(to_value(&js_quantity).unwrap())
+        },
+        Err(err) => {
+            Err(to_value(&convert_fhir_error(err)).unwrap())
+        }
+    }
+}
+
+// Convert a FHIR Quantity from one unit to another
+#[wasm_bindgen]
+pub fn convert_fhir_quantity(js_quantity_val: JsValue, target_unit: &str) -> Result<JsValue, JsValue> {
+    // Deserialize the JavaScript object to our JsFhirQuantity struct
+    let js_quantity: JsFhirQuantity = match serde_wasm_bindgen::from_value(js_quantity_val) {
+        Ok(q) => q,
+        Err(err) => {
+            let js_error = JsError {
+                message: format!("Failed to deserialize FHIR Quantity: {}", err),
+                error_type: "DeserializationError".to_string(),
+            };
+            return Err(to_value(&js_error).unwrap());
+        }
+    };
+
+    // Convert to FhirQuantity
+    let fhir_quantity = js_to_fhir_quantity(&js_quantity);
+
+    // Convert to target unit
+    match convert_quantity(&fhir_quantity, target_unit) {
+        Ok(converted) => {
+            let js_converted = fhir_to_js_quantity(&converted);
+            Ok(to_value(&js_converted).unwrap())
+        },
+        Err(err) => {
+            Err(to_value(&convert_fhir_error(err)).unwrap())
+        }
+    }
+}
+
+// Check if two FHIR Quantities are equivalent
+#[wasm_bindgen]
+pub fn are_fhir_quantities_equivalent(a_val: JsValue, b_val: JsValue) -> Result<bool, JsValue> {
+    // Deserialize the first JavaScript object
+    let a_js: JsFhirQuantity = match serde_wasm_bindgen::from_value(a_val) {
+        Ok(q) => q,
+        Err(err) => {
+            let js_error = JsError {
+                message: format!("Failed to deserialize first FHIR Quantity: {}", err),
+                error_type: "DeserializationError".to_string(),
+            };
+            return Err(to_value(&js_error).unwrap());
+        }
+    };
+
+    // Deserialize the second JavaScript object
+    let b_js: JsFhirQuantity = match serde_wasm_bindgen::from_value(b_val) {
+        Ok(q) => q,
+        Err(err) => {
+            let js_error = JsError {
+                message: format!("Failed to deserialize second FHIR Quantity: {}", err),
+                error_type: "DeserializationError".to_string(),
+            };
+            return Err(to_value(&js_error).unwrap());
+        }
+    };
+
+    // Convert to FhirQuantity
+    let a_fhir = js_to_fhir_quantity(&a_js);
+    let b_fhir = js_to_fhir_quantity(&b_js);
+
+    // Check if they are equivalent
+    match are_equivalent(&a_fhir, &b_fhir) {
+        Ok(result) => Ok(result),
+        Err(err) => {
+            Err(to_value(&convert_fhir_error(err)).unwrap())
+        }
+    }
 }

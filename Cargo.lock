@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-cli"
-version = "0.3.0"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-core"
-version = "0.3.0"
+version = "0.1.7"
 dependencies = [
  "indexmap",
  "lazy_static",
@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-fhir"
-version = "0.3.0"
+version = "0.1.7"
 dependencies = [
  "octofhir-ucum-core",
  "serde",
@@ -796,11 +796,12 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-wasm"
-version = "0.3.0"
+version = "0.1.7"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
  "octofhir-ucum-core",
+ "octofhir-ucum-fhir",
  "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",

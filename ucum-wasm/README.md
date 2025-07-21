@@ -156,6 +156,84 @@ const hemoglobinInG = convert(15, 'g/dL', 'g/L'); // 150
 const bodyTempC = convert(98.6, '[degF]', 'Cel'); // ~37.0
 ```
 
+### FHIR Integration
+
+This package includes full support for FHIR Quantity data types, allowing seamless integration with FHIR-based healthcare applications.
+
+#### FHIR Quantity Functions
+
+```javascript
+import { 
+  start, 
+  create_fhir_quantity, 
+  convert_fhir_quantity, 
+  are_fhir_quantities_equivalent,
+  fhir_to_ucum,
+  ucum_to_fhir
+} from '@octofhir/ucum-wasm';
+
+start();
+
+// Create a FHIR Quantity
+const weight = create_fhir_quantity(70, 'kg');
+// Returns: { value: 70, unit: 'kg', system: 'http://unitsofmeasure.org', code: 'kg' }
+
+// Convert a FHIR Quantity to a different unit
+const weightInGrams = convert_fhir_quantity(weight, 'g');
+// Returns: { value: 70000, unit: 'g', system: 'http://unitsofmeasure.org', code: 'g' }
+
+// Check if two FHIR Quantities are equivalent
+const weight2 = create_fhir_quantity(70000, 'g');
+const areEqual = are_fhir_quantities_equivalent(weight, weight2); // true
+
+// Convert between FHIR and UCUM quantities
+const ucumQuantity = fhir_to_ucum(weight);
+// Returns: { value: 70, unit: 'kg' }
+
+// Convert from a UCUM value to a FHIR Quantity
+const fhirQuantity = ucum_to_fhir(36.6, 'Cel');
+// Returns: { value: 36.6, unit: 'Cel', system: 'http://unitsofmeasure.org', code: 'Cel' }
+```
+
+#### FHIR Quantity Structure
+
+A FHIR Quantity includes:
+
+- `value`: The numeric value
+- `unit`: The human-readable unit representation
+- `system`: The system that defines the coded unit form (for UCUM, this is "http://unitsofmeasure.org")
+- `code`: The coded form of the unit (for UCUM, this is the UCUM code)
+- `comparator`: The comparator (<, <=, >=, >) for the value (optional)
+
+#### Error Handling with FHIR Quantities
+
+```javascript
+try {
+  // Try to convert between incompatible units
+  const weight = create_fhir_quantity(70, 'kg');
+  const invalidConversion = convert_fhir_quantity(weight, 'Cel');
+} catch (error) {
+  console.error('Conversion failed:', error.message);
+  // Error: Units are not commensurable: kg and Cel have different dimensions
+}
+
+try {
+  // Try to create a FHIR Quantity with an invalid UCUM code
+  const invalidQuantity = create_fhir_quantity(100, 'invalid_unit');
+} catch (error) {
+  console.error('Creation failed:', error.message);
+  // Error: Invalid UCUM code: invalid_unit
+}
+```
+
+#### Use Cases for FHIR Integration
+
+- **Electronic Health Records (EHR)**: Validate and convert patient measurements stored as FHIR Quantities
+- **Clinical Decision Support**: Compare patient values against reference ranges in different units
+- **Lab Result Integration**: Convert lab results between different unit systems while maintaining FHIR compatibility
+- **FHIR API Development**: Ensure consistent unit handling in FHIR-based APIs
+- **Healthcare Analytics**: Process and normalize measurement data from multiple sources
+
 ### Complex Unit Expressions
 
 ```javascript

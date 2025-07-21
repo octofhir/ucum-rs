@@ -18,6 +18,7 @@ default = ["console_error_panic_hook"]
 
 [dependencies]
 octofhir-ucum-core = { path = "../ucum-core" }
+octofhir-ucum-fhir = { path = "../ucum-fhir", features = ["serde"] }
 wasm-bindgen = "0.2"
 serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = "0.6"
