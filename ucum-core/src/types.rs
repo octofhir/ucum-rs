@@ -7,6 +7,7 @@ pub struct Prefix {
     pub symbol: &'static str,
     pub factor: f64,
     pub exponent: i8,
+    pub display_name: &'static str,
 }
 
 /// Dimensional vector (M, L, T, I, Θ, N, J) per UCUM spec.
@@ -100,7 +101,7 @@ impl SpecialKind {
         match self {
             SpecialKind::Log10 => 10.0,             // 10^(x) for B, 10^(x/10) for dB
             SpecialKind::Ln => std::f64::consts::E, // e^(x)
-            _ => 1.0,                               // For None, LinearOffset, TanTimes100, Arbitrary
+            _ => 1.0, // For None, LinearOffset, TanTimes100, Arbitrary
         }
     }
 

@@ -15,13 +15,31 @@ use crate::parser;
 pub fn parse_expression(input: &str) -> Result<UnitExpr, crate::error::UcumError> {
     let input = input.trim();
 
-    // Only one top-level slash allowed
-    if input.matches('/').count() > 1 {
-        return Err(crate::error::UcumError::MultipleSlash);
-    }
+    // Multiple division operators are allowed per UCUM specification §7.4
+    // They are evaluated left-to-right with same precedence as multiplication
     // Percent sign must stand alone
     if input.contains('%') && input != "%" {
         return Err(crate::error::UcumError::InvalidPercentPlacement);
+    }
+    // Addition operators are not allowed in UCUM expressions
+    if input.contains('+') && !input.starts_with("10*+") && !input.starts_with("10^+") {
+        // Allow + in 10*+n and 10^+n contexts, but reject standalone + operations
+        let mut in_annotation = false;
+        let mut chars = input.chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '{' => in_annotation = true,
+                '}' => in_annotation = false,
+                '+' if !in_annotation => {
+                    // Check if this + is part of a valid 10*+ or 10^+ pattern
+                    let before = input.split('+').next().unwrap_or("");
+                    if !before.ends_with("10*") && !before.ends_with("10^") {
+                        return Err(crate::error::UcumError::InvalidExpression);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     // Run full parser

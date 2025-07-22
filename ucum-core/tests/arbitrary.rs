@@ -1,4 +1,4 @@
-use octofhir_ucum_core::{evaluate, parse_expression, Dimension, EvalResult, UcumError};
+use octofhir_ucum_core::{Dimension, EvalResult, UcumError, evaluate, parse_expression};
 
 fn eval(expr: &str) -> Result<EvalResult, UcumError> {
     let ast = parse_expression(expr).expect("parse ok");

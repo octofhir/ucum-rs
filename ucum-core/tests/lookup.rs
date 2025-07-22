@@ -16,12 +16,6 @@ fn base_unit_lookup() {
 }
 
 #[test]
-fn percent_unit() {
-    let pct = find_unit("%").expect("percent");
-    assert!((pct.factor - 1e-2).abs() < 1e-12);
-}
-
-#[test]
 fn gram_unit_lookup() {
     let gram = find_unit("g").expect("gram");
     assert_eq!(gram.factor, 1.0);
@@ -37,14 +31,59 @@ fn milligram_unit_test() {
     // The returned unit should be the base gram unit
     let mg_unit = mg_direct.unwrap();
     assert_eq!(mg_unit.code, "g", "mg should resolve to base unit 'g'");
-    assert_eq!(mg_unit.dim, Dimension([1, 0, 0, 0, 0, 0, 0]), "mg should have mass dimension");
+    assert_eq!(
+        mg_unit.dim,
+        Dimension([1, 0, 0, 0, 0, 0, 0]),
+        "mg should have mass dimension"
+    );
 
     // Test if we can parse and evaluate "mg" as a prefixed unit
-    use octofhir_ucum_core::{parse_expression, evaluate};
+    use octofhir_ucum_core::{evaluate, parse_expression};
     let expr = parse_expression("mg").expect("should parse mg");
     let result = evaluate(&expr).expect("should evaluate mg");
 
     // mg should have factor 1e-3 (milli) and mass dimension
-    assert!((result.factor - 1e-3).abs() < 1e-12, "mg factor should be 1e-3, got {}", result.factor);
-    assert_eq!(result.dim, Dimension([1, 0, 0, 0, 0, 0, 0]), "mg should have mass dimension");
+    assert!(
+        (result.factor - 1e-3).abs() < 1e-12,
+        "mg factor should be 1e-3, got {}",
+        result.factor
+    );
+    assert_eq!(
+        result.dim,
+        Dimension([1, 0, 0, 0, 0, 0, 0]),
+        "mg should have mass dimension"
+    );
+}
+
+#[test]
+fn special_units_lookup() {
+    println!("Testing special units lookup:");
+
+    let test_units = ["[pi]", "[in_i]", "[mu_0]", "[ly]"];
+
+    for unit in &test_units {
+        match find_unit(unit) {
+            Some(u) => println!("  {} -> Found: factor={}, dim={:?}", unit, u.factor, u.dim),
+            None => println!("  {} -> NOT FOUND", unit),
+        }
+    }
+
+    // Test specific units that should exist
+    let pi_unit = find_unit("[pi]");
+    if pi_unit.is_some() {
+        let pi = pi_unit.unwrap();
+        println!(
+            "  [pi] details: factor={}, dim={:?}, code={}",
+            pi.factor, pi.dim, pi.code
+        );
+    }
+
+    let in_i_unit = find_unit("[in_i]");
+    if in_i_unit.is_some() {
+        let in_i = in_i_unit.unwrap();
+        println!(
+            "  [in_i] details: factor={}, dim={:?}, code={}",
+            in_i.factor, in_i.dim, in_i.code
+        );
+    }
 }

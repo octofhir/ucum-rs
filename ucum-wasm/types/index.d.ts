@@ -37,6 +37,106 @@ export interface EvaluationResult {
 }
 
 /**
+ * Result of analyzing a UCUM unit expression
+ */
+export interface UnitAnalysis {
+  /** The analyzed expression */
+  expression: string;
+  /** Conversion factor to canonical unit */
+  factor: number;
+  /** Offset for units with linear offset */
+  offset: number;
+  /** Dimensional vector [M, L, T, I, Θ, N, J] */
+  dimensions: number[];
+  /** Whether the unit is dimensionless */
+  is_dimensionless: boolean;
+  /** Whether the unit has an offset */
+  has_offset: boolean;
+}
+
+/**
+ * Canonical unit representation
+ */
+export interface CanonicalUnit {
+  /** Canonical unit expression */
+  unit: string;
+  /** Conversion factor to canonical unit */
+  factor: number;
+  /** Offset for units with linear offset */
+  offset: number;
+  /** Dimensional vector [M, L, T, I, Θ, N, J] */
+  dimensions: number[];
+}
+
+/**
+ * Result of unit arithmetic operations
+ */
+export interface UnitArithmeticResult {
+  /** Resulting unit expression */
+  expression: string;
+  /** Conversion factor */
+  factor: number;
+  /** Dimensional vector [M, L, T, I, Θ, N, J] */
+  dimensions: number[];
+  /** Offset for units with linear offset */
+  offset: number;
+  /** Whether the result is dimensionless */
+  is_dimensionless: boolean;
+}
+
+/**
+ * Result of unit search operations
+ */
+export interface SearchResult {
+  /** Array of matching units */
+  units: UnitInfo[];
+}
+
+/**
+ * Result of fuzzy unit search
+ */
+export interface FuzzySearchResult {
+  /** Array of fuzzy matches */
+  results: FuzzyMatch[];
+}
+
+/**
+ * A single fuzzy search match
+ */
+export interface FuzzyMatch {
+  /** The matched unit */
+  unit: UnitInfo;
+  /** Match score */
+  score: number;
+}
+
+/**
+ * FHIR Quantity representation
+ */
+export interface FhirQuantity {
+  /** Numerical value */
+  value: number;
+  /** Human-readable unit */
+  unit?: string;
+  /** System URI (typically UCUM) */
+  system?: string;
+  /** Coded unit */
+  code?: string;
+  /** Comparison operator */
+  comparator?: string;
+}
+
+/**
+ * UCUM Quantity result
+ */
+export interface UcumQuantityResult {
+  /** Numerical value */
+  value: number;
+  /** UCUM unit expression */
+  unit: string;
+}
+
+/**
  * Initialize the WASM module
  */
 export function start(): void;
@@ -48,6 +148,100 @@ export function start(): void;
  * @throws Error if the expression is invalid
  */
 export function validate(expression: string): boolean;
+
+/**
+ * Analyze a UCUM unit expression
+ * @param expression - UCUM expression to analyze
+ * @returns Analysis result with detailed information
+ * @throws Error if the expression is invalid
+ */
+export function analyze_unit(expression: string): UnitAnalysis;
+
+/**
+ * Validate that a UCUM expression has a specific property
+ * @param expression - UCUM expression to validate
+ * @param property - Expected property (e.g., "length", "mass")
+ * @returns true if the expression has the specified property
+ * @throws Error if the expression is invalid
+ */
+export function validate_property(expression: string, property: string): boolean;
+
+/**
+ * Check if two units are comparable (same dimensions)
+ * @param unit1 - First unit expression
+ * @param unit2 - Second unit expression
+ * @returns true if the units are comparable
+ * @throws Error if either expression is invalid
+ */
+export function units_comparable(unit1: string, unit2: string): boolean;
+
+/**
+ * Get the canonical representation of a unit
+ * @param expression - UCUM expression
+ * @returns Canonical unit information
+ * @throws Error if the expression is invalid
+ */
+export function get_canonical(expression: string): CanonicalUnit;
+
+/**
+ * Multiply two unit expressions
+ * @param unit1 - First unit expression
+ * @param unit2 - Second unit expression
+ * @returns Result of multiplication
+ * @throws Error if either expression is invalid
+ */
+export function multiply_units(unit1: string, unit2: string): UnitArithmeticResult;
+
+/**
+ * Divide two unit expressions
+ * @param numerator - Numerator unit expression
+ * @param denominator - Denominator unit expression
+ * @returns Result of division
+ * @throws Error if either expression is invalid
+ */
+export function divide_units(numerator: string, denominator: string): UnitArithmeticResult;
+
+/**
+ * Search units by text query
+ * @param query - Text to search for
+ * @returns Search results
+ * @throws Error if search fails
+ */
+export function search_units_text(query: string): SearchResult;
+
+/**
+ * Search units by property
+ * @param property - Property to search for (e.g., "length", "mass")
+ * @returns Search results
+ * @throws Error if search fails
+ */
+export function search_units_property(property: string): SearchResult;
+
+/**
+ * Get different forms of a unit
+ * @param base_code - Base unit code
+ * @returns Different forms of the unit
+ * @throws Error if unit not found
+ */
+export function get_unit_forms(base_code: string): SearchResult;
+
+/**
+ * Fuzzy search for units
+ * @param query - Search query
+ * @param threshold - Minimum match score threshold
+ * @returns Fuzzy search results
+ * @throws Error if search fails
+ */
+export function search_units_fuzzy(query: string, threshold: number): FuzzySearchResult;
+
+/**
+ * Search units using regular expressions
+ * @param pattern - Regular expression pattern
+ * @param case_sensitive - Whether search is case sensitive
+ * @returns Search results
+ * @throws Error if pattern is invalid or search fails
+ */
+export function search_units_regex(pattern: string, case_sensitive: boolean): SearchResult;
 
 /**
  * Get information about a unit
@@ -89,7 +283,7 @@ export function arithmetic(
   operation: "mul" | "div",
   right_unit: string,
   value: number
-): EvaluationResult;
+): UnitArithmeticResult;
 
 /**
  * List all available units
@@ -97,3 +291,47 @@ export function arithmetic(
  * @returns Array of unit information
  */
 export function list_units(filter?: string): UnitInfo[];
+
+/**
+ * Create a FHIR Quantity with a UCUM code
+ * @param value - Numerical value
+ * @param ucum_code - UCUM unit code
+ * @returns FHIR Quantity object
+ * @throws Error if the UCUM code is invalid
+ */
+export function create_fhir_quantity(value: number, ucum_code: string): FhirQuantity;
+
+/**
+ * Convert a FHIR Quantity to a UCUM Quantity
+ * @param js_quantity_val - FHIR Quantity object
+ * @returns UCUM Quantity result
+ * @throws Error if conversion fails
+ */
+export function fhir_to_ucum(js_quantity_val: FhirQuantity): UcumQuantityResult;
+
+/**
+ * Convert a UCUM Quantity to a FHIR Quantity
+ * @param value - Numerical value
+ * @param unit - UCUM unit expression
+ * @returns FHIR Quantity object
+ * @throws Error if the unit is invalid
+ */
+export function ucum_to_fhir(value: number, unit: string): FhirQuantity;
+
+/**
+ * Convert a FHIR Quantity from one unit to another
+ * @param js_quantity_val - Source FHIR Quantity
+ * @param target_unit - Target UCUM unit expression
+ * @returns Converted FHIR Quantity
+ * @throws Error if conversion fails
+ */
+export function convert_fhir_quantity(js_quantity_val: FhirQuantity, target_unit: string): FhirQuantity;
+
+/**
+ * Check if two FHIR Quantities are equivalent
+ * @param a_val - First FHIR Quantity
+ * @param b_val - Second FHIR Quantity
+ * @returns true if the quantities are equivalent
+ * @throws Error if comparison fails
+ */
+export function are_fhir_quantities_equivalent(a_val: FhirQuantity, b_val: FhirQuantity): boolean;

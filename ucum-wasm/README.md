@@ -275,6 +275,145 @@ This package works in all modern browsers that support WebAssembly:
 
 Requires Node.js 20+ with WebAssembly support.
 
+## UCUM Specification Implementation
+
+This package implements the [Unified Code for Units of Measure (UCUM) specification](https://ucum.org/ucum.html), which defines a system for unambiguous representation of units of measure.
+
+### Relationship to the UCUM Specification
+
+The implementation follows the UCUM specification closely, including:
+
+- **Base Units**: All seven base units (mass, length, time, electric current, temperature, amount of substance, luminous intensity)
+- **Derived Units**: All derived units (Newton, Pascal, Joule, etc.)
+- **Prefixes**: All SI prefixes (kilo-, milli-, micro-, etc.)
+- **Grammar**: The full UCUM grammar for parsing unit expressions
+- **Special Units**: Units with special handling (temperature, logarithmic, arbitrary)
+- **Annotations**: Support for annotated units (e.g., mm[Hg])
+
+The implementation is designed to be:
+- **Complete**: Covers all aspects of the UCUM specification
+- **Accurate**: Follows the specification precisely
+- **Robust**: Handles edge cases and provides clear error messages
+- **Performant**: Optimized for speed and memory efficiency
+
+### Implementation Details
+
+The WebAssembly package is built on top of the Rust core library, which uses:
+
+1. A custom parser to convert string expressions into an abstract syntax tree (AST)
+2. An evaluator to traverse the AST and determine canonical form, conversion factor, and dimensions
+3. A registry of all standard UCUM units
+4. Special handling for units with offsets (e.g., temperature) and arbitrary units
+
+## Extending the Library
+
+The WebAssembly package provides several ways to extend the library for specific domains or applications.
+
+### Custom Units Registry
+
+You can create a custom registry with your own units:
+
+```javascript
+import { start, create_registry, add_unit_to_registry, validate_with_registry } from '@octofhir/ucum-wasm';
+
+// Initialize the WASM module
+start();
+
+// Create a custom registry
+const registry = create_registry();
+
+// Add a custom unit
+add_unit_to_registry(registry, {
+  code: "myUnit",
+  display_name: "My Custom Unit",
+  factor: 42.0,
+  dimensions: [0, 0, 0, 0, 0, 0, 0], // Dimensionless
+  is_metric: false,
+  is_special: false,
+  is_arbitrary: false,
+  property: "custom"
+});
+
+// Validate using the custom registry
+const isValid = validate_with_registry(registry, "myUnit"); // true
+```
+
+### Custom Arbitrary Units
+
+You can define custom arbitrary units for specific domains:
+
+```javascript
+import { start, create_registry, add_unit_to_registry, validate_with_registry } from '@octofhir/ucum-wasm';
+
+// Initialize the WASM module
+start();
+
+// Create a custom registry
+const registry = create_registry();
+
+// Add a custom arbitrary unit
+add_unit_to_registry(registry, {
+  code: "[myArb]",
+  display_name: "My Arbitrary Unit",
+  factor: 1.0, // Arbitrary units have a factor of 1.0
+  dimensions: [0, 0, 0, 0, 0, 0, 0], // Dimensionless
+  is_metric: false,
+  is_special: false,
+  is_arbitrary: true, // Mark as arbitrary
+  property: "arbitrary"
+});
+
+// Validate using the custom registry
+const isValid = validate_with_registry(registry, "[myArb]"); // true
+```
+
+### Custom Conversion Functions
+
+For special units or complex conversions, you can implement custom conversion functions:
+
+```javascript
+import { start, validate, get_unit_info } from '@octofhir/ucum-wasm';
+
+// Initialize the WASM module
+start();
+
+// Custom conversion function for temperature
+function convertTemperature(value, fromUnit, toUnit) {
+  // Validate the units
+  if (!validate(fromUnit) || !validate(toUnit)) {
+    throw new Error("Invalid unit");
+  }
+  
+  // Get unit information
+  const fromInfo = get_unit_info(fromUnit);
+  const toInfo = get_unit_info(toUnit);
+  
+  // Check if the units are commensurable
+  if (fromInfo.dimensions.join(',') !== toInfo.dimensions.join(',')) {
+    throw new Error("Units are not commensurable");
+  }
+  
+  // Handle special case for temperature units with offsets
+  if (fromUnit === "Cel" && toUnit === "[degF]") {
+    return value * 9.0/5.0 + 32.0;
+  } else if (fromUnit === "[degF]" && toUnit === "Cel") {
+    return (value - 32.0) * 5.0/9.0;
+  } else if ((fromUnit === "Cel" || fromUnit === "[degF]") && toUnit === "K") {
+    const celsius = fromUnit === "Cel" ? value : (value - 32.0) * 5.0/9.0;
+    return celsius + 273.15;
+  } else if (fromUnit === "K" && (toUnit === "Cel" || toUnit === "[degF]")) {
+    const celsius = value - 273.15;
+    return toUnit === "Cel" ? celsius : celsius * 9.0/5.0 + 32.0;
+  }
+  
+  // For other units, use the standard conversion
+  return value * fromInfo.factor / toInfo.factor;
+}
+
+// Example usage
+const result = convertTemperature(25, "Cel", "[degF]"); // 77
+```
+
 ## Contributing
 
 This package is part of the [ucum-rs](https://github.com/octofhir/ucum-rs) project. Please see the main repository for contribution guidelines.

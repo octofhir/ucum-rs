@@ -1,5 +1,10 @@
 # UCUM-RS Development Guidelines
 
+Before implementing big features prepare ADR(https://github.com/joelparkerhenderson/architecture-decision-record) and only after that start writing code 
+
+Specification placed under the spec folder. Before big changes validate that we align with spec
+
+
 This document provides guidelines for developing and maintaining the UCUM-RS project, a Rust implementation of the Unified Code for Units of Measure (UCUM).
 
 ## Project Structure

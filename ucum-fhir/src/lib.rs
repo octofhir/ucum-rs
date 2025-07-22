@@ -30,9 +30,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use octofhir_ucum_core::{
-    evaluate, parse_expression, Quantity as UcumQuantity, UcumError,
-};
+use octofhir_ucum_core::{Quantity as UcumQuantity, UcumError, evaluate, parse_expression};
 use thiserror::Error;
 
 #[cfg(feature = "serde")]
@@ -161,17 +159,12 @@ impl FhirQuantity {
         // Check if this is a UCUM quantity
         if !self.is_ucum() {
             return Err(FhirError::InvalidSystem(
-                self.system
-                    .clone()
-                    .unwrap_or_else(|| "None".to_string()),
+                self.system.clone().unwrap_or_else(|| "None".to_string()),
             ));
         }
 
         // Get the UCUM code
-        let code = self
-            .code
-            .as_ref()
-            .ok_or(FhirError::MissingField("code"))?;
+        let code = self.code.as_ref().ok_or(FhirError::MissingField("code"))?;
 
         // Parse the UCUM expression
         let expr = parse_expression(code)?;
@@ -418,7 +411,10 @@ mod tests {
         let quantity = FhirQuantity::with_ucum_code(10.0, "mg");
         assert_eq!(quantity.value, 10.0);
         assert_eq!(quantity.code, Some("mg".to_string()));
-        assert_eq!(quantity.system, Some("http://unitsofmeasure.org".to_string()));
+        assert_eq!(
+            quantity.system,
+            Some("http://unitsofmeasure.org".to_string())
+        );
     }
 
     #[test]
@@ -494,7 +490,7 @@ mod tests {
 
         println!("diff: {}", diff);
         println!("max: {}", max);
-        println!("diff/max: {}", diff/max);
+        println!("diff/max: {}", diff / max);
         println!("EPSILON: {}", 1e-6);
 
         assert!(are_equivalent(&a, &b).unwrap());

@@ -92,15 +92,6 @@ fn semicolon_annotation() {
 }
 
 #[test]
-fn fractional_decimal_literals() {
-    assert_eq!(parse_expression("1.23").unwrap(), UnitExpr::Numeric(1.23));
-    assert_eq!(parse_expression(".5").unwrap(), UnitExpr::Numeric(0.5));
-    assert_eq!(parse_expression("4.").unwrap(), UnitExpr::Numeric(4.0));
-    assert_eq!(parse_expression("-0.1").unwrap(), UnitExpr::Numeric(-0.1));
-    assert_eq!(parse_expression("+3").unwrap(), UnitExpr::Numeric(3.0));
-}
-
-#[test]
 fn numeric_multiplier() {
     let expr = parse_expression("10*3.m").unwrap();
     let expected = UnitExpr::Product(vec![

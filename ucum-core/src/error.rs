@@ -22,4 +22,7 @@ pub enum UcumError {
 
     #[error("conversion error: {0}")]
     ConversionError(&'static str),
+
+    #[error("invalid property: {0}")]
+    InvalidProperty(String),
 }

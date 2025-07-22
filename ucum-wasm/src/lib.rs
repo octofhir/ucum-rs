@@ -1,12 +1,32 @@
-use wasm_bindgen::prelude::*;
-use serde::{Serialize, Deserialize};
-use serde_wasm_bindgen::to_value;
 use octofhir_ucum_core::{
-    parse_expression, evaluate, find_unit, UnitRecord, EvalResult, UcumError, Quantity as UcumQuantity
+    EvalResult,
+    Quantity as UcumQuantity,
+    UcumError,
+    UnitRecord,
+    analyse,
+    evaluate,
+    find_unit,
+    get_all_units,
+    get_canonical_units,
+    get_defined_forms as core_get_defined_forms,
+    is_comparable,
+    parse_expression,
+    search_units as core_search_units,
+    search_units_by_property as core_search_by_property,
+    search_units_fuzzy as core_search_fuzzy,
+    search_units_regex as core_search_regex,
+    unit_divide,
+    unit_multiply,
+    // New ADR-001 API functions with aliases to avoid conflicts
+    validate as core_validate,
+    validate_in_property,
 };
 use octofhir_ucum_fhir::{
-    FhirQuantity, ToFhirQuantity, FromFhirQuantity, convert_quantity, are_equivalent, FhirError
+    FhirError, FhirQuantity, ToFhirQuantity, are_equivalent, convert_quantity,
 };
+use serde::{Deserialize, Serialize};
+use serde_wasm_bindgen::to_value;
+use wasm_bindgen::prelude::*;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global allocator.
 #[cfg(feature = "wee_alloc")]
@@ -50,6 +70,54 @@ pub struct EvaluationResult {
     factor: f64,
     offset: f64,
     dimensions: Vec<i8>,
+}
+
+// JavaScript-friendly unit analysis result
+#[derive(Serialize, Deserialize)]
+pub struct JsUnitAnalysis {
+    expression: String,
+    factor: f64,
+    offset: f64,
+    dimensions: Vec<i8>,
+    is_dimensionless: bool,
+    has_offset: bool,
+}
+
+// JavaScript-friendly canonical unit result
+#[derive(Serialize, Deserialize)]
+pub struct JsCanonicalUnit {
+    unit: String,
+    factor: f64,
+    offset: f64,
+    dimensions: Vec<i8>,
+}
+
+// JavaScript-friendly unit arithmetic result
+#[derive(Serialize, Deserialize)]
+pub struct JsUnitArithmeticResult {
+    expression: String,
+    factor: f64,
+    dimensions: Vec<i8>,
+    offset: f64,
+    is_dimensionless: bool,
+}
+
+// JavaScript-friendly search result
+#[derive(Serialize, Deserialize)]
+pub struct JsSearchResult {
+    units: Vec<UnitInfo>,
+}
+
+// JavaScript-friendly fuzzy search result
+#[derive(Serialize, Deserialize)]
+pub struct JsFuzzySearchResult {
+    results: Vec<JsFuzzyMatch>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsFuzzyMatch {
+    unit: UnitInfo,
+    score: i64,
 }
 
 // Convert internal UcumError to JavaScript-friendly JsError
@@ -98,11 +166,191 @@ fn convert_eval_result(result: EvalResult) -> EvaluationResult {
     }
 }
 
-// Validate a UCUM expression
+// Validate a UCUM expression using enhanced API
 #[wasm_bindgen]
 pub fn validate(expression: &str) -> Result<bool, JsValue> {
-    match parse_expression(expression) {
+    match core_validate(expression) {
         Ok(_) => Ok(true),
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+// Analyze a UCUM expression - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn analyze_unit(expression: &str) -> Result<JsValue, JsValue> {
+    match analyse(expression) {
+        Ok(analysis) => {
+            let js_analysis = JsUnitAnalysis {
+                expression: analysis.expression,
+                factor: analysis.factor,
+                offset: analysis.offset,
+                dimensions: analysis.dimension.0.to_vec(),
+                is_dimensionless: analysis.is_dimensionless,
+                has_offset: analysis.has_offset,
+            };
+            Ok(to_value(&js_analysis).unwrap())
+        }
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+// Validate unit for a specific property - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn validate_property(expression: &str, property: &str) -> Result<bool, JsValue> {
+    match validate_in_property(expression, property) {
+        Ok(is_valid) => Ok(is_valid),
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+// Check if two units are comparable - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn units_comparable(unit1: &str, unit2: &str) -> Result<bool, JsValue> {
+    match is_comparable(unit1, unit2) {
+        Ok(comparable) => Ok(comparable),
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+// Get canonical units - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn get_canonical(expression: &str) -> Result<JsValue, JsValue> {
+    match get_canonical_units(expression) {
+        Ok(canonical) => {
+            let js_canonical = JsCanonicalUnit {
+                unit: canonical.unit,
+                factor: canonical.factor,
+                offset: canonical.offset,
+                dimensions: canonical.dimension.0.to_vec(),
+            };
+            Ok(to_value(&js_canonical).unwrap())
+        }
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+// Multiply units - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn multiply_units(unit1: &str, unit2: &str) -> Result<JsValue, JsValue> {
+    match unit_multiply(unit1, unit2) {
+        Ok(result) => {
+            let js_result = JsUnitArithmeticResult {
+                expression: result.expression,
+                factor: result.factor,
+                dimensions: result.dimension.0.to_vec(),
+                offset: result.offset,
+                is_dimensionless: result.is_dimensionless,
+            };
+            Ok(to_value(&js_result).unwrap())
+        }
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+// Divide units - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn divide_units(numerator: &str, denominator: &str) -> Result<JsValue, JsValue> {
+    match unit_divide(numerator, denominator) {
+        Ok(result) => {
+            let js_result = JsUnitArithmeticResult {
+                expression: result.expression,
+                factor: result.factor,
+                dimensions: result.dimension.0.to_vec(),
+                offset: result.offset,
+                is_dimensionless: result.is_dimensionless,
+            };
+            Ok(to_value(&js_result).unwrap())
+        }
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+// Search units by text - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn search_units_text(query: &str) -> Result<JsValue, JsValue> {
+    let results = core_search_units(query);
+    let unit_infos: Vec<UnitInfo> = results
+        .iter()
+        .map(|unit| convert_unit_record(unit))
+        .collect();
+    let js_result = JsSearchResult { units: unit_infos };
+    Ok(to_value(&js_result).unwrap())
+}
+
+// Search units by property - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn search_units_property(property: &str) -> Result<JsValue, JsValue> {
+    let results = core_search_by_property(property);
+    let unit_infos: Vec<UnitInfo> = results
+        .iter()
+        .map(|unit| convert_unit_record(unit))
+        .collect();
+    let js_result = JsSearchResult { units: unit_infos };
+    Ok(to_value(&js_result).unwrap())
+}
+
+// Get defined forms of a unit - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn get_unit_forms(base_code: &str) -> Result<JsValue, JsValue> {
+    let results = core_get_defined_forms(base_code);
+    let unit_infos: Vec<UnitInfo> = results
+        .iter()
+        .map(|unit| convert_unit_record(unit))
+        .collect();
+    let js_result = JsSearchResult { units: unit_infos };
+    Ok(to_value(&js_result).unwrap())
+}
+
+// Fuzzy search units - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn search_units_fuzzy(query: &str, threshold: i64) -> Result<JsValue, JsValue> {
+    let results = core_search_fuzzy(query, threshold);
+    let fuzzy_matches: Vec<JsFuzzyMatch> = results
+        .iter()
+        .map(|(unit, score)| JsFuzzyMatch {
+            unit: convert_unit_record(unit),
+            score: *score,
+        })
+        .collect();
+    let js_result = JsFuzzySearchResult {
+        results: fuzzy_matches,
+    };
+    Ok(to_value(&js_result).unwrap())
+}
+
+// Search units with regex - NEW ADR-001 feature
+#[wasm_bindgen]
+pub fn search_units_regex(pattern: &str, case_sensitive: bool) -> Result<JsValue, JsValue> {
+    match core_search_regex(pattern, case_sensitive) {
+        Ok(results) => {
+            let unit_infos: Vec<UnitInfo> = results
+                .iter()
+                .map(|unit| convert_unit_record(unit))
+                .collect();
+            let js_result = JsSearchResult { units: unit_infos };
+            Ok(to_value(&js_result).unwrap())
+        }
         Err(err) => {
             let js_error = convert_error(err);
             Err(to_value(&js_error).unwrap())
@@ -117,7 +365,7 @@ pub fn get_unit_info(code: &str) -> Result<JsValue, JsValue> {
         Some(unit) => {
             let unit_info = convert_unit_record(unit);
             Ok(to_value(&unit_info).unwrap())
-        },
+        }
         None => {
             let js_error = JsError {
                 message: format!("Unit '{}' not found", code),
@@ -157,7 +405,10 @@ pub fn convert(value: f64, from_unit: &str, to_unit: &str) -> Result<f64, JsValu
     // Check if the units are compatible (have the same dimensions)
     if from_result.dim.0 != to_result.dim.0 {
         let js_error = JsError {
-            message: format!("Cannot convert from '{}' to '{}': incompatible dimensions", from_unit, to_unit),
+            message: format!(
+                "Cannot convert from '{}' to '{}': incompatible dimensions",
+                from_unit, to_unit
+            ),
             error_type: "IncompatibleDimensions".to_string(),
         };
         return Err(to_value(&js_error).unwrap());
@@ -193,7 +444,12 @@ pub fn evaluate_expression(expression: &str) -> Result<JsValue, JsValue> {
 
 // Perform arithmetic operations on units
 #[wasm_bindgen]
-pub fn arithmetic(left_unit: &str, operation: &str, right_unit: &str, value: f64) -> Result<JsValue, JsValue> {
+pub fn arithmetic(
+    left_unit: &str,
+    operation: &str,
+    right_unit: &str,
+    value: f64,
+) -> Result<JsValue, JsValue> {
     // Parse the left and right unit expressions
     let left_expr = match parse_expression(left_unit) {
         Ok(expr) => expr,
@@ -234,7 +490,7 @@ pub fn arithmetic(left_unit: &str, operation: &str, right_unit: &str, value: f64
                 offset: 0.0, // Multiplication resets offset
                 dimensions: new_dimensions.to_vec(),
             }
-        },
+        }
         "div" => {
             // For division, subtract the dimensions
             let mut new_dimensions = [0i8; 7];
@@ -251,7 +507,7 @@ pub fn arithmetic(left_unit: &str, operation: &str, right_unit: &str, value: f64
                 offset: 0.0, // Division resets offset
                 dimensions: new_dimensions.to_vec(),
             }
-        },
+        }
         _ => {
             let js_error = JsError {
                 message: format!("Unsupported operation: {}", operation),
@@ -267,11 +523,24 @@ pub fn arithmetic(left_unit: &str, operation: &str, right_unit: &str, value: f64
 // List all available units
 #[wasm_bindgen]
 pub fn list_units(filter: Option<String>) -> JsValue {
-    let units: Vec<UnitInfo> = Vec::new();
+    let all_units = get_all_units();
+    let mut units: Vec<UnitInfo> = Vec::new();
 
-    // This is a simplified implementation that would need to be expanded
-    // to actually list all units from the registry
-    // For now, we'll just return an empty array
+    for unit in all_units {
+        // Apply text filter if provided
+        if let Some(ref filter_str) = filter {
+            let filter_lower = filter_str.to_lowercase();
+            if !unit.code.to_lowercase().contains(&filter_lower)
+                && !unit.display_name.to_lowercase().contains(&filter_lower)
+                && !unit.property.to_lowercase().contains(&filter_lower)
+            {
+                continue;
+            }
+        }
+
+        let unit_info = convert_unit_record(&unit);
+        units.push(unit_info);
+    }
 
     to_value(&units).unwrap()
 }
@@ -349,10 +618,8 @@ pub fn fhir_to_ucum(js_quantity_val: JsValue) -> Result<JsValue, JsValue> {
                 unit: ucum_quantity.unit.to_string(),
             };
             Ok(to_value(&result).unwrap())
-        },
-        Err(err) => {
-            Err(to_value(&convert_fhir_error(err)).unwrap())
         }
+        Err(err) => Err(to_value(&convert_fhir_error(err)).unwrap()),
     }
 }
 
@@ -366,26 +633,24 @@ pub fn ucum_to_fhir(value: f64, unit: &str) -> Result<JsValue, JsValue> {
     };
 
     // Create a UCUM Quantity
-    let ucum_quantity = UcumQuantity {
-        value,
-        unit: expr,
-    };
+    let ucum_quantity = UcumQuantity { value, unit: expr };
 
     // Convert to FHIR Quantity
     match ucum_quantity.to_fhir_quantity() {
         Ok(fhir_quantity) => {
             let js_quantity = fhir_to_js_quantity(&fhir_quantity);
             Ok(to_value(&js_quantity).unwrap())
-        },
-        Err(err) => {
-            Err(to_value(&convert_fhir_error(err)).unwrap())
         }
+        Err(err) => Err(to_value(&convert_fhir_error(err)).unwrap()),
     }
 }
 
 // Convert a FHIR Quantity from one unit to another
 #[wasm_bindgen]
-pub fn convert_fhir_quantity(js_quantity_val: JsValue, target_unit: &str) -> Result<JsValue, JsValue> {
+pub fn convert_fhir_quantity(
+    js_quantity_val: JsValue,
+    target_unit: &str,
+) -> Result<JsValue, JsValue> {
     // Deserialize the JavaScript object to our JsFhirQuantity struct
     let js_quantity: JsFhirQuantity = match serde_wasm_bindgen::from_value(js_quantity_val) {
         Ok(q) => q,
@@ -406,10 +671,8 @@ pub fn convert_fhir_quantity(js_quantity_val: JsValue, target_unit: &str) -> Res
         Ok(converted) => {
             let js_converted = fhir_to_js_quantity(&converted);
             Ok(to_value(&js_converted).unwrap())
-        },
-        Err(err) => {
-            Err(to_value(&convert_fhir_error(err)).unwrap())
         }
+        Err(err) => Err(to_value(&convert_fhir_error(err)).unwrap()),
     }
 }
 
@@ -447,8 +710,6 @@ pub fn are_fhir_quantities_equivalent(a_val: JsValue, b_val: JsValue) -> Result<
     // Check if they are equivalent
     match are_equivalent(&a_fhir, &b_fhir) {
         Ok(result) => Ok(result),
-        Err(err) => {
-            Err(to_value(&convert_fhir_error(err)).unwrap())
-        }
+        Err(err) => Err(to_value(&convert_fhir_error(err)).unwrap()),
     }
 }

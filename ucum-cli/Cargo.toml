@@ -10,14 +10,16 @@ repository = "https://github.com/octofhir/ucum-rs"
 keywords = ["fhir", "ucum", "units", "measurement", "healthcare"]
 categories = ["science", "data-structures", "parsing"]
 
+[features]
+default = []
+
 [dependencies]
 octofhir-ucum-core = { path = "../ucum-core" } # Uncomment for local development
 clap = { workspace = true }
 clap_complete = "4"
-serde = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
 anyhow = "1.0"
+dialoguer = { version = "0.11", features = ["fuzzy-select"] }
+human-panic = "2.0.3"
 
 [[bin]]
 name = "octofhir-ucum"

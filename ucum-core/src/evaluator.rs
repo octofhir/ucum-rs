@@ -15,14 +15,61 @@
 //! • Full offset algebra, logarithmic units, etc.
 //! • Detailed error diagnostics with spans.
 
-use crate::{ast::*, error::UcumError, find_unit, types::Dimension};
+use crate::{
+    ast::*,
+    error::UcumError,
+    find_unit,
+    precision::{Number, NumericOps, from_f64, to_f64},
+    types::Dimension,
+};
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+
+// Optimized prefix lookup using HashMap for O(1) performance
+lazy_static! {
+    static ref PREFIX_MAP: HashMap<&'static str, crate::types::Prefix> = {
+        let mut map = HashMap::new();
+        for prefix in crate::registry::PREFIXES.iter() {
+            map.insert(prefix.symbol, *prefix);
+        }
+        map
+    };
+}
+
+// Cache for evaluation results to avoid re-computing the same expressions
+// Using a simple string-based cache key for now - could be optimized further with expression hashing
+thread_local! {
+    static EVAL_CACHE: std::cell::RefCell<HashMap<String, EvalResult>> = std::cell::RefCell::new(HashMap::new());
+}
+
+// Helper function to generate cache key from UnitExpr
+fn expr_to_cache_key(expr: &UnitExpr) -> String {
+    match expr {
+        UnitExpr::Numeric(n) => format!("num:{}", n),
+        UnitExpr::Symbol(s) => format!("sym:{}", s),
+        UnitExpr::Product(factors) => {
+            let mut parts: Vec<String> = factors
+                .iter()
+                .map(|f| format!("{}^{}", expr_to_cache_key(&f.expr), f.exponent))
+                .collect();
+            parts.sort(); // Ensure consistent ordering for commutative operations
+            format!("prod:[{}]", parts.join(","))
+        }
+        UnitExpr::Quotient(num, den) => {
+            format!("quot:{}/{}", expr_to_cache_key(num), expr_to_cache_key(den))
+        }
+        UnitExpr::Power(base, exp) => {
+            format!("pow:{}^{}", expr_to_cache_key(base), exp)
+        }
+    }
+}
 
 /// Result returned by `evaluate()` – canonical factor, dimension vector, offset.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EvalResult {
-    pub factor: f64,
+    pub factor: Number,
     pub dim: Dimension,
-    pub offset: f64,
+    pub offset: Number,
 }
 
 impl EvalResult {
@@ -30,13 +77,22 @@ impl EvalResult {
 
     fn numeric(val: f64) -> Self {
         Self {
-            factor: val,
+            factor: from_f64(val),
             dim: Self::ZERO_DIM,
-            offset: 0.0,
+            offset: Number::zero(),
         }
     }
 
     fn from_unit(code: &str) -> Result<Self, UcumError> {
+        // Handle empty string as dimensionless unit (unity "1")
+        if code.is_empty() {
+            return Ok(Self {
+                factor: Number::one(),
+                dim: Self::ZERO_DIM,
+                offset: Number::zero(),
+            });
+        }
+
         // First try exact match (covers symbols like "Pa" and "Cel")
         // This prevents units like "Pa" from being incorrectly split into "P" (peta) + "a"
         if let Some(unit) = find_unit(code) {
@@ -47,27 +103,27 @@ impl EvalResult {
                 match unit.special {
                     None | LinearOffset => {
                         return Ok(Self {
-                            factor: unit.factor,
+                            factor: from_f64(unit.factor),
                             dim: unit.dim,
-                            offset: unit.offset,
+                            offset: from_f64(unit.offset),
                         });
                     }
                     Arbitrary => {
                         // For arbitrary units, return a special dimension that marks it as arbitrary
                         // This ensures arbitrary units are only commensurable with themselves
                         return Ok(Self {
-                            factor: unit.factor,
+                            factor: from_f64(unit.factor),
                             dim: unit.dim,
-                            offset: 0.0,
+                            offset: Number::zero(),
                         });
                     }
                     Log10 | Ln | TanTimes100 => {
-                        // For non-linear special units, return a zero-dimension result
-                        // The actual conversion will be handled in the product case
+                        // For non-linear special units, keep their proper dimensions
+                        // for commensurability checking, but handle conversion specially
                         return Ok(Self {
-                            factor: unit.factor,
-                            dim: Self::ZERO_DIM,
-                            offset: 0.0,
+                            factor: from_f64(unit.factor),
+                            dim: unit.dim,
+                            offset: Number::zero(),
                         });
                     }
                 }
@@ -80,23 +136,25 @@ impl EvalResult {
             if let Some(unit) = find_unit(rest) {
                 // For special units, handle prefixes differently
                 match unit.special {
-                    crate::types::SpecialKind::Log10 | crate::types::SpecialKind::Ln | crate::types::SpecialKind::TanTimes100 => {
+                    crate::types::SpecialKind::Log10
+                    | crate::types::SpecialKind::Ln
+                    | crate::types::SpecialKind::TanTimes100 => {
                         // For special units, return the unit factor without prefix multiplication
                         // The prefix will be handled in the product evaluation
                         return Ok(Self {
-                            factor: unit.factor,
+                            factor: from_f64(unit.factor),
                             dim: Self::ZERO_DIM,
-                            offset: 0.0,
+                            offset: Number::zero(),
                         });
                     }
                     _ => {
                         // For regular units, apply prefix factor normally
-                        let factor = pref.factor * unit.factor;
+                        let factor = from_f64(pref.factor).mul(from_f64(unit.factor));
                         let dim = unit.dim;
                         return Ok(Self {
                             factor,
                             dim,
-                            offset: unit.offset,
+                            offset: from_f64(unit.offset),
                         });
                     }
                 }
@@ -109,9 +167,9 @@ impl EvalResult {
             // Arbitrary units are dimensionless but should be treated as their own dimension
             // to ensure they're only commensurable with themselves
             return Ok(Self {
-                factor: 1.0,
+                factor: Number::one(),
                 dim: Self::ZERO_DIM, // Dimensionless but will be treated specially in operations
-                offset: 0.0,
+                offset: Number::zero(),
             });
         }
 
@@ -120,7 +178,31 @@ impl EvalResult {
 }
 
 /// Evaluate a parsed `UnitExpr` into canonical factor, dimension and offset.
+/// Uses caching to avoid re-computing the same expressions.
 pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
+    // Check cache first for performance optimization
+    let cache_key = expr_to_cache_key(expr);
+
+    // Try to get from cache
+    let cached_result = EVAL_CACHE.with(|cache| cache.borrow().get(&cache_key).cloned());
+
+    if let Some(result) = cached_result {
+        return Ok(result);
+    }
+
+    // Compute the result if not in cache
+    let result = evaluate_impl(expr)?;
+
+    // Store in cache for future use
+    EVAL_CACHE.with(|cache| {
+        cache.borrow_mut().insert(cache_key, result.clone());
+    });
+
+    Ok(result)
+}
+
+/// Internal implementation of evaluate without caching.
+fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
     match expr {
         UnitExpr::Numeric(v) => Ok(EvalResult::numeric(*v)),
         UnitExpr::Symbol(sym) => EvalResult::from_unit(sym),
@@ -137,19 +219,20 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 ) {
                     if let UnitExpr::Numeric(ref v) = num_fac.expr {
                         if let UnitExpr::Symbol(ref code) = unit_fac.expr {
-                            let (pref_factor, unit) = if let Some((pref, rest)) = split_prefix(code) {
+                            let (pref_factor, unit) = if let Some((pref, rest)) = split_prefix(code)
+                            {
                                 if let Some(u) = find_unit(rest) {
-                                    (pref.factor, u)
+                                    (from_f64(pref.factor), u)
                                 } else {
                                     return Err(UcumError::UnknownUnit(code.clone()));
                                 }
                             } else if let Some(u) = find_unit(code) {
-                                (1.0, u)
+                                (Number::one(), u)
                             } else {
                                 return Err(UcumError::UnknownUnit(code.clone()));
                             };
 
-                            let scaled_val = *v * pref_factor;
+                            let scaled_val = from_f64(*v).mul(pref_factor);
                             // For special units, we need to handle them specially based on their type
                             // The numeric value is part of the special unit, not a multiplier
                             let (ratio, dim) = match unit.special {
@@ -158,7 +241,7 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                     // B: 10^value (power ratio)
                                     // dB: 10^(value/10) (power ratio, 1 B = 10 dB)
                                     // Special case: 3 dB should be treated as amplitude ratio (exactly √2)
-                                    let ratio = if code.ends_with("dB") {
+                                    let ratio_f64 = if code.ends_with("dB") {
                                         if (*v - 3.0).abs() < 1e-6 {
                                             // Special case for 3 dB in test_decibel_variations
                                             // Use exact √2 to match test expectation
@@ -169,43 +252,41 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                     } else {
                                         10f64.powf(*v) // 10^B
                                     };
-                                    (ratio, EvalResult::ZERO_DIM)
+                                    (from_f64(ratio_f64), EvalResult::ZERO_DIM)
                                 }
                                 crate::types::SpecialKind::Ln => {
                                     // For Np: e^value
-                                    let ratio = if scaled_val == 0.0 {
+                                    let ratio_f64 = if scaled_val == Number::zero() {
                                         1.0
                                     } else {
-                                        scaled_val.exp()
+                                        to_f64(scaled_val).exp()
                                     };
-                                    (ratio, EvalResult::ZERO_DIM)
+                                    (from_f64(ratio_f64), EvalResult::ZERO_DIM)
                                 }
                                 crate::types::SpecialKind::TanTimes100 => {
                                     // For [p'diop]: 100 * tan(1 rad)
                                     // The unit is defined as "100 * tan(1 rad)" in UCUM
                                     // This means 1 [p'diop] = tan(1)/100, and 100 [p'diop] = tan(1)
                                     // Following the mathematical definition, tan(0) = 0
-                                    if scaled_val == 0.0 {
-                                        (0.0, EvalResult::ZERO_DIM)
+                                    if scaled_val == Number::zero() {
+                                        (Number::zero(), EvalResult::ZERO_DIM)
                                     } else {
                                         // For n [p'diop], the result should be n/100 * tan(1)
                                         // For 100 [p'diop], this gives tan(1)
                                         // The key is that we're scaling the input value to radians (n/100)
                                         // and then taking the tangent of that
-                                        (
-                                            (scaled_val / 100.0).tan(),
-                                            EvalResult::ZERO_DIM,
-                                        )
+                                        let ratio_f64 = (to_f64(scaled_val) / 100.0).tan();
+                                        (from_f64(ratio_f64), EvalResult::ZERO_DIM)
                                     }
                                 }
                                 crate::types::SpecialKind::Arbitrary => {
                                     // For arbitrary units, use the numeric value as the factor
                                     // and preserve the unit's dimension (which is typically zero)
-                                    (*v, unit.dim)
+                                    (from_f64(*v), unit.dim)
                                 }
                                 _ => {
                                     // For regular units with numeric multiplier
-                                    (*v, unit.dim)
+                                    (from_f64(*v), unit.dim)
                                 }
                             };
 
@@ -216,18 +297,18 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                     .iter()
                                     .find_map(|f| {
                                         if let UnitExpr::Numeric(n) = &f.expr {
-                                            Some(*n)
+                                            Some(from_f64(*n))
                                         } else {
                                             None
                                         }
                                     })
-                                    .unwrap_or(1.0);
+                                    .unwrap_or(Number::one());
 
                                 // Evaluate the rest of the expression
                                 let mut result = EvalResult {
-                                    factor: 1.0,
+                                    factor: Number::one(),
                                     dim: EvalResult::ZERO_DIM,
-                                    offset: 0.0,
+                                    offset: Number::zero(),
                                 };
 
                                 // Handle each factor in the product
@@ -235,7 +316,9 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                     match &factor.expr {
                                         UnitExpr::Numeric(n) => {
                                             // For numeric values, just multiply the factor
-                                            result.factor *= n.powi(factor.exponent);
+                                            result.factor = result
+                                                .factor
+                                                .mul(from_f64(*n).pow(factor.exponent));
                                         }
                                         UnitExpr::Symbol(sym) => {
                                             let res = if sym == code {
@@ -243,47 +326,47 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                                 EvalResult {
                                                     factor: ratio,
                                                     dim: dim,
-                                                    offset: 0.0,
+                                                    offset: Number::zero(),
                                                 }
                                             } else {
                                                 // For other units, evaluate them normally
                                                 evaluate(&factor.expr)?
                                             };
 
-                                            if res.offset != 0.0 {
+                                            if res.offset != Number::zero() {
                                                 return Err(UcumError::ConversionError(
                                                     "offset units cannot participate in products with special units",
                                                 ));
                                             }
 
                                             // Apply the exponent from the factor
-                                            let exp = factor.exponent as f64;
-                                            result.factor *= res.factor.powf(exp);
+                                            let exp = factor.exponent;
+                                            result.factor = result.factor.mul(res.factor.pow(exp));
 
                                             // Combine dimensions
                                             for i in 0..result.dim.0.len() {
                                                 result.dim.0[i] = result.dim.0[i].saturating_add(
-                                                    (res.dim.0[i] as f64 * exp) as i8,
+                                                    (res.dim.0[i] as f64 * exp as f64) as i8,
                                                 );
                                             }
                                         }
                                         _ => {
                                             // For complex expressions, evaluate them normally
                                             let res = evaluate(&factor.expr)?;
-                                            if res.offset != 0.0 {
+                                            if res.offset != Number::zero() {
                                                 return Err(UcumError::ConversionError(
                                                     "offset units cannot participate in products with special units",
                                                 ));
                                             }
 
                                             // Apply the exponent from the factor
-                                            let exp = factor.exponent as f64;
-                                            result.factor *= res.factor.powf(exp);
+                                            let exp = factor.exponent;
+                                            result.factor = result.factor.mul(res.factor.pow(exp));
 
                                             // Combine dimensions
                                             for i in 0..result.dim.0.len() {
                                                 result.dim.0[i] = result.dim.0[i].saturating_add(
-                                                    (res.dim.0[i] as f64 * exp) as i8,
+                                                    (res.dim.0[i] as f64 * exp as f64) as i8,
                                                 );
                                             }
                                         }
@@ -291,7 +374,7 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                 }
 
                                 // Apply the numeric factor to the final result
-                                result.factor *= numeric_factor;
+                                result.factor = result.factor.mul(numeric_factor);
                                 return Ok(result);
                             } else {
                                 // For special units, we need to handle both standalone and combined cases
@@ -301,16 +384,16 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                     // If there's a numeric value, use it directly as the factor
                                     // This handles cases like 10 dB/m where 10 should be preserved
                                     EvalResult {
-                                        factor: *numeric_value,
+                                        factor: from_f64(*numeric_value),
                                         dim: dim, // Keep the special unit's dimension
-                                        offset: 0.0,
+                                        offset: Number::zero(),
                                     }
                                 } else {
                                     // For standalone special units, apply the ratio and dimension
                                     EvalResult {
                                         factor: ratio,
                                         dim: dim,
-                                        offset: 0.0,
+                                        offset: Number::zero(),
                                     }
                                 };
 
@@ -322,16 +405,14 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
             }
 
             // Handle regular products (no special unit or special unit with other units)
-            let mut factor_acc = 1.0;
+            let mut factor_acc = Number::one();
             let mut dim_acc = [0i8; 7];
             let mut has_numeric = false;
-            let mut numeric_value = 1.0;
 
             // First pass: handle numeric values and special units
             for fac in factors.iter() {
-                if let UnitExpr::Numeric(n) = &fac.expr {
+                if let UnitExpr::Numeric(_n) = &fac.expr {
                     has_numeric = true;
-                    numeric_value = *n;
                     continue;
                 }
 
@@ -347,12 +428,12 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
 
                 // Handle regular units
                 let res = evaluate(&fac.expr)?;
-                if res.offset != 0.0 {
+                if res.offset != Number::zero() {
                     return Err(UcumError::ConversionError(
                         "offset units cannot participate in products",
                     ));
                 }
-                factor_acc *= res.factor.powi(fac.exponent);
+                factor_acc = factor_acc.mul(res.factor.pow(fac.exponent));
                 for i in 0..7 {
                     dim_acc[i] =
                         dim_acc[i].saturating_add(res.dim.0[i].saturating_mul(fac.exponent as i8));
@@ -370,10 +451,12 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                 // but don't modify the factor (it's already 1.0)
                                 let dim = unit_record.dim;
                                 for i in 0..7 {
-                                    dim_acc[i] = dim_acc[i]
-                                        .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
+                                    dim_acc[i] = dim_acc[i].saturating_add(
+                                        dim.0[i].saturating_mul(fac.exponent as i8),
+                                    );
                                 }
-                            } else if unit_record.special == crate::types::SpecialKind::TanTimes100 {
+                            } else if unit_record.special == crate::types::SpecialKind::TanTimes100
+                            {
                                 // Special handling for TanTimes100 (prism diopter)
                                 // For [p'diop]: 100 * tan(1 rad)
                                 // The unit is defined as "100 * tan(1 rad)" in UCUM
@@ -381,31 +464,33 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                 let dim = unit_record.dim;
 
                                 // Find the numeric value associated with this unit, if any
-                                let numeric_val = factors.iter()
+                                let numeric_val = factors
+                                    .iter()
                                     .find_map(|f| {
                                         if let UnitExpr::Numeric(n) = &f.expr {
-                                            Some(*n)
+                                            Some(from_f64(*n))
                                         } else {
                                             None
                                         }
                                     })
-                                    .unwrap_or(1.0); // Default to 1.0 if no numeric value (per UCUM definition)
+                                    .unwrap_or(Number::one()); // Default to 1.0 if no numeric value (per UCUM definition)
 
                                 // Apply the tangent calculation
-                                if numeric_val == 0.0 {
-                                    factor_acc = 0.0; // tan(0) = 0
+                                if numeric_val == Number::zero() {
+                                    factor_acc = Number::zero(); // tan(0) = 0
                                 } else {
                                     // For n [p'diop], the result should be tan(n/100)
                                     // For 100 [p'diop], this gives tan(1)
                                     // The key is that we're scaling the input value to radians (n/100)
                                     // and then taking the tangent of that
-                                    factor_acc = (numeric_val / 100.0).tan();
+                                    factor_acc = from_f64((to_f64(numeric_val) / 100.0).tan());
                                 }
 
                                 // Apply dimensions
                                 for i in 0..7 {
-                                    dim_acc[i] = dim_acc[i]
-                                        .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
+                                    dim_acc[i] = dim_acc[i].saturating_add(
+                                        dim.0[i].saturating_mul(fac.exponent as i8),
+                                    );
                                 }
                             } else {
                                 // For other special units, apply their ratio and dimension
@@ -413,10 +498,11 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                 let dim = unit_record.dim;
 
                                 // Apply special unit conversion
-                                factor_acc *= ratio.powi(fac.exponent);
+                                factor_acc = factor_acc.mul(from_f64(ratio).pow(fac.exponent));
                                 for i in 0..7 {
-                                    dim_acc[i] = dim_acc[i]
-                                        .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
+                                    dim_acc[i] = dim_acc[i].saturating_add(
+                                        dim.0[i].saturating_mul(fac.exponent as i8),
+                                    );
                                 }
                             }
                         }
@@ -424,28 +510,25 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 }
             }
 
-            // For special unit combinations with a numeric value, we need to:
-            // 1. Use the numeric value as the factor
-            // 2. Handle the special unit and any other units normally
+            // For products with numeric values, we need to multiply all factors together
             if has_numeric {
-                // First, evaluate all factors to get their dimensions
+                // Start with 1.0 and multiply all factors together (including all numeric values)
+                let mut total_factor = Number::one();
                 let mut dim_acc = [0i8; 7];
 
                 for fac in factors {
                     match &fac.expr {
-                        UnitExpr::Numeric(_) => {
-                            // Skip numeric factors as they don't affect dimensions
-                            continue;
+                        UnitExpr::Numeric(n) => {
+                            // Include ALL numeric factors in the multiplication
+                            total_factor = total_factor.mul(from_f64(*n).pow(fac.exponent));
                         }
                         UnitExpr::Symbol(unit) => {
                             if let Some(unit_record) = find_unit(unit) {
-                                // For arbitrary units, we want to keep the numeric value as the factor
-                                // and use the dimensions of other units in the expression
-                                // Note: We no longer skip arbitrary units in complex expressions
-                                // as they should adopt the dimensions of other units when combined
+                                // Multiply the factor from this unit
+                                total_factor = total_factor
+                                    .mul(from_f64(unit_record.factor).pow(fac.exponent));
 
-                                // For special units, use their actual dimensions
-                                // but don't apply their ratio to the factor
+                                // Add dimensions
                                 for i in 0..7 {
                                     dim_acc[i] = dim_acc[i].saturating_add(
                                         unit_record.dim.0[i].saturating_mul(fac.exponent as i8),
@@ -454,12 +537,11 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                             } else if let Some((pref, rest)) = split_prefix(unit) {
                                 // Handle prefixed units
                                 if let Some(unit_record) = find_unit(rest) {
-                                    // For prefixed arbitrary units, apply the prefix factor to the numeric value
-                                    if unit_record.special == crate::types::SpecialKind::Arbitrary {
-                                        // For prefixed arbitrary units, apply the prefix factor
-                                        // Note: We no longer skip arbitrary units in complex expressions
-                                        numeric_value *= pref.factor;
-                                    }
+                                    // Apply prefix factor and unit factor
+                                    let combined_factor =
+                                        from_f64(pref.factor).mul(from_f64(unit_record.factor));
+                                    total_factor =
+                                        total_factor.mul(combined_factor.pow(fac.exponent));
 
                                     for i in 0..7 {
                                         dim_acc[i] = dim_acc[i].saturating_add(
@@ -470,8 +552,9 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                             }
                         }
                         _ => {
-                            // For other expressions, evaluate normally
+                            // For other expressions, evaluate normally and multiply
                             let res = evaluate(&fac.expr)?;
+                            total_factor = total_factor.mul(res.factor.pow(fac.exponent));
                             for i in 0..7 {
                                 dim_acc[i] = dim_acc[i].saturating_add(
                                     res.dim.0[i].saturating_mul(fac.exponent as i8),
@@ -481,25 +564,25 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                     }
                 }
 
-                // Return the numeric value as the factor with the accumulated dimensions
+                // Return the total factor (all numeric values × all other factors)
                 return Ok(EvalResult {
-                    factor: numeric_value,
+                    factor: total_factor,
                     dim: Dimension(dim_acc),
-                    offset: 0.0,
+                    offset: Number::zero(),
                 });
             }
 
             Ok(EvalResult {
                 factor: factor_acc,
                 dim: Dimension(dim_acc),
-                offset: 0.0,
+                offset: Number::zero(),
             })
         }
         UnitExpr::Quotient(num, den) => {
             let n = evaluate(num)?;
             let d = evaluate(den)?;
 
-            if n.offset != 0.0 || d.offset != 0.0 {
+            if n.offset != Number::zero() || d.offset != Number::zero() {
                 return Err(UcumError::ConversionError(
                     "offset units not allowed in quotient expressions",
                 ));
@@ -512,8 +595,16 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
             // dimension L^-3, the inverse of volume). This ensures proper dimensional analysis and
             // commensurability checks when working with arbitrary units in complex expressions.
             let is_arbitrary_numerator = match num.as_ref() {
-                UnitExpr::Symbol(sym) if sym.starts_with('[') && sym.ends_with(']') => true,
-                _ => false
+                UnitExpr::Symbol(sym) => {
+                    // Check if the unit is actually marked as arbitrary in the registry
+                    if let Some(unit) = find_unit(sym) {
+                        unit.special == crate::types::SpecialKind::Arbitrary
+                    } else {
+                        // Fallback: check for square brackets only if not found in registry
+                        sym.starts_with('[') && sym.ends_with(']')
+                    }
+                }
+                _ => false,
             };
 
             let mut dim_vec = [0i8; 7];
@@ -531,14 +622,14 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
             }
 
             Ok(EvalResult {
-                factor: n.factor / d.factor,
+                factor: n.factor.div(d.factor),
                 dim: Dimension(dim_vec),
-                offset: 0.0,
+                offset: Number::zero(),
             })
         }
         UnitExpr::Power(expr, exp) => {
             let base = evaluate(expr)?;
-            if base.offset != 0.0 {
+            if base.offset != Number::zero() {
                 return Err(UcumError::ConversionError(
                     "offset units not allowed with exponentiation",
                 ));
@@ -548,9 +639,9 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 dim_vec[i] = base.dim.0[i].saturating_mul(*exp as i8);
             }
             Ok(EvalResult {
-                factor: base.factor.powi(*exp),
+                factor: base.factor.pow(*exp),
                 dim: Dimension(dim_vec),
-                offset: 0.0,
+                offset: Number::zero(),
             })
         }
     }
@@ -558,17 +649,20 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
 
 /// Attempt to split the leading prefix from a symbol.
 /// Returns (prefix, remainder) if a valid prefix is found.
+/// Optimized version using HashMap for O(1) lookup instead of O(n) linear scan.
 fn split_prefix(code: &str) -> Option<(crate::types::Prefix, &str)> {
-    // Prefix symbols vary in length (1–2 chars). Try longest first.
-    // In practice there are only ~20 prefixes so linear scan is fine.
-    let mut best: Option<(crate::types::Prefix, &str)> = None;
-    for pref in crate::registry::PREFIXES.iter() {
-        if let Some(inner) = code.strip_prefix(pref.symbol) {
-            if !inner.is_empty() {
-                best = Some((*pref, inner));
-                break;
+    // Try prefixes from longest to shortest to handle cases like "da" vs "d"
+    // Most prefixes are 1-2 characters, with a few exceptions
+    for len in (1..=3).rev() {
+        if len <= code.len() {
+            let prefix_candidate = &code[..len];
+            if let Some(&prefix) = PREFIX_MAP.get(prefix_candidate) {
+                let remainder = &code[len..];
+                if !remainder.is_empty() {
+                    return Some((prefix, remainder));
+                }
             }
         }
     }
-    best
+    None
 }

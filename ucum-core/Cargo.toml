@@ -9,30 +9,40 @@ homepage = "https://github.com/octofhir/ucum-rs"
 repository = "https://github.com/octofhir/ucum-rs"
 keywords = ["fhir", "ucum", "units", "measurement", "healthcare"]
 categories = ["science", "data-structures", "parsing"]
-include = ["ucum-essence.xml", "src", "examples", "README.md", "build.rs"]
+include = ["ucum-essence.xml", "src", "examples", "benches", "README.md", "build.rs"]
 
 
 [features]
 default = ["std"]
 std = []
 serde = []
+precision = ["rust_decimal"]
 
 [dependencies]
 serde = { workspace = true }
-serde_json = { workspace = true }
 thiserror = { workspace = true }
-reqwest = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
-url = { workspace = true }
 regex = { workspace = true }
 nom = "7"
 lazy_static = { workspace = true }
-indexmap = { workspace = true }
-quick-xml = { version = "0.31", features = ["serialize"] }
-serde-xml-rs = "0.6"
+rust_decimal = { version = "1.36", optional = true }
+fuzzy-matcher = "0.3"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [build-dependencies]
 quick-xml = "0.31"
 serde = "1"
 serde_derive = "1"
-serde-xml-rs = "0.6"
+
+[[bench]]
+name = "parser_benchmarks"
+harness = false
+
+[[bench]]
+name = "evaluator_benchmarks"
+harness = false
+
+[[bench]]
+name = "comprehensive_benchmarks"
+harness = false
