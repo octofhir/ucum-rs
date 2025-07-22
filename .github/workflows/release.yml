@@ -22,12 +22,6 @@ jobs:
             sleep 10
             cargo search ucum-core | grep ucum-core && break
           done
-      - name: Set ucum-cli dependency to publish mode
-        run: ./toggle-ucum-core-dep.sh publish
-      - name: Publish ucum-cli
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
-        run: cargo publish -p octofhir-ucum-cli --all-features --no-verify  --allow-dirty
       - name: Set ucum-fhir dependency to publish mode
         run: ./toggle-ucum-core-dep.sh publish ucum-fhir
       - name: Publish ucum-fhir
@@ -41,6 +35,13 @@ jobs:
             sleep 10
             cargo search ucum-fhir | grep ucum-fhir && break
           done
+      - name: Set ucum-cli dependency to publish mode
+        run: ./toggle-ucum-core-dep.sh publish
+      - name: Publish ucum-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        run: cargo publish -p octofhir-ucum-cli --all-features --no-verify  --allow-dirty
+
 
       - name: Set ucum-wasm dependencies to publish mode
         run: |
