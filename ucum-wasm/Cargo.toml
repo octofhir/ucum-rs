@@ -17,8 +17,8 @@ crate-type = ["cdylib", "rlib"]
 default = ["console_error_panic_hook"]
 
 [dependencies]
-octofhir-ucum-core = { path = "../ucum-core" }
-octofhir-ucum-fhir = { path = "../ucum-fhir", features = ["serde"] }
+octofhir-ucum-fhir = { version = "0.2.1", features = ["serde"] } # For publishing
+octofhir-ucum-core = { path = "../ucum-core" } # Uncomment for local development
 wasm-bindgen = "0.2"
 serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = "0.6"

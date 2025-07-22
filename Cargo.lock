@@ -722,7 +722,7 @@ dependencies = [
  "clap_complete",
  "dialoguer",
  "human-panic",
- "octofhir-ucum-core",
+ "octofhir-ucum-core 0.2.1",
 ]
 
 [[package]]
@@ -742,12 +742,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "octofhir-ucum-core"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df37ff4d7196bd77e11d15799973f603191f2cbd251e1c58adb387d454cfe36e"
+dependencies = [
+ "fuzzy-matcher",
+ "lazy_static",
+ "nom",
+ "quick-xml 0.31.0",
+ "regex",
+ "serde",
+ "serde_derive",
+ "thiserror",
+]
+
+[[package]]
 name = "octofhir-ucum-fhir"
 version = "0.2.1"
 dependencies = [
- "octofhir-ucum-core",
+ "octofhir-ucum-core 0.2.1",
  "serde",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "octofhir-ucum-fhir"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fae1e70ec28afcee65e3dd94aa7741ec6ea1c9538c05b10e7f4e92ff07c1de5"
+dependencies = [
+ "octofhir-ucum-core 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
  "thiserror",
 ]
 
@@ -756,8 +783,8 @@ name = "octofhir-ucum-wasm"
 version = "0.2.1"
 dependencies = [
  "console_error_panic_hook",
- "octofhir-ucum-core",
- "octofhir-ucum-fhir",
+ "octofhir-ucum-core 0.2.1",
+ "octofhir-ucum-fhir 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",

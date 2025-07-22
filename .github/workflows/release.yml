@@ -35,6 +35,37 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: cargo publish -p octofhir-ucum-fhir --all-features --no-verify  --allow-dirty
 
+      - name: Wait for ucum-fhir to be available
+        run: |
+          for i in {1..10}; do
+            sleep 10
+            cargo search ucum-fhir | grep ucum-fhir && break
+          done
+
+      - name: Set ucum-wasm dependencies to publish mode
+        run: |
+          # Switch ucum-core dependency to published version
+          ./toggle-ucum-core-dep.sh publish ucum-wasm
+          
+          # Switch ucum-fhir dependency to published version
+          cd ucum-wasm
+          FHIR_VERSION=$(awk -F ' *= *' '/^version *=/ {gsub(/\"/, "", $2); print $2; exit}' ../Cargo.toml)
+          sed -i.bak \
+            -e '/octofhir-ucum-fhir = { path = ".*"/d' \
+            -e "/octofhir-ucum-fhir = { version = \".*\"/d" \
+            Cargo.toml
+          # Insert version dependency after octofhir-ucum-core line
+          awk -v ver="$FHIR_VERSION" '
+            /octofhir-ucum-core = { version = ".*" }/ {
+              print;
+              print "octofhir-ucum-fhir = { version = \"" ver "\", features = [\"serde\"] } # For publishing";
+              next
+            }
+            {print}
+          ' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
+          rm -f Cargo.toml.bak
+          cd ..
+
       # WASM Package Publishing
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
