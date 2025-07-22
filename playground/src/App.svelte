@@ -12,10 +12,19 @@
   // Theme management
   let isDarkMode = $state(true);
 
+  // WASM initialization state
+  let wasmReady = $state(false);
+
   // Initialize WASM module and theme
   onMount(async () => {
-    await init();
-    start();
+    try {
+      await init();
+      start();
+      wasmReady = true;
+      console.log('✅ WASM module initialized successfully');
+    } catch (error) {
+      console.error('❌ Failed to initialize WASM module:', error);
+    }
 
     // Load theme preference from localStorage
     const savedTheme = localStorage.getItem('theme');
@@ -88,29 +97,36 @@
     </div>
 
     <div class="tab-content">
-      <!-- Validation Tab -->
-      {#if activeTab === 'validation'}
-        <ValidationTab />
-      {/if}
+      {#if !wasmReady}
+        <div class="loading">
+          <div class="loading-spinner"></div>
+          <p>Initializing UCUM WebAssembly module...</p>
+        </div>
+      {:else}
+        <!-- Validation Tab -->
+        {#if activeTab === 'validation'}
+          <ValidationTab />
+        {/if}
 
-      <!-- Unit Info Tab -->
-      {#if activeTab === 'unitInfo'}
-        <UnitInfoTab />
-      {/if}
+        <!-- Unit Info Tab -->
+        {#if activeTab === 'unitInfo'}
+          <UnitInfoTab />
+        {/if}
 
-      <!-- Conversion Tab -->
-      {#if activeTab === 'conversion'}
-        <ConversionTab />
-      {/if}
+        <!-- Conversion Tab -->
+        {#if activeTab === 'conversion'}
+          <ConversionTab />
+        {/if}
 
-      <!-- Arithmetic Tab -->
-      {#if activeTab === 'arithmetic'}
-        <ArithmeticTab />
-      {/if}
+        <!-- Arithmetic Tab -->
+        {#if activeTab === 'arithmetic'}
+          <ArithmeticTab />
+        {/if}
 
-      <!-- FHIR Tab -->
-      {#if activeTab === 'fhir'}
-        <FhirTab />
+        <!-- FHIR Tab -->
+        {#if activeTab === 'fhir'}
+          <FhirTab />
+        {/if}
       {/if}
     </div>
   </div>
@@ -305,5 +321,35 @@
       min-width: 100%;
       margin: var(--space-xxs) 0;
     }
+  }
+
+  .loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-xxl);
+    text-align: center;
+  }
+
+  .loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--color-border);
+    border-top: 3px solid var(--color-primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: var(--space-lg);
+  }
+
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  .loading p {
+    color: var(--color-text-secondary);
+    font-size: var(--text-base);
+    margin: 0;
   }
 </style>

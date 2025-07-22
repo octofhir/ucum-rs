@@ -252,27 +252,6 @@ cargo test run_official_validation_tests -- --nocapture
 cargo test run_official_validation_tests_2 -- --nocapture
 ```
 
-### Test Categories
-
-The official tests validate:
-
-- **Unit Validation**: Parsing and validation of UCUM expressions
-- **Display Name Generation**: Human-readable unit representations
-- **Unit Conversion**: Converting between compatible units
-- **Arithmetic Operations**: Mathematical operations on units
-
-### Common Failure Categories
-
-The remaining 13.7% of failed cases primarily involve:
-
-- Leading division operators (e.g., `/m`)
-- Invalid numeric formats (e.g., `10+3/ul`)
-- Unicode characters in annotations
-- Complex annotation handling
-- Standalone annotation expressions
-
-For detailed information about the official test integration, see [OFFICIAL_TESTS.md](OFFICIAL_TESTS.md).
-
 ## Contribution Guide
 
 1. **Clone the repo:**

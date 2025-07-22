@@ -45,10 +45,14 @@
       unitInfoError = '';
       // Try fuzzy search first
       try {
-        searchResults = search_units_fuzzy(searchQuery, 70); // 70% threshold
+        const fuzzyResults = search_units_fuzzy(searchQuery, 70); // 70% threshold
+        // Convert fuzzy search results to the expected format
+        searchResults = fuzzyResults.results.map((match: any) => match.unit);
       } catch (fuzzyError: any) {
         // Fallback to text search
-        searchResults = search_units_text(searchQuery);
+        const textResults = search_units_text(searchQuery);
+        // Convert text search results to the expected format
+        searchResults = textResults.units;
       }
     } catch (error: any) {
       unitInfoError = error.message || 'Unknown error';
@@ -60,6 +64,9 @@
   function selectUnit(code: string) {
     unitInfoInput = code;
     handleGetUnitInfo();
+    // Hide search results when user clicks on a unit
+    searchResults = [];
+    searchQuery = '';
   }
 
   // Function to insert example units into input
@@ -207,6 +214,23 @@
       transform: translateY(0);
     }
   }
+
+  .search-results {
+    margin-top: var(--space-md);
+    padding: var(--space-sm);
+    background: var(--color-surface-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .search-results h4 {
+    margin: 0 0 var(--space-sm) 0;
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--color-text-secondary);
+  }
 </style>
 
 <div class="card">
@@ -246,14 +270,14 @@
     />
 
     {#if searchResults.length > 0}
-      <div class="result">
+      <div class="search-results">
         <h4>Search Results:</h4>
-        <div class="search-results">
+        <div>
           {#each searchResults.slice(0, 10) as result}
             <button
               class="example-btn"
               onclick={() => selectUnit(result.code)}
-              style="margin: 0.25rem; display: block; width: auto; text-align: left;"
+              style="margin: 0.125rem; display: block; width: auto; text-align: left; padding: 0.5rem 0.75rem;"
             >
               <strong>{result.code}</strong> - {result.display_name || result.code}
               {#if result.property}
@@ -303,7 +327,7 @@
           <button
             class="example-btn"
             onclick={() => selectUnit(form.code)}
-            style="margin: 0.25rem;"
+            style="margin: 0.125rem;"
           >
             {form.code}
             {#if form.display_name && form.display_name !== form.code}

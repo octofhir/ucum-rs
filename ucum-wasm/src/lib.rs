@@ -636,7 +636,7 @@ pub fn ucum_to_fhir(value: f64, unit: &str) -> Result<JsValue, JsValue> {
     let ucum_quantity = UcumQuantity { value, unit: expr };
 
     // Convert to FHIR Quantity
-    match ucum_quantity.to_fhir_quantity() {
+    match ToFhirQuantity::to_fhir_quantity(&ucum_quantity) {
         Ok(fhir_quantity) => {
             let js_quantity = fhir_to_js_quantity(&fhir_quantity);
             Ok(to_value(&js_quantity).unwrap())
