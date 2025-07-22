@@ -43,7 +43,7 @@ pub enum FhirError {
     #[error("UCUM error: {0}")]
     UcumError(#[from] UcumError),
 
-    /// Missing required field.
+    /// Missing the required field.
     #[error("Missing required field: {0}")]
     MissingField(&'static str),
 
