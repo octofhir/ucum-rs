@@ -18,6 +18,7 @@ const wasmPlugin = () => {
 
 export default defineConfig({
   plugins: [react(), wasmPlugin()],
+  base: process.env.NODE_ENV === 'production' ? '/ucum-rs/' : '/',
   server: {
     port: 5555,
     headers: {
