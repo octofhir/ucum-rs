@@ -1,0 +1,82 @@
+.container {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+}
+
+.searchCard {
+  min-height: 320px;
+  transition: all 0.2s ease;
+}
+
+.searchCard:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--mantine-shadow-md);
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 300px;
+}
+
+.infoCard {
+  min-height: 320px;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+.exampleBadge {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.exampleBadge:hover {
+  transform: scale(1.05);
+}
+
+.helpCard {
+  background: var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme="dark"] .helpCard {
+  background: var(--mantine-color-dark-6);
+}
+
+.helpList {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.helpList li {
+  margin-bottom: 4px;
+  color: var(--mantine-color-dimmed);
+  font-size: 14px;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 16px;
+  }
+
+  .searchInput {
+    min-width: auto;
+  }
+}

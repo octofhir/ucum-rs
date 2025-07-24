@@ -1,0 +1,102 @@
+.container {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+}
+
+.calculatorCard {
+  min-height: 320px;
+  transition: all 0.2s ease;
+}
+
+.calculatorCard:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--mantine-shadow-md);
+}
+
+.operatorContainer {
+  display: flex;
+  flex-direction: column;
+}
+
+.operatorDisplay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  border: 1px solid var(--mantine-color-gray-3);
+  border-radius: var(--mantine-radius-sm);
+  background: var(--mantine-color-gray-0);
+  transition: all 0.2s ease;
+}
+
+[data-mantine-color-scheme="dark"] .operatorDisplay {
+  background: var(--mantine-color-dark-6);
+  border-color: var(--mantine-color-dark-4);
+}
+
+.resultAlert {
+  animation: slideIn 0.3s ease-in-out;
+  border: 2px solid var(--mantine-color-green-3);
+}
+
+.exampleCard {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 120px;
+  height: fit-content;
+}
+
+.exampleCard:hover {
+  background: var(--mantine-color-blue-0);
+  transform: translateY(-2px);
+  box-shadow: var(--mantine-shadow-md);
+}
+
+[data-mantine-color-scheme="dark"] .exampleCard:hover {
+  background: var(--mantine-color-dark-6);
+}
+
+.helpCard {
+  background: var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme="dark"] .helpCard {
+  background: var(--mantine-color-dark-6);
+}
+
+.helpList {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.helpList li {
+  margin-bottom: 4px;
+  color: var(--mantine-color-dimmed);
+  font-size: 14px;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 16px;
+  }
+}

@@ -1,0 +1,85 @@
+:root {
+  --font-family:
+    "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  --font-family-mono: "Monaco", "Consolas", "Lucida Console", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-family);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--mantine-color-body);
+  color: var(--mantine-color-text);
+  font-family: var(--font-family);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.linear-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.linear-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--mantine-color-gray-0);
+  border-right: 1px solid var(--mantine-color-gray-2);
+}
+
+[data-mantine-color-scheme="dark"] .linear-sidebar {
+  background: var(--mantine-color-dark-8);
+  border-right-color: var(--mantine-color-dark-4);
+}
+
+.linear-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.linear-header {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--mantine-color-gray-2);
+  background: var(--mantine-color-white);
+}
+
+[data-mantine-color-scheme="dark"] .linear-header {
+  background: var(--mantine-color-dark-7);
+  border-bottom-color: var(--mantine-color-dark-4);
+}
+
+.linear-content {
+  padding: 24px;
+  min-height: calc(100vh - 60px);
+}
+
+.linear-tab-content {
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

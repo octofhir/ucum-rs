@@ -1,0 +1,102 @@
+.container {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+}
+
+.converterCard {
+  min-height: 320px;
+  transition: all 0.2s ease;
+}
+
+.converterCard:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--mantine-shadow-md);
+}
+
+.resultAlert {
+  animation: slideIn 0.3s ease-in-out;
+  border: 2px solid var(--mantine-color-green-3);
+}
+
+.chartCard {
+  min-height: 320px;
+  animation: fadeIn 0.4s ease-in-out;
+  background: var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme="dark"] .chartCard {
+  background: var(--mantine-color-dark-6);
+}
+
+.exampleCard {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 120px;
+  height: fit-content;
+}
+
+.exampleCard:hover {
+  background: var(--mantine-color-blue-0);
+  transform: translateY(-2px);
+  box-shadow: var(--mantine-shadow-md);
+}
+
+[data-mantine-color-scheme="dark"] .exampleCard:hover {
+  background: var(--mantine-color-dark-6);
+}
+
+.helpCard {
+  background: var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme="dark"] .helpCard {
+  background: var(--mantine-color-dark-6);
+}
+
+.helpList {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.helpList li {
+  margin-bottom: 4px;
+  color: var(--mantine-color-dimmed);
+  font-size: 14px;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 16px;
+  }
+}

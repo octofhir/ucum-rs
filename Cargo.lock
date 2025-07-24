@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-cli"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-core"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "fuzzy-matcher",
@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-fhir"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "octofhir-ucum-core",
  "serde",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-wasm"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "console_error_panic_hook",
  "octofhir-ucum-core",

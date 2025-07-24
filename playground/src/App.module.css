@@ -1,0 +1,102 @@
+.shell {
+  background: var(--mantine-color-body);
+}
+
+.header {
+  background: var(--mantine-color-white);
+  border-bottom: 1px solid var(--mantine-color-gray-2);
+  backdrop-filter: blur(8px);
+}
+
+[data-mantine-color-scheme="dark"] .header {
+  background: var(--mantine-color-dark-7);
+  border-bottom-color: var(--mantine-color-dark-4);
+}
+
+.logo {
+  font-weight: 600;
+  color: var(--mantine-color-text);
+}
+
+.themeToggle {
+  color: var(--mantine-color-text);
+  transition: all 0.2s ease;
+}
+
+.themeToggle:hover {
+  background: var(--mantine-color-gray-1);
+}
+
+[data-mantine-color-scheme="dark"] .themeToggle:hover {
+  background: var(--mantine-color-dark-6);
+}
+
+.navbar {
+  background: var(--mantine-color-gray-0);
+  border-right: 1px solid var(--mantine-color-gray-2);
+}
+
+[data-mantine-color-scheme="dark"] .navbar {
+  background: var(--mantine-color-dark-8);
+  border-right-color: var(--mantine-color-dark-4);
+}
+
+.navItem {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  color: var(--mantine-color-gray-7);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.navItem:hover {
+  background: var(--mantine-color-gray-1);
+  color: var(--mantine-color-gray-9);
+}
+
+.navItemActive {
+  background: var(--mantine-color-blue-0) !important;
+  color: var(--mantine-color-blue-8) !important;
+  font-weight: 600;
+}
+
+[data-mantine-color-scheme="dark"] .navItem {
+  color: var(--mantine-color-dark-2);
+}
+
+[data-mantine-color-scheme="dark"] .navItem:hover {
+  background: var(--mantine-color-dark-6);
+  color: var(--mantine-color-white);
+}
+
+[data-mantine-color-scheme="dark"] .navItemActive {
+  background: var(--mantine-color-blue-9) !important;
+  color: var(--mantine-color-blue-1) !important;
+}
+
+.main {
+  background: var(--mantine-color-body);
+}
+
+.content {
+  padding: 0;
+  height: 100%;
+}
+
+.tabContent {
+  animation: fadeIn 0.2s ease-in-out;
+  height: 100%;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

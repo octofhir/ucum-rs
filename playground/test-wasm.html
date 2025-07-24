@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WASM Test</title>
+</head>
+<body>
+    <h1>UCUM WASM Test</h1>
+    <p>Open browser console to see test results</p>
+    
+    <script type="module">
+        async function testWasm() {
+            try {
+                console.log('Loading UCUM WASM...');
+                const ucumWasm = await import('@octofhir/ucum-wasm');
+                console.log('WASM loaded, functions:', Object.keys(ucumWasm));
+                
+                // Initialize if needed
+                if (typeof ucumWasm.default === 'function') {
+                    await ucumWasm.default();
+                    console.log('WASM initialized');
+                }
+                
+                // Start if available
+                if (typeof ucumWasm.start === 'function') {
+                    ucumWasm.start();
+                    console.log('UCUM started');
+                }
+                
+                // Test validation
+                if (typeof ucumWasm.validate === 'function') {
+                    const tests = ['kg', 'm', 's', 'invalid_unit', 'g/L'];
+                    console.log('Testing validation:');
+                    for (const test of tests) {
+                        const result = ucumWasm.validate(test);
+                        console.log(`  ${test}: ${result}`);
+                    }
+                }
+                
+                // Test conversion
+                if (typeof ucumWasm.convert === 'function') {
+                    console.log('Testing conversion:');
+                    try {
+                        const result = ucumWasm.convert(1000, 'g', 'kg');
+                        console.log(`  1000 g = ${result} kg`);
+                    } catch (e) {
+                        console.log(`  Conversion error: ${e.message}`);
+                    }
+                }
+                
+                console.log('✅ WASM test completed successfully!');
+                
+            } catch (error) {
+                console.error('❌ WASM test failed:', error);
+            }
+        }
+        
+        testWasm();
+    </script>
+</body>
+</html>
