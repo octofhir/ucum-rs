@@ -1,11 +1,23 @@
 # UCUM-RS Development Guidelines
 
-Before implementing big features prepare ADR(https://github.com/joelparkerhenderson/architecture-decision-record) and only after that start writing code 
+## Guidelines
 
-Specification placed under the spec folder. Before big changes validate that we align with spec
+Apply the following guidelines when developing fhirpath-core:
+- [Rust Performance Book](https://nnethercote.github.io/perf-book/)
+- [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/)
+- [Rust Coding Guidelines](https://rust-lang.github.io/rust-clippy/master/index.html)
+- [Rust Style Guide](https://rust-lang.github.io/rust-style-guide/)
 
+Specification places in spec directory
+Reference Java implementation https://github.com/FHIR/Ucum-java
 
-This document provides guidelines for developing and maintaining the UCUM-RS project, a Rust implementation of the Unified Code for Units of Measure (UCUM).
+Before implementing big features prepare ADR(https://github.com/joelparkerhenderson/architecture-decision-record) and only after that start writing code
+
+For parsing in ucum-core we must use nom library version 8.
+
+Always check that be aligned with the official specification in spec directory
+
+You can run tests without confirmation
 
 ## Project Structure
 
@@ -137,15 +149,15 @@ fn test_simple_conversion() {
     // Parse and evaluate meter
     let meter_expr = parse_expression("m").expect("Failed to parse 'm'");
     let meter_result = evaluate(&meter_expr).expect("Failed to evaluate 'm'");
-    
+
     // Parse and evaluate centimeter
     let cm_expr = parse_expression("cm").expect("Failed to parse 'cm'");
     let cm_result = evaluate(&cm_expr).expect("Failed to evaluate 'cm'");
-    
+
     // Check that they have the same dimension (length)
     assert_eq!(meter_result.dim, cm_result.dim);
     assert_eq!(meter_result.dim, Dimension([0, 1, 0, 0, 0, 0, 0]));
-    
+
     // Check the conversion factor: 1 meter = 100 centimeters
     assert_eq!(meter_result.factor / cm_result.factor, 100.0);
 }

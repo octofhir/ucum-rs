@@ -1,7 +1,8 @@
 use octofhir_ucum_core::{EvalResult, UnitExpr, UnitFactor, evaluate};
+use octofhir_ucum_core::precision::{NumericOps, Number, from_f64, to_f64};
 
 fn eval_ratio(expr: UnitExpr) -> f64 {
-    evaluate(&expr).unwrap().factor
+    to_f64(evaluate(&expr).unwrap().factor)
 }
 
 fn eval_expr(expr: UnitExpr) -> EvalResult {
@@ -196,11 +197,11 @@ fn test_special_unit_combinations() {
     );
 
     // 10 dB/m should have a factor of 10 (from dB) and dimension of m^-1
-    println!("Checking factor: {} (expected ~10.0)", result.factor);
+    println!("Checking factor: {} (expected ~10.0)", to_f64(result.factor));
     assert!(
-        (result.factor - 10.0).abs() < 1e-6,
+        (result.factor.sub(from_f64(10.0))).abs() < from_f64(1e-6),
         "Expected factor ~10.0, got {}",
-        result.factor
+        to_f64(result.factor)
     );
 
     // Dimension order is [M, L, T, I, Θ, N, J], so length (L) is at index 1
@@ -212,7 +213,7 @@ fn test_special_unit_combinations() {
         result.dim.0[1], -1,
         "Length dimension should be -1 (m^-1) at index 1"
     );
-    assert_eq!(result.offset, 0.0, "Offset should be 0.0");
+    assert_eq!(result.offset, from_f64(0.0), "Offset should be 0.0");
 }
 
 #[test]

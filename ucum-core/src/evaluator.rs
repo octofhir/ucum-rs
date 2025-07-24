@@ -19,6 +19,7 @@ use crate::{
     ast::*,
     error::UcumError,
     find_unit,
+    performance::{with_global_cache, find_prefix_optimized},
     precision::{Number, NumericOps, from_f64, to_f64},
     types::Dimension,
 };
@@ -173,32 +174,17 @@ impl EvalResult {
             });
         }
 
-        Err(UcumError::UnknownUnit(code.to_string()))
+        Err(UcumError::unit_not_found(code))
     }
 }
 
 /// Evaluate a parsed `UnitExpr` into canonical factor, dimension and offset.
-/// Uses caching to avoid re-computing the same expressions.
+/// Uses enhanced caching to avoid re-computing the same expressions.
 pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
-    // Check cache first for performance optimization
-    let cache_key = expr_to_cache_key(expr);
-
-    // Try to get from cache
-    let cached_result = EVAL_CACHE.with(|cache| cache.borrow().get(&cache_key).cloned());
-
-    if let Some(result) = cached_result {
-        return Ok(result);
-    }
-
-    // Compute the result if not in cache
-    let result = evaluate_impl(expr)?;
-
-    // Store in cache for future use
-    EVAL_CACHE.with(|cache| {
-        cache.borrow_mut().insert(cache_key, result.clone());
-    });
-
-    Ok(result)
+    // Use the enhanced global cache for better performance
+    with_global_cache(|cache| {
+        cache.get_or_compute_expression(expr, || evaluate_impl(expr))
+    })?
 }
 
 /// Internal implementation of evaluate without caching.
@@ -224,12 +210,12 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                 if let Some(u) = find_unit(rest) {
                                     (from_f64(pref.factor), u)
                                 } else {
-                                    return Err(UcumError::UnknownUnit(code.clone()));
+                                    return Err(UcumError::unit_not_found(code));
                                 }
                             } else if let Some(u) = find_unit(code) {
                                 (Number::one(), u)
                             } else {
-                                return Err(UcumError::UnknownUnit(code.clone()));
+                                return Err(UcumError::unit_not_found(code));
                             };
 
                             let scaled_val = from_f64(*v).mul(pref_factor);
@@ -334,8 +320,9 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                             };
 
                                             if res.offset != Number::zero() {
-                                                return Err(UcumError::ConversionError(
-                                                    "offset units cannot participate in products with special units",
+                                                return Err(UcumError::conversion_error(
+                                                    "offset units", "products with special units",
+                                                    "offset units cannot participate in products with special units"
                                                 ));
                                             }
 
@@ -354,8 +341,9 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                             // For complex expressions, evaluate them normally
                                             let res = evaluate(&factor.expr)?;
                                             if res.offset != Number::zero() {
-                                                return Err(UcumError::ConversionError(
-                                                    "offset units cannot participate in products with special units",
+                                                return Err(UcumError::conversion_error(
+                                                    "offset units", "products with special units",
+                                                    "offset units cannot participate in products with special units"
                                                 ));
                                             }
 
@@ -429,8 +417,9 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 // Handle regular units
                 let res = evaluate(&fac.expr)?;
                 if res.offset != Number::zero() {
-                    return Err(UcumError::ConversionError(
-                        "offset units cannot participate in products",
+                    return Err(UcumError::conversion_error(
+                        "offset units", "products",
+                        "offset units cannot participate in products"
                     ));
                 }
                 factor_acc = factor_acc.mul(res.factor.pow(fac.exponent));
@@ -583,8 +572,9 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
             let d = evaluate(den)?;
 
             if n.offset != Number::zero() || d.offset != Number::zero() {
-                return Err(UcumError::ConversionError(
-                    "offset units not allowed in quotient expressions",
+                return Err(UcumError::conversion_error(
+                    "offset units", "quotient expressions",
+                    "offset units not allowed in quotient expressions"
                 ));
             }
 
@@ -630,8 +620,9 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
         UnitExpr::Power(expr, exp) => {
             let base = evaluate(expr)?;
             if base.offset != Number::zero() {
-                return Err(UcumError::ConversionError(
-                    "offset units not allowed with exponentiation",
+                return Err(UcumError::conversion_error(
+                    "offset units", "exponentiation",
+                    "offset units not allowed with exponentiation"
                 ));
             }
             let mut dim_vec = [0i8; 7];
@@ -649,17 +640,17 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
 
 /// Attempt to split the leading prefix from a symbol.
 /// Returns (prefix, remainder) if a valid prefix is found.
-/// Optimized version using HashMap for O(1) lookup instead of O(n) linear scan.
+/// Enhanced version using optimized lookup and prefix trie for better performance.
 fn split_prefix(code: &str) -> Option<(crate::types::Prefix, &str)> {
     // Try prefixes from longest to shortest to handle cases like "da" vs "d"
     // Most prefixes are 1-2 characters, with a few exceptions
     for len in (1..=3).rev() {
         if len <= code.len() {
             let prefix_candidate = &code[..len];
-            if let Some(&prefix) = PREFIX_MAP.get(prefix_candidate) {
+            if let Some(prefix) = find_prefix_optimized(prefix_candidate) {
                 let remainder = &code[len..];
                 if !remainder.is_empty() {
-                    return Some((prefix, remainder));
+                    return Some((*prefix, remainder));
                 }
             }
         }

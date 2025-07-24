@@ -17,9 +17,34 @@ use octofhir_ucum_core::{
     search_units_regex as core_search_regex,
     unit_divide,
     unit_multiply,
-    // New ADR-001 API functions with aliases to avoid conflicts
     validate as core_validate,
     validate_in_property,
+    precision::to_f64,
+    // Model Introspection API
+    get_model,
+    validate_ucum,
+    get_properties,
+    validate_canonical_units,
+    get_common_display,
+    // Advanced Conversion API
+    convert_with_context,
+    AdvancedConversionContext,
+    DecimalPrecision,
+    RoundingMode,
+    TemperatureScale,
+    // Performance Optimizations
+    get_cache_stats,
+    clear_global_cache,
+    get_cache_sizes,
+    // Enhanced Error Handling
+    ErrorKind,
+    SuggestionEngine,
+    // Extended Functionality
+    optimize_expression,
+    canonicalize_expression,
+    simplify_expression,
+    MeasurementContext,
+    Domain,
 };
 use octofhir_ucum_fhir::{
     FhirError, FhirQuantity, ToFhirQuantity, are_equivalent, convert_quantity,
@@ -44,11 +69,40 @@ pub fn start() {
     init_panic_hook();
 }
 
-// JavaScript-friendly error type
+// JavaScript-friendly error type with enhanced error details
 #[derive(Serialize, Deserialize)]
 pub struct JsError {
     message: String,
     error_type: String,
+    suggestions: Vec<String>,
+    context: Vec<String>,
+    span: Option<JsSpan>,
+    kind_details: Option<JsErrorKind>,
+}
+
+// JavaScript-friendly span information
+#[derive(Serialize, Deserialize)]
+pub struct JsSpan {
+    start: usize,
+    end: usize,
+    source: String,
+    text: String,
+}
+
+// JavaScript-friendly error kind details
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum JsErrorKind {
+    UnitNotFound { unit: String, similar: Vec<String> },
+    ConversionError { from: String, to: String, reason: String },
+    DimensionMismatch { expected: Vec<i8>, found: Vec<i8>, operation: String },
+    ParseError { expected: String, found: String },
+    InvalidExpression { reason: String },
+    InvalidPercentPlacement { position: usize },
+    PrecisionOverflow { operation: String, value: String },
+    InvalidProperty { property: String, available: Vec<String> },
+    MultipleSlash,
+    SpecialUnitError { unit: String, reason: String },
 }
 
 // JavaScript-friendly unit information
@@ -120,11 +174,152 @@ pub struct JsFuzzyMatch {
     score: i64,
 }
 
-// Convert internal UcumError to JavaScript-friendly JsError
+// JavaScript-friendly types for model introspection
+#[derive(Serialize, Deserialize)]
+pub struct JsUcumModel {
+    version: String,
+    revision_date: String,
+    total_units: usize,
+    total_prefixes: usize,
+    properties: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsValidationResult {
+    is_valid: bool,
+    issues: Vec<String>,
+}
+
+// JavaScript-friendly types for advanced conversion
+#[derive(Serialize, Deserialize)]
+pub struct JsAdvancedConversionResult {
+    value: f64,
+    unit: String,
+    factor: f64,
+    offset: f64,
+    precision_info: String,
+    used_special_units: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsConversionConfig {
+    precision_type: String,      // "default", "fixed", "significant"
+    precision_value: Option<u32>, // For fixed/significant precision
+    rounding_mode: String,       // "nearest", "up", "down", "truncate"
+    temperature_scale: String,   // "kelvin", "celsius", "fahrenheit"
+    use_special_units: bool,
+}
+
+// JavaScript-friendly types for performance features
+#[derive(Serialize, Deserialize)]
+pub struct JsCacheStats {
+    expression_hits: u64,
+    expression_misses: u64,
+    conversion_hits: u64,
+    conversion_misses: u64,
+    dimension_hits: u64,
+    dimension_misses: u64,
+    expression_hit_ratio: f64,
+    conversion_hit_ratio: f64,
+    overall_hit_ratio: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsCacheSizes {
+    expressions: usize,
+    conversions: usize,
+    dimensions: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsBenchmarkResult {
+    operation: String,
+    duration_ms: f64,
+    iterations: usize,
+    operations_per_second: f64,
+}
+
+// JavaScript-friendly types for extended functionality
+#[derive(Serialize, Deserialize)]
+pub struct JsMeasurementContext {
+    domain: String,
+    precision_requirements: JsPrecisionRequirements,
+    preferred_units: Vec<String>,
+    avoided_units: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsPrecisionRequirements {
+    min_significant_figures: u32,
+    max_relative_error: f64,
+    require_exact: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsUnitSuggestions {
+    alternatives: Vec<String>,
+    is_preferred: bool,
+    is_avoided: bool,
+}
+
+// Convert internal UcumError to JavaScript-friendly JsError with enhanced details
 fn convert_error(err: UcumError) -> JsError {
+    // Convert span if present
+    let js_span = err.span.map(|span| JsSpan {
+        start: span.start,
+        end: span.end,
+        source: span.source.clone(),
+        text: span.text().to_string(),
+    });
+    
+    // Convert error kind to JavaScript-friendly format
+    let kind_details = match &err.kind {
+        ErrorKind::UnitNotFound { unit, similar } => Some(JsErrorKind::UnitNotFound {
+            unit: unit.clone(),
+            similar: similar.clone(),
+        }),
+        ErrorKind::ConversionError { from, to, reason } => Some(JsErrorKind::ConversionError {
+            from: from.clone(),
+            to: to.clone(),
+            reason: reason.clone(),
+        }),
+        ErrorKind::DimensionMismatch { expected, found, operation } => Some(JsErrorKind::DimensionMismatch {
+            expected: expected.0.to_vec(),
+            found: found.0.to_vec(),
+            operation: operation.clone(),
+        }),
+        ErrorKind::ParseError { expected, found } => Some(JsErrorKind::ParseError {
+            expected: expected.clone(),
+            found: found.clone(),
+        }),
+        ErrorKind::InvalidExpression { reason } => Some(JsErrorKind::InvalidExpression {
+            reason: reason.clone(),
+        }),
+        ErrorKind::InvalidPercentPlacement { position } => Some(JsErrorKind::InvalidPercentPlacement {
+            position: *position,
+        }),
+        ErrorKind::PrecisionOverflow { operation, value } => Some(JsErrorKind::PrecisionOverflow {
+            operation: operation.clone(),
+            value: value.clone(),
+        }),
+        ErrorKind::InvalidProperty { property, available } => Some(JsErrorKind::InvalidProperty {
+            property: property.clone(),
+            available: available.clone(),
+        }),
+        ErrorKind::MultipleSlash => Some(JsErrorKind::MultipleSlash),
+        ErrorKind::SpecialUnitError { unit, reason } => Some(JsErrorKind::SpecialUnitError {
+            unit: unit.clone(),
+            reason: reason.clone(),
+        }),
+    };
+    
     JsError {
-        message: err.to_string(),
-        error_type: format!("{:?}", err),
+        message: err.message,
+        error_type: format!("{:?}", err.kind),
+        suggestions: err.suggestions,
+        context: err.context,
+        span: js_span,
+        kind_details,
     }
 }
 
@@ -133,6 +328,22 @@ fn convert_fhir_error(err: FhirError) -> JsError {
     JsError {
         message: err.to_string(),
         error_type: format!("{:?}", err),
+        suggestions: Vec::new(),
+        context: Vec::new(),
+        span: None,
+        kind_details: None,
+    }
+}
+
+// Helper function to create a simple JsError for basic error cases
+fn create_simple_js_error(message: String, error_type: String) -> JsError {
+    JsError {
+        message,
+        error_type,
+        suggestions: Vec::new(),
+        context: Vec::new(),
+        span: None,
+        kind_details: None,
     }
 }
 
@@ -160,8 +371,8 @@ fn convert_unit_record(record: &UnitRecord) -> UnitInfo {
 // Convert internal EvalResult to JavaScript-friendly EvaluationResult
 fn convert_eval_result(result: EvalResult) -> EvaluationResult {
     EvaluationResult {
-        factor: result.factor,
-        offset: result.offset,
+        factor: to_f64(result.factor),
+        offset: to_f64(result.offset),
         dimensions: result.dim.0.to_vec(),
     }
 }
@@ -363,14 +574,16 @@ pub fn search_units_regex(pattern: &str, case_sensitive: bool) -> Result<JsValue
 pub fn get_unit_info(code: &str) -> Result<JsValue, JsValue> {
     match find_unit(code) {
         Some(unit) => {
-            let unit_info = convert_unit_record(unit);
+            let mut unit_info = convert_unit_record(unit);
+            // Use the new get_common_display for better display names
+            unit_info.display_name = get_common_display(code);
             Ok(to_value(&unit_info).unwrap())
         }
         None => {
-            let js_error = JsError {
-                message: format!("Unit '{}' not found", code),
-                error_type: "UnitNotFound".to_string(),
-            };
+            let js_error = create_simple_js_error(
+                format!("Unit '{}' not found", code),
+                "UnitNotFound".to_string()
+            );
             Err(to_value(&js_error).unwrap())
         }
     }
@@ -404,19 +617,19 @@ pub fn convert(value: f64, from_unit: &str, to_unit: &str) -> Result<f64, JsValu
 
     // Check if the units are compatible (have the same dimensions)
     if from_result.dim.0 != to_result.dim.0 {
-        let js_error = JsError {
-            message: format!(
+        let js_error = create_simple_js_error(
+            format!(
                 "Cannot convert from '{}' to '{}': incompatible dimensions",
                 from_unit, to_unit
             ),
-            error_type: "IncompatibleDimensions".to_string(),
-        };
+            "IncompatibleDimensions".to_string()
+        );
         return Err(to_value(&js_error).unwrap());
     }
 
     // Calculate the conversion
-    let canonical_value = value * from_result.factor;
-    let result_value = canonical_value / to_result.factor;
+    let canonical_value = value * to_f64(from_result.factor);
+    let result_value = canonical_value / to_f64(to_result.factor);
 
     Ok(result_value)
 }
@@ -482,7 +695,7 @@ pub fn arithmetic(
             }
 
             // Calculate the new value
-            let new_factor = value * left_result.factor * right_result.factor;
+            let new_factor = value * to_f64(left_result.factor) * to_f64(right_result.factor);
 
             // Create a new result
             EvaluationResult {
@@ -499,7 +712,7 @@ pub fn arithmetic(
             }
 
             // Calculate the new value
-            let new_factor = value * left_result.factor / right_result.factor;
+            let new_factor = value * to_f64(left_result.factor) / to_f64(right_result.factor);
 
             // Create a new result
             EvaluationResult {
@@ -509,10 +722,10 @@ pub fn arithmetic(
             }
         }
         _ => {
-            let js_error = JsError {
-                message: format!("Unsupported operation: {}", operation),
-                error_type: "UnsupportedOperation".to_string(),
-            };
+            let js_error = create_simple_js_error(
+                format!("Unsupported operation: {}", operation),
+                "UnsupportedOperation".to_string()
+            );
             return Err(to_value(&js_error).unwrap());
         }
     };
@@ -598,10 +811,10 @@ pub fn fhir_to_ucum(js_quantity_val: JsValue) -> Result<JsValue, JsValue> {
     let js_quantity: JsFhirQuantity = match serde_wasm_bindgen::from_value(js_quantity_val) {
         Ok(q) => q,
         Err(err) => {
-            let js_error = JsError {
-                message: format!("Failed to deserialize FHIR Quantity: {}", err),
-                error_type: "DeserializationError".to_string(),
-            };
+            let js_error = create_simple_js_error(
+                format!("Failed to deserialize FHIR Quantity: {}", err),
+                "DeserializationError".to_string()
+            );
             return Err(to_value(&js_error).unwrap());
         }
     };
@@ -655,10 +868,10 @@ pub fn convert_fhir_quantity(
     let js_quantity: JsFhirQuantity = match serde_wasm_bindgen::from_value(js_quantity_val) {
         Ok(q) => q,
         Err(err) => {
-            let js_error = JsError {
-                message: format!("Failed to deserialize FHIR Quantity: {}", err),
-                error_type: "DeserializationError".to_string(),
-            };
+            let js_error = create_simple_js_error(
+                format!("Failed to deserialize FHIR Quantity: {}", err),
+                "DeserializationError".to_string()
+            );
             return Err(to_value(&js_error).unwrap());
         }
     };
@@ -683,10 +896,10 @@ pub fn are_fhir_quantities_equivalent(a_val: JsValue, b_val: JsValue) -> Result<
     let a_js: JsFhirQuantity = match serde_wasm_bindgen::from_value(a_val) {
         Ok(q) => q,
         Err(err) => {
-            let js_error = JsError {
-                message: format!("Failed to deserialize first FHIR Quantity: {}", err),
-                error_type: "DeserializationError".to_string(),
-            };
+            let js_error = create_simple_js_error(
+                format!("Failed to deserialize first FHIR Quantity: {}", err),
+                "DeserializationError".to_string()
+            );
             return Err(to_value(&js_error).unwrap());
         }
     };
@@ -695,10 +908,10 @@ pub fn are_fhir_quantities_equivalent(a_val: JsValue, b_val: JsValue) -> Result<
     let b_js: JsFhirQuantity = match serde_wasm_bindgen::from_value(b_val) {
         Ok(q) => q,
         Err(err) => {
-            let js_error = JsError {
-                message: format!("Failed to deserialize second FHIR Quantity: {}", err),
-                error_type: "DeserializationError".to_string(),
-            };
+            let js_error = create_simple_js_error(
+                format!("Failed to deserialize second FHIR Quantity: {}", err),
+                "DeserializationError".to_string()
+            );
             return Err(to_value(&js_error).unwrap());
         }
     };
@@ -711,5 +924,446 @@ pub fn are_fhir_quantities_equivalent(a_val: JsValue, b_val: JsValue) -> Result<
     match are_equivalent(&a_fhir, &b_fhir) {
         Ok(result) => Ok(result),
         Err(err) => Err(to_value(&convert_fhir_error(err)).unwrap()),
+    }
+}
+
+// Model Introspection API for WASM
+
+/// Get UCUM model information
+#[wasm_bindgen]
+pub fn get_ucum_model() -> JsValue {
+    let model = get_model();
+    let properties: Vec<String> = get_properties().into_iter().collect();
+    
+    let js_model = JsUcumModel {
+        version: model.version,
+        revision_date: model.revision_date,
+        total_units: model.units.len(),
+        total_prefixes: model.prefixes.len(),
+        properties,
+    };
+    
+    to_value(&js_model).unwrap()
+}
+
+/// Validate UCUM implementation for self-consistency
+#[wasm_bindgen]
+pub fn validate_ucum_implementation() -> JsValue {
+    let issues = validate_ucum();
+    
+    let js_result = JsValidationResult {
+        is_valid: issues.is_empty(),
+        issues,
+    };
+    
+    to_value(&js_result).unwrap()
+}
+
+/// Get all available properties in the UCUM model
+#[wasm_bindgen]
+pub fn get_ucum_properties() -> JsValue {
+    let properties: Vec<String> = get_properties().into_iter().collect();
+    to_value(&properties).unwrap()
+}
+
+/// Validate canonical unit forms
+#[wasm_bindgen]
+pub fn validate_canonical_form(unit: &str, canonical: &str) -> Result<bool, JsValue> {
+    match validate_canonical_units(unit, canonical) {
+        Ok(is_valid) => Ok(is_valid),
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+/// Get display name for a unit code
+#[wasm_bindgen]
+pub fn get_unit_display_name(code: &str) -> String {
+    get_common_display(code)
+}
+
+// Advanced Conversion API for WASM
+
+/// Advanced unit conversion with precision control
+#[wasm_bindgen]
+pub fn convert_advanced(
+    value: f64,
+    from_unit: &str,
+    to_unit: &str,
+    config_val: JsValue,
+) -> Result<JsValue, JsValue> {
+    // Deserialize the conversion configuration
+    let config: JsConversionConfig = match serde_wasm_bindgen::from_value(config_val) {
+        Ok(c) => c,
+        Err(err) => {
+            let js_error = create_simple_js_error(
+                format!("Failed to deserialize conversion config: {}", err),
+                "DeserializationError".to_string()
+            );
+            return Err(to_value(&js_error).unwrap());
+        }
+    };
+    
+    // Parse precision configuration
+    let decimal_precision = match config.precision_type.as_str() {
+        "default" => DecimalPrecision::Default,
+        "fixed" => {
+            if let Some(places) = config.precision_value {
+                DecimalPrecision::Fixed(places)
+            } else {
+                return Err(to_value(&create_simple_js_error(
+                    "Fixed precision requires precision_value".to_string(),
+                    "InvalidConfiguration".to_string()
+                )).unwrap());
+            }
+        }
+        "significant" => {
+            if let Some(sig_figs) = config.precision_value {
+                DecimalPrecision::Significant(sig_figs)
+            } else {
+                return Err(to_value(&create_simple_js_error(
+                    "Significant precision requires precision_value".to_string(),
+                    "InvalidConfiguration".to_string()
+                )).unwrap());
+            }
+        }
+        _ => {
+            return Err(to_value(&create_simple_js_error(
+                format!("Invalid precision type: {}", config.precision_type),
+                "InvalidConfiguration".to_string()
+            )).unwrap());
+        }
+    };
+    
+    // Parse rounding mode
+    let rounding_mode = match config.rounding_mode.as_str() {
+        "nearest" => RoundingMode::Nearest,
+        "up" => RoundingMode::Up,
+        "down" => RoundingMode::Down,
+        "truncate" => RoundingMode::Truncate,
+        _ => {
+            return Err(to_value(&create_simple_js_error(
+                format!("Invalid rounding mode: {}", config.rounding_mode),
+                "InvalidConfiguration".to_string()
+            )).unwrap());
+        }
+    };
+    
+    // Parse temperature scale
+    let temp_scale = match config.temperature_scale.as_str() {
+        "kelvin" => TemperatureScale::Kelvin,
+        "celsius" => TemperatureScale::Celsius,
+        "fahrenheit" => TemperatureScale::Fahrenheit,
+        _ => {
+            return Err(to_value(&create_simple_js_error(
+                format!("Invalid temperature scale: {}", config.temperature_scale),
+                "InvalidConfiguration".to_string()
+            )).unwrap());
+        }
+    };
+    
+    // Create conversion context
+    let context = AdvancedConversionContext {
+        precision: decimal_precision,
+        rounding: rounding_mode,
+        temperature_scale: temp_scale,
+        use_special_units: config.use_special_units,
+    };
+    
+    // Perform conversion
+    match convert_with_context(value, from_unit, to_unit, &context) {
+        Ok(result) => {
+            let js_result = JsAdvancedConversionResult {
+                value: result.value,
+                unit: result.unit,
+                factor: result.factor,
+                offset: result.offset,
+                precision_info: result.precision_info,
+                used_special_units: result.used_special_units,
+            };
+            Ok(to_value(&js_result).unwrap())
+        }
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+/// Simple advanced conversion with default configuration
+#[wasm_bindgen]
+pub fn convert_advanced_simple(
+    value: f64,
+    from_unit: &str,
+    to_unit: &str,
+    precision_places: Option<u32>,
+) -> Result<JsValue, JsValue> {
+    let decimal_precision = if let Some(places) = precision_places {
+        DecimalPrecision::Fixed(places)
+    } else {
+        DecimalPrecision::Default
+    };
+    
+    let context = AdvancedConversionContext {
+        precision: decimal_precision,
+        rounding: RoundingMode::Nearest,
+        temperature_scale: TemperatureScale::Kelvin,
+        use_special_units: true,
+    };
+    
+    match convert_with_context(value, from_unit, to_unit, &context) {
+        Ok(result) => {
+            let js_result = JsAdvancedConversionResult {
+                value: result.value,
+                unit: result.unit,
+                factor: result.factor,
+                offset: result.offset,
+                precision_info: result.precision_info,
+                used_special_units: result.used_special_units,
+            };
+            Ok(to_value(&js_result).unwrap())
+        }
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+// Performance Optimization Functions for WASM
+
+/// Get performance cache statistics
+#[wasm_bindgen]
+pub fn get_performance_cache_stats() -> Result<JsValue, JsValue> {
+    match get_cache_stats() {
+        Ok(stats) => {
+            let js_stats = JsCacheStats {
+                expression_hits: stats.expression_hits,
+                expression_misses: stats.expression_misses,
+                conversion_hits: stats.conversion_hits,
+                conversion_misses: stats.conversion_misses,
+                dimension_hits: stats.dimension_hits,
+                dimension_misses: stats.dimension_misses,
+                expression_hit_ratio: stats.expression_hit_ratio(),
+                conversion_hit_ratio: stats.conversion_hit_ratio(),
+                overall_hit_ratio: stats.overall_hit_ratio(),
+            };
+            Ok(to_value(&js_stats).unwrap())
+        }
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+/// Clear the performance cache
+#[wasm_bindgen]
+pub fn clear_performance_cache() -> Result<bool, JsValue> {
+    match clear_global_cache() {
+        Ok(_) => Ok(true),
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+/// Get cache sizes
+#[wasm_bindgen]
+pub fn get_performance_cache_sizes() -> Result<JsValue, JsValue> {
+    match get_cache_sizes() {
+        Ok((expressions, conversions, dimensions)) => {
+            let js_sizes = JsCacheSizes {
+                expressions,
+                conversions,
+                dimensions,
+            };
+            Ok(to_value(&js_sizes).unwrap())
+        }
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+// Enhanced Error Handling and Suggestion Engine Functions for WASM
+
+/// Get suggestions for an invalid unit using the suggestion engine
+#[wasm_bindgen]
+pub fn get_unit_suggestions(invalid_unit: &str) -> JsValue {
+    let suggestion_engine = SuggestionEngine::new();
+    let suggestions = suggestion_engine.suggest_corrections(invalid_unit);
+    to_value(&suggestions).unwrap()
+}
+
+/// Get alternative units for a specific property
+#[wasm_bindgen]
+pub fn get_property_alternatives(unit: &str, property: &str) -> JsValue {
+    let suggestion_engine = SuggestionEngine::new();
+    let alternatives = suggestion_engine.suggest_alternatives(unit, property);
+    to_value(&alternatives).unwrap()
+}
+
+/// Get dimension-based suggestions for fixing property mismatches
+#[wasm_bindgen]
+pub fn get_dimension_suggestions(expected_property: &str, found_unit: &str) -> JsValue {
+    let suggestion_engine = SuggestionEngine::new();
+    let suggestions = suggestion_engine.suggest_dimension_fixes(expected_property, found_unit);
+    to_value(&suggestions).unwrap()
+}
+
+/// Calculate string similarity between two units (for demonstration)
+#[wasm_bindgen]
+pub fn calculate_unit_similarity(unit1: &str, unit2: &str) -> f64 {
+    SuggestionEngine::string_similarity(unit1, unit2)
+}
+
+// Extended Functionality Functions
+
+/// Optimize a unit expression for better readability
+#[wasm_bindgen]
+pub fn optimize_unit_expression(expression: &str) -> Result<String, JsValue> {
+    match optimize_expression(expression) {
+        Ok(optimized) => Ok(optimized),
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+/// Convert a unit expression to its canonical (base units) form
+#[wasm_bindgen]
+pub fn canonicalize_unit_expression(expression: &str) -> Result<String, JsValue> {
+    match canonicalize_expression(expression) {
+        Ok(canonical) => Ok(canonical),
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+/// Simplify a unit expression by combining like terms
+#[wasm_bindgen]
+pub fn simplify_unit_expression(expression: &str) -> Result<String, JsValue> {
+    match simplify_expression(expression) {
+        Ok(simplified) => Ok(simplified),
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
+    }
+}
+
+/// Create a measurement context for a specific domain
+#[wasm_bindgen]
+pub fn create_measurement_context(domain: &str) -> Result<JsValue, JsValue> {
+    let context = match domain.to_lowercase().as_str() {
+        "medical" => MeasurementContext::medical(),
+        "engineering" => MeasurementContext::engineering(),
+        "physics" => MeasurementContext::physics(),
+        "chemistry" => MeasurementContext::chemistry(),
+        "general" => MeasurementContext::default(),
+        _ => {
+            let js_error = create_simple_js_error(
+                format!("Invalid domain: {}. Use: medical, engineering, physics, chemistry, general", domain),
+                "InvalidDomain".to_string()
+            );
+            return Err(to_value(&js_error).unwrap());
+        }
+    };
+    
+    let js_context = JsMeasurementContext {
+        domain: format!("{:?}", context.domain),
+        precision_requirements: JsPrecisionRequirements {
+            min_significant_figures: context.precision_requirements.min_significant_figures,
+            max_relative_error: context.precision_requirements.max_relative_error,
+            require_exact: context.precision_requirements.require_exact,
+        },
+        preferred_units: context.preferred_units,
+        avoided_units: context.avoided_units,
+    };
+    
+    Ok(to_value(&js_context).unwrap())
+}
+
+/// Check if a unit is preferred in a measurement context
+#[wasm_bindgen]
+pub fn is_unit_preferred(domain: &str, unit: &str) -> Result<bool, JsValue> {
+    let context = match domain.to_lowercase().as_str() {
+        "medical" => MeasurementContext::medical(),
+        "engineering" => MeasurementContext::engineering(),
+        "physics" => MeasurementContext::physics(),
+        "chemistry" => MeasurementContext::chemistry(),
+        "general" => MeasurementContext::default(),
+        _ => {
+            let js_error = create_simple_js_error(
+                format!("Invalid domain: {}", domain),
+                "InvalidDomain".to_string()
+            );
+            return Err(to_value(&js_error).unwrap());
+        }
+    };
+    
+    Ok(context.is_preferred_unit(unit))
+}
+
+/// Check if a unit should be avoided in a measurement context
+#[wasm_bindgen]
+pub fn is_unit_avoided(domain: &str, unit: &str) -> Result<bool, JsValue> {
+    let context = match domain.to_lowercase().as_str() {
+        "medical" => MeasurementContext::medical(),
+        "engineering" => MeasurementContext::engineering(),
+        "physics" => MeasurementContext::physics(),
+        "chemistry" => MeasurementContext::chemistry(),
+        "general" => MeasurementContext::default(),
+        _ => {
+            let js_error = create_simple_js_error(
+                format!("Invalid domain: {}", domain),
+                "InvalidDomain".to_string()
+            );
+            return Err(to_value(&js_error).unwrap());
+        }
+    };
+    
+    Ok(context.is_avoided_unit(unit))
+}
+
+/// Get unit suggestions for a measurement context
+#[wasm_bindgen]
+pub fn get_context_unit_suggestions(domain: &str, unit: &str) -> Result<JsValue, JsValue> {
+    let context = match domain.to_lowercase().as_str() {
+        "medical" => MeasurementContext::medical(),
+        "engineering" => MeasurementContext::engineering(),
+        "physics" => MeasurementContext::physics(),
+        "chemistry" => MeasurementContext::chemistry(),
+        "general" => MeasurementContext::default(),
+        _ => {
+            let js_error = create_simple_js_error(
+                format!("Invalid domain: {}", domain),
+                "InvalidDomain".to_string()
+            );
+            return Err(to_value(&js_error).unwrap());
+        }
+    };
+    
+    match context.suggest_alternatives(unit) {
+        Ok(alternatives) => {
+            let js_suggestions = JsUnitSuggestions {
+                alternatives,
+                is_preferred: context.is_preferred_unit(unit),
+                is_avoided: context.is_avoided_unit(unit),
+            };
+            Ok(to_value(&js_suggestions).unwrap())
+        }
+        Err(err) => {
+            let js_error = convert_error(err);
+            Err(to_value(&js_error).unwrap())
+        }
     }
 }

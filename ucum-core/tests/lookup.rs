@@ -1,4 +1,5 @@
 use octofhir_ucum_core::{Dimension, find_prefix, find_unit};
+use octofhir_ucum_core::precision::{NumericOps, from_f64};
 
 #[test]
 fn prefix_lookup() {
@@ -44,7 +45,7 @@ fn milligram_unit_test() {
 
     // mg should have factor 1e-3 (milli) and mass dimension
     assert!(
-        (result.factor - 1e-3).abs() < 1e-12,
+        (result.factor.sub(from_f64(1e-3))).abs() < from_f64(1e-12),
         "mg factor should be 1e-3, got {}",
         result.factor
     );

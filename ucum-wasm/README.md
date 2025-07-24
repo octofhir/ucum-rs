@@ -9,6 +9,7 @@ WebAssembly bindings for the UCUM (Unified Code for Units of Measure) library, p
 - 🏥 **Healthcare-focused**: Built for FHIR and medical applications
 - 📏 **Complete UCUM support**: Handles all UCUM units and expressions
 - 🌐 **Universal**: Works in browsers, Node.js, and bundlers
+- 🔍 **Extended Functionality**: Unit expression optimization, measurement contexts, model introspection, self-validation, and advanced conversion with precision control
 
 ## Installation
 
@@ -19,7 +20,17 @@ npm install @octofhir/ucum-wasm
 ## Quick Start
 
 ```javascript
-import { start, validate, convert, get_unit_info } from '@octofhir/ucum-wasm';
+import { 
+  start, 
+  validate, 
+  convert, 
+  get_unit_info,
+  get_ucum_model,
+  get_unit_display_name,
+  convert_advanced_simple,
+  optimize_unit_expression,
+  create_measurement_context
+} from '@octofhir/ucum-wasm';
 
 // Initialize the WASM module
 start();
@@ -36,6 +47,20 @@ console.log(result); // 0.1
 const unitInfo = get_unit_info('kg');
 console.log(unitInfo.code); // 'kg'
 console.log(unitInfo.factor); // 1000
+
+// Model introspection
+const model = get_ucum_model();
+console.log(model.version); // '2.1'
+console.log(model.total_units); // 312
+
+// Enhanced display names
+console.log(get_unit_display_name('kg')); // 'kilogram'
+console.log(get_unit_display_name('m/s')); // '(meter) / (second)'
+
+// Advanced conversion with precision
+const advResult = convert_advanced_simple(1000, 'g', 'kg', 3);
+console.log(advResult.value); // 1.000
+console.log(advResult.precision_info); // '3 decimal places'
 ```
 
 ## API Reference
@@ -109,6 +134,171 @@ const allUnits = list_units();
 const massUnits = list_units('mass');
 ```
 
+### Extended Functionality
+
+#### Unit Expression Optimization
+
+##### `optimize_unit_expression(expression: string): string`
+Optimize a unit expression for better readability by recognizing common derived units.
+
+```javascript
+const optimized = optimize_unit_expression('kg.m.s-2');
+console.log(optimized); // 'N' (newton)
+
+const powerOpt = optimize_unit_expression('kg.m2.s-3');
+console.log(powerOpt); // 'W' (watt)
+```
+
+##### `canonicalize_unit_expression(expression: string): string`
+Convert a unit expression to its canonical (base units) form.
+
+```javascript
+const canonical = canonicalize_unit_expression('N');
+console.log(canonical); // 'kg.m.s-2'
+
+const pressureCanonical = canonicalize_unit_expression('Pa');
+console.log(pressureCanonical); // 'kg.m-1.s-2'
+```
+
+##### `simplify_unit_expression(expression: string): string`
+Simplify a unit expression by combining like terms and reducing complexity.
+
+```javascript
+const simplified = simplify_unit_expression('m.m/s');
+console.log(simplified); // 'm2/s'
+
+const complexSimplified = simplify_unit_expression('kg.m.s-2.s');
+console.log(complexSimplified); // 'kg.m.s-1'
+```
+
+#### Measurement Context Support
+
+##### `create_measurement_context(domain: string): MeasurementContext`
+Create a measurement context for domain-specific unit preferences.
+
+```javascript
+// Create contexts for different domains
+const medicalContext = create_measurement_context('medical');
+const engineeringContext = create_measurement_context('engineering');
+const physicsContext = create_measurement_context('physics');
+const chemistryContext = create_measurement_context('chemistry');
+
+console.log(medicalContext.domain); // 'Medical'
+console.log(medicalContext.preferred_units); // ['mg', 'kg', 'L', 'mL', 'mmol', ...]
+console.log(medicalContext.avoided_units); // ['[stone_av]', '[lb_av]', '[gal_us]', ...]
+```
+
+##### `is_unit_preferred(domain: string, unit: string): boolean`
+Check if a unit is preferred in a specific measurement context.
+
+```javascript
+const isPreferred = is_unit_preferred('medical', 'mg');
+console.log(isPreferred); // true
+
+const notPreferred = is_unit_preferred('medical', '[stone_av]');
+console.log(notPreferred); // false
+```
+
+##### `is_unit_avoided(domain: string, unit: string): boolean`
+Check if a unit should be avoided in a specific measurement context.
+
+```javascript
+const isAvoided = is_unit_avoided('medical', '[lb_av]');
+console.log(isAvoided); // true
+
+const notAvoided = is_unit_avoided('engineering', 'kPa');
+console.log(notAvoided); // false
+```
+
+##### `get_context_unit_suggestions(domain: string, unit: string): UnitSuggestions`
+Get unit suggestions for a measurement context.
+
+```javascript
+const suggestions = get_context_unit_suggestions('chemistry', 'g');
+console.log(suggestions.alternatives); // ['mg', 'kg', 'mol']
+console.log(suggestions.is_preferred); // true
+console.log(suggestions.is_avoided); // false
+```
+
+### Model Introspection Functions
+
+#### `get_ucum_model(): UcumModel`
+Get information about the UCUM model.
+
+```javascript
+const model = get_ucum_model();
+console.log(model.version);        // '2.1'
+console.log(model.revision_date);  // '2017-11-21'
+console.log(model.total_units);    // 312
+console.log(model.total_prefixes); // 24
+console.log(model.properties);     // Array of property names
+```
+
+#### `validate_ucum_implementation(): ValidationResult`
+Validate the UCUM implementation for self-consistency.
+
+```javascript
+const validation = validate_ucum_implementation();
+console.log(validation.is_valid); // true or false
+console.log(validation.issues);   // Array of issue descriptions
+```
+
+#### `get_ucum_properties(): string[]`
+Get all available properties in the UCUM model.
+
+```javascript
+const properties = get_ucum_properties();
+// Returns: ['length', 'mass', 'time', 'temperature', ...]
+```
+
+#### `validate_canonical_form(unit: string, canonical: string): boolean`
+Validate if a unit matches its canonical form.
+
+```javascript
+const isCanonical1 = validate_canonical_form('kg', 'g');        // false
+const isCanonical2 = validate_canonical_form('m/s', 'm.s-1');  // true
+```
+
+#### `get_unit_display_name(code: string): string`
+Get the display name for a unit code (handles prefixed units correctly).
+
+```javascript
+const display1 = get_unit_display_name('kg');    // 'kilogram'
+const display2 = get_unit_display_name('cm');    // 'centimeter'
+const display3 = get_unit_display_name('m/s');   // '(meter) / (second)'
+```
+
+### Advanced Conversion Functions
+
+#### `convert_advanced(value: number, from_unit: string, to_unit: string, config: ConversionConfig): AdvancedConversionResult`
+Advanced unit conversion with full precision control.
+
+```javascript
+const config = {
+  precision_type: 'fixed',
+  precision_value: 3,
+  rounding_mode: 'nearest',
+  temperature_scale: 'celsius',
+  use_special_units: true
+};
+
+const result = convert_advanced(1000, 'g', 'kg', config);
+console.log(result.value);              // 1.000
+console.log(result.precision_info);     // '3 decimal places'
+console.log(result.factor);             // 0.001
+console.log(result.used_special_units); // false
+```
+
+#### `convert_advanced_simple(value: number, from_unit: string, to_unit: string, precision_places?: number): AdvancedConversionResult`
+Simplified advanced conversion with default settings.
+
+```javascript
+const result = convert_advanced_simple(100, 'Cel', 'K', 2);
+console.log(result.value);              // 373.15
+console.log(result.precision_info);     // '2 decimal places'
+console.log(result.used_special_units); // true (temperature conversion)
+```
+
 ## Type Definitions
 
 ### `UnitInfo`
@@ -134,6 +324,78 @@ interface EvaluationResult {
 }
 ```
 
+### Extended Functionality Type Definitions
+
+#### `MeasurementContext`
+```typescript
+interface MeasurementContext {
+  domain: string;                           // Domain name (e.g., 'Medical', 'Engineering')
+  precision_requirements: PrecisionRequirements;
+  preferred_units: string[];                // Units preferred in this domain
+  avoided_units: string[];                  // Units to avoid in this domain
+}
+```
+
+#### `PrecisionRequirements`
+```typescript
+interface PrecisionRequirements {
+  min_significant_figures: number;          // Minimum significant figures required
+  max_relative_error: number;               // Maximum acceptable relative error
+  require_exact: boolean;                   // Whether exact values are required
+}
+```
+
+#### `UnitSuggestions`
+```typescript
+interface UnitSuggestions {
+  alternatives: string[];                   // Alternative units for the context
+  is_preferred: boolean;                    // Whether the unit is preferred
+  is_avoided: boolean;                      // Whether the unit should be avoided
+}
+```
+
+#### `UcumModel`
+```typescript
+interface UcumModel {
+  version: string;        // UCUM version (e.g., '2.1')
+  revision_date: string;  // Revision date (e.g., '2017-11-21')
+  total_units: number;    // Total number of units in the model
+  total_prefixes: number; // Total number of prefixes in the model
+  properties: string[];   // Array of all available properties
+}
+```
+
+#### `ValidationResult`
+```typescript
+interface ValidationResult {
+  is_valid: boolean;    // Whether the implementation is valid
+  issues: string[];     // Array of validation issue descriptions
+}
+```
+
+#### `AdvancedConversionResult`
+```typescript
+interface AdvancedConversionResult {
+  value: number;             // Converted value
+  unit: string;              // Target unit
+  factor: number;            // Conversion factor used
+  offset: number;            // Offset used (for temperature, etc.)
+  precision_info: string;    // Description of precision applied
+  used_special_units: boolean; // Whether special unit handling was used
+}
+```
+
+#### `ConversionConfig`
+```typescript
+interface ConversionConfig {
+  precision_type: 'default' | 'fixed' | 'significant';
+  precision_value?: number;  // Required for 'fixed' and 'significant'
+  rounding_mode: 'nearest' | 'up' | 'down' | 'truncate';
+  temperature_scale: 'kelvin' | 'celsius' | 'fahrenheit';
+  use_special_units: boolean;
+}
+```
+
 ## Usage Examples
 
 ### Healthcare/FHIR Applications
@@ -154,6 +416,54 @@ const hemoglobinInG = convert(15, 'g/dL', 'g/L'); // 150
 
 // Handle temperature conversions
 const bodyTempC = convert(98.6, '[degF]', 'Cel'); // ~37.0
+```
+
+### Extended Functionality and Advanced Conversion
+
+```javascript
+import { 
+  start, 
+  get_ucum_model, 
+  validate_ucum_implementation,
+  get_unit_display_name,
+  convert_advanced,
+  convert_advanced_simple
+} from '@octofhir/ucum-wasm';
+
+start();
+
+// Get model information for documentation or validation
+const model = get_ucum_model();
+console.log(`UCUM Version: ${model.version}`);
+console.log(`Total Units: ${model.total_units}`);
+console.log(`Available Properties: ${model.properties.length}`);
+
+// Validate the implementation
+const validation = validate_ucum_implementation();
+if (!validation.is_valid) {
+  console.warn('UCUM implementation issues:', validation.issues);
+}
+
+// Get better display names for units
+const weightUnit = get_unit_display_name('kg');     // 'kilogram'
+const speedUnit = get_unit_display_name('m/s');     // '(meter) / (second)'
+const tempUnit = get_unit_display_name('Cel');      // 'degree Celsius'
+
+// Advanced conversion with precise control
+const preciseConversion = convert_advanced(1000, 'g', 'kg', {
+  precision_type: 'fixed',
+  precision_value: 4,
+  rounding_mode: 'nearest',
+  temperature_scale: 'celsius',
+  use_special_units: true
+});
+console.log(`${preciseConversion.value} kg`); // 1.0000 kg
+console.log(preciseConversion.precision_info); // '4 decimal places'
+
+// Temperature conversion with advanced precision
+const tempConversion = convert_advanced_simple(37.5, 'Cel', '[degF]', 1);
+console.log(`${tempConversion.value}°F`);        // 99.5°F
+console.log(tempConversion.used_special_units);  // true
 ```
 
 ### FHIR Integration

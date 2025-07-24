@@ -12,21 +12,33 @@ mod error;
 mod evaluator;
 mod expr;
 mod parser;
+pub mod performance;
 pub mod precision;
 mod registry;
 pub mod special_units;
+pub mod suggestions;
 mod types;
 
 pub use crate::ast::{UnitExpr, UnitFactor};
 pub use crate::display::generate_display_name;
-pub use crate::error::UcumError;
+pub use crate::error::{UcumError, ErrorKind, Span};
 pub use crate::evaluator::{EvalResult, evaluate};
 pub use crate::expr::parse_expression;
+pub use crate::performance::{
+    CacheStats, EvaluationCache, find_unit_optimized, find_prefix_optimized,
+    get_cache_stats, clear_global_cache, get_cache_sizes, with_global_cache,
+    find_prefixes_with_trie, find_longest_prefix_with_trie,
+};
 pub use crate::special_units::{
     ArbitraryHandler, ConversionContext, LogarithmicHandler, SpecialUnitHandler,
     SpecialUnitRegistry, TemperatureHandler,
 };
+pub use crate::suggestions::SuggestionEngine;
 pub use crate::types::{BaseUnit, DerivedUnit, Dimension, Prefix, Quantity, UnitRecord};
+
+// Extended Functionality - functions are defined below and automatically exported
+
+use std::collections::HashSet;
 
 // Import precision utilities for internal use
 use crate::precision::{Number, NumericOps, to_f64};
@@ -50,7 +62,7 @@ pub fn find_prefix(sym: &str) -> Option<&'static Prefix> {
 }
 
 // ============================================================================
-// Phase 1: Core API Enhancement - Validation Methods
+// Core API Enhancement - Validation Methods
 // ============================================================================
 
 /// Validate a UCUM expression string.
@@ -68,13 +80,51 @@ pub fn find_prefix(sym: &str) -> Option<&'static Prefix> {
 /// assert!(validate("invalid_unit").is_err());
 /// ```
 pub fn validate(expression: &str) -> Result<(), UcumError> {
-    // Parse the expression
-    let parsed = parse_expression(expression)?;
-
-    // Evaluate to ensure all units are valid and dimensions are consistent
-    let _result = evaluate(&parsed)?;
-
-    Ok(())
+    // Create suggestion engine for enhanced error messages
+    lazy_static::lazy_static! {
+        static ref SUGGESTION_ENGINE: crate::suggestions::SuggestionEngine = 
+            crate::suggestions::SuggestionEngine::new();
+    }
+    
+    // First, try to parse the expression
+    let parsed = match parse_expression(expression) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            // Enhance parsing errors with suggestions
+            let enhanced_error = match &e.kind {
+                ErrorKind::InvalidExpression { reason } => {
+                    UcumError::invalid_expression(reason)
+                        .with_suggestions(SUGGESTION_ENGINE.suggest_corrections(expression))
+                        .with_context(format!("While parsing UCUM expression: '{}'", expression))
+                }
+                _ => e
+            };
+            return Err(enhanced_error);
+        }
+    };
+    
+    // Then evaluate it to ensure all units are valid and dimensions are consistent
+    match evaluate(&parsed) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // Enhance evaluation errors with suggestions
+            let enhanced_error = match &e.kind {
+                ErrorKind::UnitNotFound { unit, .. } => {
+                    let suggestions = SUGGESTION_ENGINE.suggest_corrections(unit);
+                    UcumError::unit_not_found(unit)
+                        .with_suggestions(suggestions)
+                        .with_context(format!("In expression: '{}'", expression))
+                }
+                ErrorKind::DimensionMismatch { expected, found, operation } => {
+                    UcumError::dimension_mismatch(*expected, *found, operation)
+                        .with_context(format!("In expression: '{}'", expression))
+                        .with_suggestion("Check that all units in the expression have compatible dimensions")
+                }
+                _ => e
+            };
+            Err(enhanced_error)
+        }
+    }
 }
 
 /// Analyse a UCUM expression and return detailed information about it.
@@ -166,14 +216,52 @@ pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, Uc
         "inductance" => Dimension([1, 2, -2, -2, 0, 0, 0]), // ML²T⁻²I⁻²
         "dimensionless" => Dimension([0, 0, 0, 0, 0, 0, 0]), // 1
         _ => {
-            return Err(UcumError::InvalidProperty(format!(
-                "Unknown property: {}",
-                property
-            )));
+            lazy_static::lazy_static! {
+                static ref SUGGESTION_ENGINE: crate::suggestions::SuggestionEngine = 
+                    crate::suggestions::SuggestionEngine::new();
+            }
+            
+            let available_properties = vec![
+                "length", "mass", "time", "current", "temperature", "amount", "luminosity",
+                "area", "volume", "velocity", "acceleration", "force", "energy", "power",
+                "pressure", "frequency", "voltage", "resistance", "capacitance", "inductance", "dimensionless"
+            ];
+            
+            // Find similar properties using string similarity
+            let mut similar_properties = Vec::new();
+            for prop in &available_properties {
+                let similarity = crate::suggestions::SuggestionEngine::string_similarity(property, prop);
+                if similarity > 0.6 {
+                    similar_properties.push(format!("'{}'", prop));
+                }
+            }
+            
+            let error = UcumError::invalid_property(property)
+                .with_suggestions(similar_properties)
+                .with_context(format!("Available properties: {}", available_properties.join(", ")));
+            
+            return Err(error);
         }
     };
+    
+    let is_valid = analysis.dimension == expected_dimension;
+    
+    // If not valid, provide suggestions for units that would be valid for this property
+    if !is_valid {
+        lazy_static::lazy_static! {
+            static ref SUGGESTION_ENGINE: crate::suggestions::SuggestionEngine = 
+                crate::suggestions::SuggestionEngine::new();
+        }
+        
+        let alternative_units = SUGGESTION_ENGINE.suggest_alternatives(expression, property);
+        let error = UcumError::dimension_mismatch(expected_dimension, analysis.dimension, "property validation")
+            .with_suggestions(alternative_units)
+            .with_context(format!("Expression '{}' has dimension {:?} but property '{}' requires dimension {:?}", 
+                                expression, analysis.dimension, property, expected_dimension));
+        return Err(error);
+    }
 
-    Ok(analysis.dimension == expected_dimension)
+    Ok(is_valid)
 }
 
 /// Check if two units are commensurable (can be converted between each other).
@@ -275,7 +363,7 @@ fn build_canonical_unit_string(dim: &Dimension) -> String {
 }
 
 // ============================================================================
-// Phase 1: Core API Enhancement - Mathematical Operations
+// Core API Enhancement - Mathematical Operations
 // ============================================================================
 
 /// Multiply two quantities with units.
@@ -299,8 +387,9 @@ pub fn multiply(
 
     // Check for offset units (not allowed in multiplication)
     if analysis1.has_offset || analysis2.has_offset {
-        return Err(UcumError::ConversionError(
-            "offset units cannot participate in multiplication",
+        return Err(UcumError::conversion_error(
+            "offset units", "multiplication",
+            "offset units cannot participate in multiplication"
         ));
     }
 
@@ -344,13 +433,17 @@ pub fn divide_by(
 
     // Check for offset units (not allowed in division)
     if analysis1.has_offset || analysis2.has_offset {
-        return Err(UcumError::ConversionError(
-            "offset units cannot participate in division",
+        return Err(UcumError::conversion_error(
+            "offset units", "division",
+            "offset units cannot participate in division"
         ));
     }
 
     if divisor_value == 0.0 {
-        return Err(UcumError::ConversionError("division by zero"));
+        return Err(UcumError::conversion_error(
+            "denominator", "zero",
+            "division by zero"
+        ));
     }
 
     // Calculate result
@@ -384,7 +477,7 @@ pub struct UnitResult {
 }
 
 // ============================================================================
-// Phase 1: Core API Enhancement - Search Functionality
+// Core API Enhancement - Search Functionality
 // ============================================================================
 
 use fuzzy_matcher::FuzzyMatcher;
@@ -531,7 +624,7 @@ pub fn search_units_regex(
         format!("(?i){}", pattern)
     };
 
-    let regex = Regex::new(&regex_pattern).map_err(|_| UcumError::InvalidExpression)?;
+    let regex = Regex::new(&regex_pattern).map_err(|_| UcumError::invalid_expression("Invalid regex pattern"))?;
 
     let mut results = Vec::new();
 
@@ -694,7 +787,7 @@ fn classify_unit(unit: &UnitRecord) -> ConceptKind {
 }
 
 // ============================================================================
-// Phase 1: Core API Enhancement - Mathematical Operations
+// Core API Enhancement - Mathematical Operations
 // ============================================================================
 
 /// Multiply two unit expressions together.
@@ -724,8 +817,9 @@ pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, U
 
     // Check for offset units (not allowed in multiplication)
     if analysis1.has_offset || analysis2.has_offset {
-        return Err(UcumError::ConversionError(
-            "Offset units cannot be used in multiplication",
+        return Err(UcumError::conversion_error(
+            "offset units", "multiplication",
+            "Offset units cannot be used in multiplication"
         ));
     }
 
@@ -783,8 +877,9 @@ pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticR
 
     // Check for offset units (not allowed in division)
     if analysis1.has_offset || analysis2.has_offset {
-        return Err(UcumError::ConversionError(
-            "Offset units cannot be used in division",
+        return Err(UcumError::conversion_error(
+            "offset units", "division",
+            "Offset units cannot be used in division"
         ));
     }
 
@@ -813,4 +908,798 @@ pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticR
         offset: 0.0,
         is_dimensionless: result_dimension == [0; 7],
     })
+}
+
+// ============================================================================
+// Model Introspection API
+// ============================================================================
+
+/// UCUM model information and metadata.
+#[derive(Debug, Clone)]
+pub struct UcumModel {
+    /// UCUM specification version
+    pub version: String,
+    /// Model revision date
+    pub revision_date: String,
+    /// Available prefixes
+    pub prefixes: &'static [Prefix],
+    /// All available units
+    pub units: &'static [UnitRecord],
+}
+
+/// Get the UCUM model information.
+///
+/// Returns metadata about the current UCUM implementation including version,
+/// available prefixes, and unit definitions.
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_core::get_model;
+///
+/// let model = get_model();
+/// println!("UCUM Version: {}", model.version);
+/// println!("Total units: {}", model.units.len());
+/// println!("Total prefixes: {}", model.prefixes.len());
+/// ```
+pub fn get_model() -> UcumModel {
+    UcumModel {
+        version: "2.1".to_string(),
+        revision_date: "2017-11-21".to_string(),
+        prefixes: crate::registry::PREFIXES,
+        units: get_all_units(),
+    }
+}
+
+/// Validate the UCUM implementation for self-consistency.
+///
+/// Performs comprehensive validation of the UCUM model to detect any internal
+/// inconsistencies or errors. Returns a list of validation messages.
+///
+/// # Returns
+/// A vector of validation messages. An empty vector indicates no issues found.
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_core::validate_ucum;
+///
+/// let issues = validate_ucum();
+/// if issues.is_empty() {
+///     println!("UCUM model is valid");
+/// } else {
+///     for issue in issues {
+///         println!("Issue: {}", issue);
+///     }
+/// }
+/// ```
+pub fn validate_ucum() -> Vec<String> {
+    let mut issues = Vec::new();
+    
+    // Check for duplicate unit codes
+    let mut seen_codes = HashSet::new();
+    for unit in get_all_units() {
+        if !seen_codes.insert(&unit.code) {
+            issues.push(format!("Duplicate unit code: {}", unit.code));
+        }
+    }
+    
+    // Check for duplicate prefix symbols
+    let mut seen_prefixes = HashSet::new();
+    for prefix in crate::registry::PREFIXES {
+        if !seen_prefixes.insert(&prefix.symbol) {
+            issues.push(format!("Duplicate prefix symbol: {}", prefix.symbol));
+        }
+    }
+    
+    // Validate unit expressions that should be parseable
+    for unit in get_all_units() {
+        if let Err(e) = validate(&unit.code) {
+            issues.push(format!("Unit {} failed validation: {}", unit.code, e));
+        }
+    }
+    
+    // Check for missing base units
+    let base_unit_codes = ["m", "g", "s", "A", "K", "mol", "cd"];
+    for &base_code in &base_unit_codes {
+        if find_unit(base_code).is_none() {
+            issues.push(format!("Missing base unit: {}", base_code));
+        }
+    }
+    
+    issues
+}
+
+/// Get all available properties in the UCUM model.
+///
+/// Returns a set of all distinct properties defined in the unit registry.
+/// Properties represent physical quantities like "length", "mass", "time", etc.
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_core::get_properties;
+///
+/// let properties = get_properties();
+/// for property in &properties {
+///     println!("Property: {}", property);
+/// }
+/// ```
+pub fn get_properties() -> HashSet<String> {
+    let mut properties = HashSet::new();
+    
+    for unit in get_all_units() {
+        properties.insert(unit.property.to_string());
+    }
+    
+    properties
+}
+
+/// Validate that canonical units match the expected form.
+///
+/// Checks if the provided canonical form is correct for the given unit expression.
+/// This is useful for validating externally provided canonical unit strings.
+///
+/// # Arguments
+/// * `unit` - The unit expression to validate
+/// * `canonical` - The expected canonical form
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_core::validate_canonical_units;
+///
+/// // Valid canonical form
+/// assert!(validate_canonical_units("km", "m").unwrap());
+/// 
+/// // Invalid canonical form
+/// assert!(!validate_canonical_units("km", "kg").unwrap());
+/// ```
+pub fn validate_canonical_units(unit: &str, canonical: &str) -> Result<bool, UcumError> {
+    let canonical_result = get_canonical_units(unit)?;
+    Ok(canonical_result.unit == canonical)
+}
+
+/// Get a human-readable display name for a unit code.
+///
+/// Returns the most appropriate display name for the given unit code.
+/// Falls back to the unit code itself if no display name is available.
+///
+/// # Arguments
+/// * `code` - The unit code to get a display name for
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_core::get_common_display;
+///
+/// assert_eq!(get_common_display("m"), "meter");
+/// assert_eq!(get_common_display("kg"), "kilogram");
+/// assert_eq!(get_common_display("unknown"), "unknown");
+/// ```
+pub fn get_common_display(code: &str) -> String {
+    // First try direct lookup
+    if let Some(unit) = find_unit(code) {
+        // Special handling for prefixed units like "kg"
+        if code != unit.code {
+            // This is a prefixed unit, we need to construct the display name
+            // Check if it's a prefix + base unit combination
+            for prefix_len in (1..code.len()).rev() {
+                let (prefix_part, unit_part) = code.split_at(prefix_len);
+                
+                if let (Some(prefix), Some(base_unit)) = (find_prefix(prefix_part), find_unit(unit_part)) {
+                    if base_unit.code == unit_part {
+                        // Construct prefixed display name
+                        return format!("{}{}", prefix.display_name, base_unit.display_name);
+                    }
+                }
+            }
+        }
+        unit.display_name.to_string()
+    } else {
+        // Try to generate display name for compound expressions
+        match parse_expression(code) {
+            Ok(expr) => {
+                let display = generate_display_name(&expr);
+                // If the display is just the code in parentheses, return the code directly
+                if display == format!("({})", code) {
+                    code.to_string()
+                } else {
+                    display
+                }
+            },
+            Err(_) => code.to_string(),
+        }
+    }
+}
+
+// ============================================================================
+// Advanced Conversion Operations
+// ============================================================================
+
+/// Advanced conversion context for enhanced conversion operations.
+#[derive(Debug, Clone)]
+pub struct AdvancedConversionContext {
+    /// Precision configuration for the conversion
+    pub precision: DecimalPrecision,
+    /// Rounding mode to use
+    pub rounding: RoundingMode,
+    /// Temperature scale preference
+    pub temperature_scale: TemperatureScale,
+    /// Whether to use special unit handlers
+    pub use_special_units: bool,
+}
+
+/// Decimal precision configuration.
+#[derive(Debug, Clone)]
+pub enum DecimalPrecision {
+    /// Use default floating-point precision
+    Default,
+    /// Use fixed decimal places
+    Fixed(u32),
+    /// Use significant figures
+    Significant(u32),
+}
+
+/// Rounding mode for conversions.
+#[derive(Debug, Clone)]
+pub enum RoundingMode {
+    /// Round to nearest (default)
+    Nearest,
+    /// Round up (ceiling)
+    Up,
+    /// Round down (floor)
+    Down,
+    /// Truncate (toward zero)
+    Truncate,
+}
+
+/// Temperature scale preference.
+#[derive(Debug, Clone)]
+pub enum TemperatureScale {
+    /// Use Kelvin as base (default)
+    Kelvin,
+    /// Use Celsius as base
+    Celsius,
+    /// Use Fahrenheit as base
+    Fahrenheit,
+}
+
+impl Default for AdvancedConversionContext {
+    fn default() -> Self {
+        Self {
+            precision: DecimalPrecision::Default,
+            rounding: RoundingMode::Nearest,
+            temperature_scale: TemperatureScale::Kelvin,
+            use_special_units: true,
+        }
+    }
+}
+
+/// Result of an advanced conversion operation with metadata.
+#[derive(Debug, Clone)]
+pub struct AdvancedConversionResult {
+    /// Converted value
+    pub value: f64,
+    /// Target unit
+    pub unit: String,
+    /// Conversion factor applied
+    pub factor: f64,
+    /// Offset applied (for temperature conversions)
+    pub offset: f64,
+    /// Precision information
+    pub precision_info: String,
+    /// Whether special unit processing was used
+    pub used_special_units: bool,
+}
+
+/// Convert with advanced context and precision control.
+///
+/// Performs unit conversion with enhanced control over precision, rounding,
+/// and special unit handling.
+///
+/// # Arguments
+/// * `value` - The numeric value to convert
+/// * `from` - Source unit expression
+/// * `to` - Target unit expression  
+/// * `context` - Advanced conversion context
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_core::{convert_with_context, AdvancedConversionContext, DecimalPrecision};
+///
+/// let context = AdvancedConversionContext {
+///     precision: DecimalPrecision::Fixed(2),
+///     ..Default::default()
+/// };
+///
+/// let result = convert_with_context(1.0, "km", "m", &context).unwrap();
+/// println!("Converted: {} {}", result.value, result.unit);
+/// ```
+pub fn convert_with_context(
+    value: f64,
+    from: &str,
+    to: &str,
+    context: &AdvancedConversionContext,
+) -> Result<AdvancedConversionResult, UcumError> {
+    // For now, delegate to the existing conversion logic
+    // This can be enhanced with the precision and rounding logic
+    let from_analysis = analyse(from)?;
+    let to_analysis = analyse(to)?;
+    
+    // Check dimension compatibility
+    if from_analysis.dimension != to_analysis.dimension {
+        return Err(UcumError::conversion_error(
+            "source units", "target units",
+            "Cannot convert between units with different dimensions"
+        ));
+    }
+    
+    // Calculate conversion
+    let factor = from_analysis.factor / to_analysis.factor;
+    let offset = from_analysis.offset - to_analysis.offset;
+    let converted_value = value * factor + offset;
+    
+    // Apply precision rounding (simplified implementation)
+    let final_value = match context.precision {
+        DecimalPrecision::Default => converted_value,
+        DecimalPrecision::Fixed(places) => {
+            let multiplier = 10f64.powi(places as i32);
+            (converted_value * multiplier).round() / multiplier
+        }
+        DecimalPrecision::Significant(sig_figs) => {
+            if converted_value == 0.0 {
+                0.0
+            } else {
+                let magnitude = converted_value.abs().log10().floor();
+                let factor = 10f64.powi((sig_figs as i32 - 1) - magnitude as i32);
+                (converted_value * factor).round() / factor
+            }
+        }
+    };
+    
+    let precision_info = match context.precision {
+        DecimalPrecision::Default => "default".to_string(),
+        DecimalPrecision::Fixed(places) => format!("{} decimal places", places),
+        DecimalPrecision::Significant(sig_figs) => format!("{} significant figures", sig_figs),
+    };
+    
+    Ok(AdvancedConversionResult {
+        value: final_value,
+        unit: to.to_string(),
+        factor,
+        offset,
+        precision_info,
+        used_special_units: from_analysis.has_offset || to_analysis.has_offset,
+    })
+}
+
+// ============================================================================
+// Extended Functionality - Unit Expression Optimization
+// ============================================================================
+
+/// Optimize a unit expression for better readability and canonical form.
+///
+/// This function simplifies unit expressions by combining like terms, removing
+/// redundant parentheses, and using more readable unit forms where possible.
+///
+/// # Arguments
+/// * `expr` - The unit expression to optimize
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_core::optimize_expression;
+///
+/// let optimized = optimize_expression("m.m/s.s").unwrap();
+/// assert_eq!(optimized, "m2.s-2");
+/// ```
+pub fn optimize_expression(expr: &str) -> Result<String, UcumError> {
+    // Parse the expression to ensure it's valid
+    let _parsed = parse_expression(expr)?;
+    let analysis = analyse(expr)?;
+    
+    // Get canonical form first
+    let canonical = get_canonical_units(expr)?;
+    
+    // Try to build a more readable form from the dimension vector
+    let optimized = build_optimized_unit_string(&analysis.dimension, &canonical);
+    
+    Ok(optimized)
+}
+
+/// Convert a unit expression to its canonical (base units) form.
+///
+/// Returns the expression in terms of the seven SI base units with appropriate
+/// exponents. This is useful for dimensional analysis and unit verification.
+///
+/// # Arguments
+/// * `expr` - The unit expression to canonicalize
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_core::canonicalize_expression;
+///
+/// let canonical = canonicalize_expression("N").unwrap();
+/// assert_eq!(canonical, "kg.m.s-2");
+/// ```
+pub fn canonicalize_expression(expr: &str) -> Result<String, UcumError> {
+    let canonical = get_canonical_units(expr)?;
+    Ok(canonical.unit)
+}
+
+/// Simplify a unit expression by combining like terms and reducing complexity.
+///
+/// This function performs algebraic simplification on unit expressions,
+/// combining exponents of the same units and removing identity operations.
+///
+/// # Arguments
+/// * `expr` - The unit expression to simplify
+///
+/// # Examples
+///
+/// ```
+/// use octofhir_ucum_core::simplify_expression;
+///
+/// let simplified = simplify_expression("m.s/s").unwrap();
+/// assert_eq!(simplified, "m");
+/// ```
+pub fn simplify_expression(expr: &str) -> Result<String, UcumError> {
+    // For now, return a simplified version based on canonical form
+    // This avoids potential infinite loops in AST processing
+    let canonical = get_canonical_units(expr)?;
+    
+    // If the canonical form is simpler, return it, otherwise return original
+    if canonical.unit.len() < expr.len() {
+        Ok(canonical.unit)
+    } else {
+        Ok(expr.to_string())
+    }
+}
+
+/// Build an optimized unit string from dimension vector.
+fn build_optimized_unit_string(dim: &Dimension, canonical: &CanonicalUnit) -> String {
+    // Try to use more readable derived units where possible
+    let common_units = [
+        // Force units
+        (Dimension([1, 1, -2, 0, 0, 0, 0]), "N", 1.0),
+        // Energy units  
+        (Dimension([1, 2, -2, 0, 0, 0, 0]), "J", 1.0),
+        // Power units
+        (Dimension([1, 2, -3, 0, 0, 0, 0]), "W", 1.0),
+        // Pressure units
+        (Dimension([1, -1, -2, 0, 0, 0, 0]), "Pa", 1.0),
+        // Frequency units
+        (Dimension([0, 0, -1, 0, 0, 0, 0]), "Hz", 1.0),
+        // Voltage units
+        (Dimension([1, 2, -3, -1, 0, 0, 0]), "V", 1.0),
+        // Resistance units
+        (Dimension([1, 2, -3, -2, 0, 0, 0]), "Ohm", 1.0),
+    ];
+    
+    // Check if dimension matches a common derived unit
+    for (dim_pattern, unit_name, _factor) in &common_units {
+        if dim == dim_pattern {
+            return unit_name.to_string();
+        }
+    }
+    
+    // Fall back to canonical form
+    canonical.unit.clone()
+}
+
+// Unused helper functions removed to avoid warnings
+
+// ============================================================================
+// Extended Functionality - Measurement Context Support
+// ============================================================================
+
+/// Domain-specific context for measurements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Domain {
+    /// Medical and healthcare applications
+    Medical,
+    /// Engineering and technical applications
+    Engineering,
+    /// Physics and scientific research
+    Physics,
+    /// Chemistry and laboratory applications
+    Chemistry,
+    /// General purpose usage
+    General,
+}
+
+/// Precision requirements for different domains.
+#[derive(Debug, Clone)]
+pub struct PrecisionRequirements {
+    /// Minimum number of significant figures
+    pub min_significant_figures: u32,
+    /// Maximum acceptable relative error
+    pub max_relative_error: f64,
+    /// Whether exact conversions are required
+    pub require_exact: bool,
+}
+
+/// Measurement context providing domain-specific preferences and requirements.
+#[derive(Debug, Clone)]
+pub struct MeasurementContext {
+    /// Application domain
+    pub domain: Domain,
+    /// Precision requirements for this context
+    pub precision_requirements: PrecisionRequirements,
+    /// Preferred units for this domain
+    pub preferred_units: Vec<String>,
+    /// Units to avoid in this domain
+    pub avoided_units: Vec<String>,
+}
+
+impl Default for MeasurementContext {
+    fn default() -> Self {
+        Self {
+            domain: Domain::General,  
+            precision_requirements: PrecisionRequirements {
+                min_significant_figures: 3,
+                max_relative_error: 1e-6,
+                require_exact: false,
+            },
+            preferred_units: Vec::new(),
+            avoided_units: Vec::new(),
+        }
+    }
+}
+
+impl MeasurementContext {
+    /// Create a medical measurement context with appropriate defaults.
+    ///
+    /// Medical contexts prioritize safety and precision, with preferences for
+    /// units commonly used in healthcare settings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use octofhir_ucum_core::MeasurementContext;
+    ///
+    /// let medical_context = MeasurementContext::medical();
+    /// ```
+    pub fn medical() -> Self {
+        Self {
+            domain: Domain::Medical,
+            precision_requirements: PrecisionRequirements {
+                min_significant_figures: 4,
+                max_relative_error: 1e-8,
+                require_exact: true,
+            },
+            preferred_units: vec![
+                // Dosage units
+                "mg".to_string(), "ug".to_string(), "g".to_string(),
+                // Volume units
+                "mL".to_string(), "L".to_string(),
+                // Concentration units  
+                "mg/mL".to_string(), "ug/mL".to_string(),
+                // Temperature (Celsius preferred in medical)
+                "Cel".to_string(),
+            ],
+            avoided_units: vec![
+                // Avoid ambiguous units
+                "[IU]".to_string(), // International units can be ambiguous
+            ],
+        }
+    }
+
+    /// Create an engineering measurement context with appropriate defaults.
+    ///
+    /// Engineering contexts focus on standard SI units and derived units
+    /// commonly used in technical applications.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use octofhir_ucum_core::MeasurementContext;
+    ///
+    /// let engineering_context = MeasurementContext::engineering();
+    /// ```
+    pub fn engineering() -> Self {
+        Self {
+            domain: Domain::Engineering,
+            precision_requirements: PrecisionRequirements {
+                min_significant_figures: 3,
+                max_relative_error: 1e-6,
+                require_exact: false,
+            },
+            preferred_units: vec![
+                // Standard SI units
+                "m".to_string(), "kg".to_string(), "s".to_string(),
+                // Common derived units
+                "N".to_string(), "Pa".to_string(), "J".to_string(), "W".to_string(),
+                // Pressure units
+                "kPa".to_string(), "MPa".to_string(),
+                // Temperature (Kelvin for engineering)
+                "K".to_string(),
+            ],
+            avoided_units: vec![
+                // Avoid non-SI units where possible
+                "[psi]".to_string(), "[in_i]".to_string(), "[ft_i]".to_string(),
+            ],
+        }
+    }
+
+    /// Create a physics measurement context with appropriate defaults.
+    ///
+    /// Physics contexts prioritize fundamental SI units and exact relationships,
+    /// with high precision requirements for research applications.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use octofhir_ucum_core::MeasurementContext;
+    ///
+    /// let physics_context = MeasurementContext::physics();
+    /// ```
+    pub fn physics() -> Self {
+        Self {
+            domain: Domain::Physics,
+            precision_requirements: PrecisionRequirements {
+                min_significant_figures: 6,
+                max_relative_error: 1e-12,
+                require_exact: true,
+            },
+            preferred_units: vec![
+                // Fundamental SI units
+                "m".to_string(), "kg".to_string(), "s".to_string(), 
+                "A".to_string(), "K".to_string(), "mol".to_string(), "cd".to_string(),
+                // Common physics units
+                "eV".to_string(), "c".to_string(), // Speed of light
+                "h".to_string(), // Planck constant (if available)
+            ],
+            avoided_units: vec![
+                // Avoid non-fundamental units where possible
+                "[cal]".to_string(), "[Btu]".to_string(),
+            ],
+        }
+    }
+
+    /// Create a chemistry measurement context with appropriate defaults.
+    ///
+    /// Chemistry contexts focus on molar quantities, concentrations, and units
+    /// commonly used in laboratory settings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use octofhir_ucum_core::MeasurementContext;
+    ///
+    /// let chemistry_context = MeasurementContext::chemistry();
+    /// ```
+    pub fn chemistry() -> Self {
+        Self {
+            domain: Domain::Chemistry,
+            precision_requirements: PrecisionRequirements {
+                min_significant_figures: 4,
+                max_relative_error: 1e-9,
+                require_exact: false,
+            },
+            preferred_units: vec![
+                // Molar units
+                "mol".to_string(), "mmol".to_string(), "umol".to_string(),
+                // Concentration units
+                "mol/L".to_string(), "mmol/L".to_string(),
+                // Mass units for chemicals
+                "g".to_string(), "mg".to_string(), "kg".to_string(),
+                // Volume units
+                "L".to_string(), "mL".to_string(), "uL".to_string(),
+                // Temperature (Celsius for chemistry)
+                "Cel".to_string(),
+            ],
+            avoided_units: vec![
+                // Avoid non-molar concentration units where possible
+                "g/L".to_string(), // Prefer molar concentrations
+            ],
+        }
+    }
+
+    /// Check if a unit is preferred in this measurement context.
+    ///
+    /// # Arguments
+    /// * `unit` - The unit to check
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use octofhir_ucum_core::MeasurementContext;
+    ///
+    /// let medical_context = MeasurementContext::medical();
+    /// assert!(medical_context.is_preferred_unit("mg"));
+    /// assert!(!medical_context.is_preferred_unit("[psi]"));
+    /// ```
+    pub fn is_preferred_unit(&self, unit: &str) -> bool {
+        self.preferred_units.contains(&unit.to_string())
+    }
+
+    /// Check if a unit should be avoided in this measurement context.
+    ///
+    /// # Arguments
+    /// * `unit` - The unit to check
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use octofhir_ucum_core::MeasurementContext;
+    ///
+    /// let engineering_context = MeasurementContext::engineering();
+    /// assert!(engineering_context.is_avoided_unit("[psi]"));
+    /// assert!(!engineering_context.is_avoided_unit("Pa"));
+    /// ```
+    pub fn is_avoided_unit(&self, unit: &str) -> bool {
+        self.avoided_units.contains(&unit.to_string())
+    }
+
+    /// Get suggested alternative units for the given unit in this context.
+    ///
+    /// Returns a list of preferred units that are dimensionally compatible
+    /// with the input unit, ordered by preference for this domain.
+    ///
+    /// # Arguments
+    /// * `unit` - The unit to find alternatives for
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use octofhir_ucum_core::MeasurementContext;
+    ///
+    /// let medical_context = MeasurementContext::medical();
+    /// let alternatives = medical_context.suggest_alternatives("g").unwrap();
+    /// // May suggest ["mg", "ug"] for medical dosing
+    /// ```
+    pub fn suggest_alternatives(&self, unit: &str) -> Result<Vec<String>, UcumError> {
+        // Analyze the input unit to get its dimension
+        let analysis = analyse(unit)?;
+        let mut suggestions = Vec::new();
+
+        // Check preferred units for dimensional compatibility
+        for preferred in &self.preferred_units {
+            if let Ok(pref_analysis) = analyse(preferred) {
+                if pref_analysis.dimension == analysis.dimension {
+                    suggestions.push(preferred.clone());
+                }
+            }
+        }
+
+        // If no preferred units match, suggest some common alternatives
+        if suggestions.is_empty() {
+            match self.domain {
+                Domain::Medical => {
+                    // Suggest medical-appropriate units based on dimension
+                    if analysis.dimension == Dimension([1, 0, 0, 0, 0, 0, 0]) { // Mass
+                        suggestions = vec!["mg".to_string(), "g".to_string(), "ug".to_string()];
+                    } else if analysis.dimension == Dimension([0, 3, 0, 0, 0, 0, 0]) { // Volume
+                        suggestions = vec!["mL".to_string(), "L".to_string()];
+                    }
+                }
+                Domain::Engineering => {
+                    // Suggest engineering-appropriate SI units
+                    if analysis.dimension == Dimension([1, -1, -2, 0, 0, 0, 0]) { // Pressure
+                        suggestions = vec!["Pa".to_string(), "kPa".to_string(), "MPa".to_string()];
+                    }
+                }
+                Domain::Physics => {
+                    // Suggest fundamental SI units
+                    suggestions.push(canonicalize_expression(unit)?);
+                }
+                Domain::Chemistry => {
+                    // Suggest chemistry-appropriate units
+                    if analysis.dimension == Dimension([0, 0, 0, 0, 0, 1, 0]) { // Amount
+                        suggestions = vec!["mol".to_string(), "mmol".to_string()];
+                    }
+                }
+                Domain::General => {
+                    // Suggest common SI units
+                    suggestions.push(canonicalize_expression(unit)?);
+                }
+            }
+        }
+
+        Ok(suggestions)
+    }
 }

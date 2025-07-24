@@ -5,13 +5,13 @@
 
 use crate::ast::{UnitExpr, UnitFactor};
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     bytes::complete::{tag, take_while1},
     character::complete::{char, digit1, multispace1},
     combinator::{map, map_res, opt, recognize},
     number::complete::recognize_float,
-    sequence::{delimited, pair, preceded, tuple},
+    sequence::{delimited, pair, preceded},
 };
 
 // ---------------------- atomic helpers ----------------------
@@ -35,7 +35,7 @@ fn parse_symbol(input: &str) -> IResult<&str, UnitExpr> {
                 Ok(UnitExpr::Symbol(normalized))
             }
         }
-    })(input)
+    }).parse(input)
 }
 
 fn is_invalid_unit_pattern(s: &str) -> bool {
@@ -75,24 +75,24 @@ fn is_invalid_unit_pattern(s: &str) -> bool {
 
 fn parse_numeric(input: &str) -> IResult<&str, UnitExpr> {
     // Parses 10*exp or 10^exp where exp is a signed integer.
-    let signed_int = |input| recognize(pair(opt(alt((char('-'), char('+')))), digit1))(input);
+    let signed_int = || recognize(pair(opt(alt((char('-'), char('+')))), digit1));
 
-    let star_parser = map_res(preceded(tag("10*"), signed_int), |s: &str| s.parse::<i32>());
-    let caret_parser = map_res(preceded(tag("10^"), signed_int), |s: &str| s.parse::<i32>());
+    let star_parser = map_res(preceded(tag("10*"), signed_int()), |s: &str| s.parse::<i32>());
+    let caret_parser = map_res(preceded(tag("10^"), signed_int()), |s: &str| s.parse::<i32>());
 
     map(alt((star_parser, caret_parser)), |exp: i32| {
         UnitExpr::Numeric(10f64.powi(exp))
-    })(input)
+    }).parse(input)
 }
 
 fn parse_decimal(input: &str) -> IResult<&str, UnitExpr> {
     map_res(recognize_float, |s: &str| {
         s.parse::<f64>().map(UnitExpr::Numeric)
-    })(input)
+    }).parse(input)
 }
 
 fn parse_paren_expr(input: &str) -> IResult<&str, UnitExpr> {
-    delimited(char('('), parse_quotient, char(')'))(input)
+    delimited(char('('), parse_quotient, char(')')).parse(input)
 }
 
 fn parse_base_atomic(input: &str) -> IResult<&str, UnitExpr> {
@@ -108,7 +108,7 @@ fn parse_base_atomic(input: &str) -> IResult<&str, UnitExpr> {
         parse_decimal,
         parse_standalone_annotation,
         parse_symbol,
-    ))(input)
+    )).parse(input)
 }
 
 // ---------------------- annotations -------------------------
@@ -163,7 +163,7 @@ fn annotation_body(i: &str) -> IResult<&str, &str> {
 }
 
 fn parse_annotation(input: &str) -> IResult<&str, ()> {
-    map(delimited(char('{'), annotation_body, char('}')), |_| ())(input)
+    map(delimited(char('{'), annotation_body, char('}')), |_| ()).parse(input)
 }
 
 fn parse_standalone_annotation(input: &str) -> IResult<&str, UnitExpr> {
@@ -175,7 +175,7 @@ fn parse_standalone_annotation(input: &str) -> IResult<&str, UnitExpr> {
             // Return the annotation content as a symbol with braces
             UnitExpr::Symbol(format!("{{{}}}", content))
         },
-    )(input)
+    ).parse(input)
 }
 
 // ---------------------- exponents & factors -----------------
@@ -185,12 +185,12 @@ fn parse_exponent(input: &str) -> IResult<&str, i32> {
         map_res(recognize(pair(opt(char('-')), digit1)), |s: &str| {
             s.parse::<i32>()
         }),
-    )(input)
+    ).parse(input)
 }
 
 fn parse_base_expr(input: &str) -> IResult<&str, UnitExpr> {
     let (rest, expr) = parse_base_atomic(input)?;
-    let (rest, _annotation_present) = opt(parse_annotation)(rest)?;
+    let (rest, _annotation_present) = opt(parse_annotation).parse(rest)?;
 
     // Store whether we found an annotation for later validation
     Ok((rest, expr))
@@ -199,8 +199,8 @@ fn parse_base_expr(input: &str) -> IResult<&str, UnitExpr> {
 pub fn parse_factor(input: &str) -> IResult<&str, UnitFactor> {
     // Parse base expression and possible exponent/annotation that follow.
     let (rest, base_expr) = parse_base_expr(input)?;
-    let (rest, explicit_exp) = opt(parse_exponent)(rest)?;
-    let (rest, _) = opt(parse_annotation)(rest)?;
+    let (rest, explicit_exp) = opt(parse_exponent).parse(rest)?;
+    let (rest, _) = opt(parse_annotation).parse(rest)?;
 
     // Determine exponent:
     // 1. If explicit ^n provided, use it.
@@ -276,7 +276,7 @@ fn product_separator(input: &str) -> IResult<&str, ()> {
     map(
         alt((map(char('.'), |_| ()), map(multispace1, |_| ()))),
         |_| (),
-    )(input)
+    ).parse(input)
 }
 
 #[allow(dead_code)]
@@ -286,7 +286,7 @@ pub fn parse_product(input: &str) -> IResult<&str, UnitExpr> {
 
     loop {
         // Consume optional explicit separator (dot or whitespace)
-        let (r, _) = opt(product_separator)(rest)?;
+        let (r, _) = opt(product_separator).parse(rest)?;
         rest = r;
         match parse_factor(rest) {
             Ok((next, fac)) => {
@@ -404,9 +404,9 @@ fn parse_quotient_remainder(input: &str) -> IResult<&str, UnitExpr> {
 
     // Look for division operator
     if let Ok((rest, denominator_factor)) = preceded(
-        tuple((char('/'), nom::character::complete::multispace0)),
+        (char('/'), nom::character::complete::multispace0),
         parse_factor,
-    )(input)
+    ).parse(input)
     {
         let denominator = match denominator_factor.exponent {
             1 => denominator_factor.expr,
@@ -457,9 +457,9 @@ pub fn parse_quotient(input: &str) -> IResult<&str, UnitExpr> {
     if input.trim_start().starts_with('/') {
         let trimmed = input.trim_start();
         let (rest, den) = preceded(
-            tuple((char('/'), nom::character::complete::multispace0)),
+            (char('/'), nom::character::complete::multispace0),
             parse_factor,
-        )(trimmed)?;
+        ).parse(trimmed)?;
         let den_expr = match den.exponent {
             1 => den.expr,
             exp => UnitExpr::Power(Box::new(den.expr), exp),
@@ -480,14 +480,14 @@ pub fn parse_quotient(input: &str) -> IResult<&str, UnitExpr> {
     // For multiple divisions, UCUM expects right-associative behavior: s/m/mg = s/(m/mg)
     loop {
         // Skip optional whitespace
-        let (r, _) = nom::character::complete::multispace0(rest)?;
+        let (r, _) = nom::character::complete::multispace0.parse(rest)?;
         rest = r;
 
         // Look for division operator
         if let Ok((new_rest, denominator_factor)) = preceded(
-            tuple((char('/'), nom::character::complete::multispace0)),
+            (char('/'), nom::character::complete::multispace0),
             parse_factor,
-        )(rest)
+        ).parse(rest)
         {
             // Convert factor to expression
             let denominator = match denominator_factor.exponent {
@@ -538,7 +538,7 @@ pub fn parse_quotient(input: &str) -> IResult<&str, UnitExpr> {
         }
 
         // Look for multiplication operator (dot or implicit)
-        if let Ok((r, _)) = opt(product_separator)(rest) {
+        if let Ok((r, _)) = opt(product_separator).parse(rest) {
             rest = r;
             if let Ok((new_rest, factor)) = parse_factor(rest) {
                 if new_rest.len() == rest.len() {

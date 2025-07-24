@@ -30,7 +30,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use octofhir_ucum_core::{Quantity as UcumQuantity, UcumError, evaluate, parse_expression};
+use octofhir_ucum_core::{Quantity as UcumQuantity, UcumError, evaluate, parse_expression, precision::to_f64};
 use thiserror::Error;
 
 #[cfg(feature = "serde")]
@@ -276,7 +276,7 @@ pub fn convert_quantity(
 
     // Create a new FHIR Quantity with the converted value
     Ok(FhirQuantity {
-        value: ucum_quantity.value * factor,
+        value: ucum_quantity.value * to_f64(factor),
         unit: Some(target_unit.to_string()),
         system: Some("http://unitsofmeasure.org".to_string()),
         code: Some(target_unit.to_string()),
@@ -586,8 +586,8 @@ fn compare_quantities(a: &FhirQuantity, b: &FhirQuantity, op: ComparisonOp, tole
     }
 
     // Convert both values to the same canonical unit
-    let canonical_a = ucum_a.value * eval_a.factor;
-    let canonical_b = ucum_b.value * eval_b.factor;
+    let canonical_a = ucum_a.value * to_f64(eval_a.factor);
+    let canonical_b = ucum_b.value * to_f64(eval_b.factor);
 
     // Perform the comparison
     match op {
@@ -739,7 +739,7 @@ pub fn quantity_add(a: &FhirQuantity, b: &FhirQuantity) -> Result<FhirQuantity, 
 
     // Convert second quantity to the units of the first
     let conversion_factor = eval_b.factor / eval_a.factor;
-    let converted_value_b = ucum_b.value * conversion_factor;
+    let converted_value_b = ucum_b.value * to_f64(conversion_factor);
 
     // Add the values
     let result_value = ucum_a.value + converted_value_b;
@@ -795,7 +795,7 @@ pub fn quantity_subtract(a: &FhirQuantity, b: &FhirQuantity) -> Result<FhirQuant
 
     // Convert second quantity to the units of the first
     let conversion_factor = eval_b.factor / eval_a.factor;
-    let converted_value_b = ucum_b.value * conversion_factor;
+    let converted_value_b = ucum_b.value * to_f64(conversion_factor);
 
     // Subtract the values
     let result_value = ucum_a.value - converted_value_b;
@@ -914,10 +914,10 @@ pub fn are_equivalent(a: &FhirQuantity, b: &FhirQuantity) -> Result<bool, FhirEr
 
     // Calculate the absolute difference between a's value and b's value converted to a's unit
     // For example, if a is 1.0g and b is 1000.0mg, we compare 1.0 with 1000.0 * 0.001 = 1.0
-    let diff = (a_ucum.value - b_ucum.value * factor).abs();
+    let diff = (a_ucum.value - b_ucum.value * to_f64(factor)).abs();
 
     // Use a relative comparison to handle different scales
-    let max = a_ucum.value.abs().max((b_ucum.value * factor).abs());
+    let max = a_ucum.value.abs().max((b_ucum.value * to_f64(factor)).abs());
 
     if max < EPSILON {
         // Both values are very close to zero, use absolute comparison
@@ -1011,8 +1011,8 @@ mod tests {
         let factor = a_eval.factor / b_eval.factor;
         println!("factor: {}", factor);
 
-        let diff = (a_ucum.value - b_ucum.value * factor).abs();
-        let max = a_ucum.value.abs().max((b_ucum.value * factor).abs());
+        let diff = (a_ucum.value - b_ucum.value * to_f64(factor)).abs();
+        let max = a_ucum.value.abs().max((b_ucum.value * to_f64(factor)).abs());
 
         println!("diff: {}", diff);
         println!("max: {}", max);

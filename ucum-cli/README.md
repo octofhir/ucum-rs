@@ -11,6 +11,13 @@ Command-line interface for UCUM (Unified Code for Units of Measure) utilities in
 - Explain unit codes
 - Generate shell completions
 - Perform arithmetic on unit expressions
+- **Extended Functionality:**
+  - Unit expression optimization and simplification
+  - Measurement context support for domain-specific preferences
+  - Model introspection (version, units, properties)
+  - Self-validation of UCUM implementation
+  - Advanced conversion with precision control
+  - Enhanced display names for unit codes
 
 ## Installation
 
@@ -216,6 +223,209 @@ octofhir-ucum completions bash
 octofhir-ucum completions zsh ~/.zsh/completions
 ```
 
+### Extended Functionality Commands
+
+#### `optimize`
+
+Optimize a unit expression for better readability.
+
+```sh
+octofhir-ucum optimize <EXPRESSION>
+```
+
+Examples:
+```sh
+# Optimize a complex expression
+octofhir-ucum optimize "kg.m.s-2"
+# Output: N (newton)
+
+# Optimize power expression  
+octofhir-ucum optimize "kg.m2.s-3"
+# Output: W (watt)
+```
+
+#### `simplify`
+
+Simplify a unit expression by combining like terms and reducing complexity.
+
+```sh
+octofhir-ucum simplify <EXPRESSION>
+```
+
+Examples:
+```sh
+# Simplify a basic expression
+octofhir-ucum simplify "m.m/s"
+# Output: m2/s
+
+# Simplify complex expression
+octofhir-ucum simplify "kg.m.s-2.s"
+# Output: kg.m.s-1
+```
+
+#### `context`
+
+Create and work with measurement contexts for domain-specific unit preferences.
+
+```sh
+octofhir-ucum context <DOMAIN> [OPTIONS]
+```
+
+Supported domains:
+- `medical`: Medical and healthcare contexts
+- `engineering`: Engineering and technical contexts  
+- `physics`: Physics and scientific contexts
+- `chemistry`: Chemistry and laboratory contexts
+- `general`: General purpose contexts
+
+Options:
+- `--check-unit <UNIT>`: Check if unit is preferred/avoided in context
+- `--suggest <UNIT>`: Get unit suggestions for the context
+
+Examples:
+```sh
+# Show medical context preferences
+octofhir-ucum context medical
+# Output:
+# Medical Context:
+# Domain: Medical
+# Precision: 3 significant figures, max 1% error
+# Preferred units: mg, kg, L, mL, mmol, mol, Cel, etc.
+# Avoided units: [stone_av], [lb_av], [gal_us], etc.
+
+# Check if a unit is preferred in engineering context
+octofhir-ucum context engineering --check-unit kPa
+# Output: kPa is preferred in Engineering context: true
+
+# Get suggestions for a unit in chemistry context
+octofhir-ucum context chemistry --suggest g
+# Output: Chemistry suggestions for 'g': mg, kg, mol (preferred alternatives)
+```
+
+#### `model`
+
+Show UCUM model information.
+
+```sh
+octofhir-ucum model
+```
+
+Example:
+```sh
+# Display model version and statistics
+octofhir-ucum model
+# Output:
+# UCUM Model Information:
+# Version: 2.1
+# Revision Date: 2017-11-21
+# Total Units: 312
+# Total Prefixes: 24
+# Total Properties: 101
+```
+
+#### `self-validate`
+
+Validate UCUM implementation for self-consistency.
+
+```sh
+octofhir-ucum self-validate
+```
+
+Example:
+```sh
+# Check implementation for issues
+octofhir-ucum self-validate
+# Output: UCUM implementation validation: PASSED with 0 issues
+```
+
+#### `properties`
+
+List all available properties in the UCUM model.
+
+```sh
+octofhir-ucum properties [OPTIONS]
+```
+
+Options:
+- `--limit <LIMIT>`: Limit number of properties shown
+
+Example:
+```sh
+# List all properties
+octofhir-ucum properties
+
+# List first 10 properties
+octofhir-ucum properties --limit 10
+```
+
+#### `validate-canonical`
+
+Validate canonical unit forms.
+
+```sh
+octofhir-ucum validate-canonical --unit <UNIT> --canonical <CANONICAL>
+```
+
+Example:
+```sh
+# Check if kg is canonical form of g
+octofhir-ucum validate-canonical --unit kg --canonical g
+# Output: kg -> g: NOT canonical (false)
+
+# Check if m.s-1 is canonical form of m/s
+octofhir-ucum validate-canonical --unit "m/s" --canonical "m.s-1"
+# Output: m/s -> m.s-1: canonical (true)
+```
+
+#### `display`
+
+Get display name for unit codes.
+
+```sh
+octofhir-ucum display <UNIT_CODE>
+```
+
+Examples:
+```sh
+# Get display name for kg
+octofhir-ucum display kg
+# Output: kilogram
+
+# Get display name for compound unit
+octofhir-ucum display "m/s"
+# Output: (meter) / (second)
+```
+
+#### `convert-advanced`
+
+Advanced unit conversion with precision control.
+
+```sh
+octofhir-ucum convert-advanced [OPTIONS] --value <VALUE> --from <FROM_UNIT> --to <TO_UNIT>
+```
+
+Options:
+- `--precision <PLACES>`: Fixed decimal places
+- `--significant <DIGITS>`: Significant figures
+- `--rounding <MODE>`: Rounding mode (nearest, up, down, truncate)
+- `--temperature-scale <SCALE>`: Temperature scale (kelvin, celsius, fahrenheit)
+- `--no-special-units`: Disable special unit handling
+
+Examples:
+```sh
+# Convert with 3 decimal places
+octofhir-ucum convert-advanced --value 1000 --from g --to kg --precision 3
+# Output: 1000 g = 1.000 kg (3 decimal places, factor: 0.001)
+
+# Convert temperature with Celsius scale
+octofhir-ucum convert-advanced --value 100 --from Cel --to K --precision 1 --temperature-scale celsius
+# Output: 100 Cel = 373.2 K (1 decimal places, offset: 273.15, used special units)
+
+# Convert with significant figures
+octofhir-ucum convert-advanced --value 2.5 --from "kg.m/s2" --to N --significant 4
+# Output: 2.5 kg⋅m/s² = 2.500 N (4 significant figures, factor: 1)
+```
+
 ## Examples
 
 ### Validating Units
@@ -276,6 +486,40 @@ octofhir-ucum arithmetic kg mul "m/s2"
 # Is Special: false
 # Is Arbitrary: false
 # Equivalent to: N (newton)
+```
+
+### Using Model Introspection
+
+```sh
+# Get UCUM model information
+octofhir-ucum model
+# Output:
+# UCUM Model Information:
+# Version: 2.1
+# Revision Date: 2017-11-21
+# Total Units: 312
+# Total Prefixes: 24
+# Total Properties: 101
+
+# Validate implementation
+octofhir-ucum self-validate
+# Output: UCUM implementation validation: PASSED with 0 issues
+
+# Get enhanced display names
+octofhir-ucum display kg
+# Output: kilogram (handles prefixed units correctly)
+```
+
+### Using Advanced Conversion
+
+```sh
+# Convert with precise decimal control
+octofhir-ucum convert-advanced --value 1000 --from g --to kg --precision 3
+# Output: 1000 g = 1.000 kg (3 decimal places, factor: 0.001)
+
+# Convert temperature with special unit handling
+octofhir-ucum convert-advanced --value 0 --from Cel --to K --precision 2
+# Output: 0 Cel = 273.15 K (2 decimal places, offset: 273.15, used special units)
 ```
 
 ## Advanced Usage

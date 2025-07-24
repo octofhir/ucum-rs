@@ -1,7 +1,7 @@
 [package]
 name = "octofhir-ucum-fhir"
 version.workspace = true
-edition = "2024"
+edition.workspace = true
 description = "FHIR integration for the UCUM (Unified Code for Units of Measure) library"
 license = "MIT"
 documentation = "https://docs.rs/octofhir-ucum-fhir"

@@ -1,4 +1,4 @@
-use octofhir_ucum_core::{UcumError, UnitExpr, parse_expression};
+use octofhir_ucum_core::{UcumError, UnitExpr, parse_expression, ErrorKind};
 
 #[test]
 fn multiple_slash_allowed() {
@@ -11,5 +11,5 @@ fn multiple_slash_allowed() {
 #[test]
 fn invalid_percent_error() {
     let err = parse_expression("kg%g").unwrap_err();
-    assert!(matches!(err, UcumError::InvalidPercentPlacement));
+    assert!(matches!(err.kind, ErrorKind::InvalidPercentPlacement { .. }));
 }

@@ -16,15 +16,14 @@ include = ["ucum-essence.xml", "src", "examples", "benches", "README.md", "build
 default = ["std"]
 std = []
 serde = []
-precision = ["rust_decimal"]
 
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
 regex = { workspace = true }
-nom = "7"
+nom = "8"
 lazy_static = { workspace = true }
-rust_decimal = { version = "1.36", optional = true }
+rust_decimal = "1.36"
 fuzzy-matcher = "0.3"
 
 [dev-dependencies]

@@ -1,4 +1,4 @@
-use octofhir_ucum_core::precision::{NumericOps, from_f64, to_f64};
+use octofhir_ucum_core::precision::{NumericOps, Number, from_f64, to_f64};
 use octofhir_ucum_core::{evaluate, generate_display_name, parse_expression};
 use std::fs;
 use std::path::Path;
@@ -14,10 +14,10 @@ struct TestCase {
 #[derive(Debug)]
 struct ConversionTest {
     id: String,
-    value: f64,
+    value: Number,
     source_unit: String,
     target_unit: String,
-    outcome: f64,
+    outcome: Number,
 }
 
 #[derive(Debug)]
@@ -30,22 +30,22 @@ struct DisplayNameTest {
 #[derive(Debug)]
 struct MultiplicationTest {
     id: String,
-    v1: f64,
+    v1: Number,
     u1: String,
-    v2: f64,
+    v2: Number,
     u2: String,
-    v_res: f64,
+    v_res: Number,
     u_res: String,
 }
 
 #[derive(Debug)]
 struct DivisionTest {
     id: String,
-    v1: f64,
+    v1: Number,
     u1: String,
-    v2: f64,
+    v2: Number,
     u2: String,
-    v_res: f64,
+    v_res: Number,
     u_res: String,
 }
 
@@ -213,10 +213,10 @@ fn parse_conversion_tests(
                 {
                     test_cases.push(ConversionTest {
                         id,
-                        value,
+                        value: from_f64(value),
                         source_unit: src_unit,
                         target_unit: dst_unit,
-                        outcome,
+                        outcome: from_f64(outcome),
                     });
                 }
             }
@@ -271,11 +271,11 @@ fn parse_multiplication_tests(
                 ) {
                     test_cases.push(MultiplicationTest {
                         id,
-                        v1,
+                        v1: from_f64(v1),
                         u1,
-                        v2,
+                        v2: from_f64(v2),
                         u2,
-                        v_res,
+                        v_res: from_f64(v_res),
                         u_res,
                     });
                 }
@@ -329,11 +329,11 @@ fn parse_division_tests(file_path: &str) -> Result<Vec<DivisionTest>, Box<dyn st
                 ) {
                     test_cases.push(DivisionTest {
                         id,
-                        v1,
+                        v1: from_f64(v1),
                         u1,
-                        v2,
+                        v2: from_f64(v2),
                         u2,
-                        v_res,
+                        v_res: from_f64(v_res),
                         u_res,
                     });
                 }
@@ -492,24 +492,24 @@ fn run_conversion_tests_group() -> TestResults {
 
             // Perform conversion
             let conversion_factor = source_result.factor.div(target_result.factor);
-            let converted_value = from_f64(test_case.value).mul(conversion_factor);
+            let converted_value = test_case.value.mul(conversion_factor);
 
             // Check result with tolerance
             let tolerance =
-                from_f64(1e-10).mul(from_f64(test_case.outcome.abs()).max(from_f64(1.0)));
+                from_f64(1e-10).mul(test_case.outcome.abs().max(from_f64(1.0)));
 
-            if (converted_value.sub(from_f64(test_case.outcome))).abs() <= tolerance {
+            if (converted_value.sub(test_case.outcome)).abs() <= tolerance {
                 results.add_pass();
             } else {
                 let fail_info = format!(
                     "{} - {} {} -> {}: expected {}, got {} (diff: {})",
                     test_case.id,
-                    test_case.value,
+                    to_f64(test_case.value),
                     test_case.source_unit,
                     test_case.target_unit,
-                    test_case.outcome,
+                    to_f64(test_case.outcome),
                     to_f64(converted_value),
-                    to_f64((converted_value.sub(from_f64(test_case.outcome))).abs())
+                    to_f64((converted_value.sub(test_case.outcome)).abs())
                 );
                 results.add_fail(fail_info);
             }
@@ -683,9 +683,9 @@ fn run_multiplication_tests_group() -> TestResults {
             };
 
             // Calculate multiplication
-            let calculated_value = test_case.v1 * test_case.v2;
-            let calculated_factor = u1_result.factor * u2_result.factor;
-            let expected_factor = u_res_result.factor * test_case.v_res;
+            let calculated_value = test_case.v1.mul(test_case.v2);
+            let calculated_factor = u1_result.factor.mul(u2_result.factor);
+            let expected_factor = u_res_result.factor.mul(test_case.v_res);
 
             // Check dimension compatibility
             let mut expected_dim = [0i8; 7];
@@ -707,24 +707,24 @@ fn run_multiplication_tests_group() -> TestResults {
             }
 
             // Check result
-            let tolerance = 1e-10 * expected_factor.abs().max(1.0);
-            let actual_result = calculated_value * calculated_factor;
+            let tolerance = from_f64(1e-10).mul(expected_factor.abs().max(from_f64(1.0)));
+            let actual_result = calculated_value.mul(calculated_factor);
 
-            if (actual_result - expected_factor).abs() <= tolerance {
+            if (actual_result.sub(expected_factor)).abs() <= tolerance {
                 results.add_pass();
             } else {
                 let fail_info = format!(
                     "{} - {} {} * {} {} = {} {}: expected {}, got {} (diff: {})",
                     test_case.id,
-                    test_case.v1,
+                    to_f64(test_case.v1),
                     test_case.u1,
-                    test_case.v2,
+                    to_f64(test_case.v2),
                     test_case.u2,
-                    test_case.v_res,
+                    to_f64(test_case.v_res),
                     test_case.u_res,
-                    expected_factor,
-                    actual_result,
-                    (actual_result - expected_factor).abs()
+                    to_f64(expected_factor),
+                    to_f64(actual_result),
+                    to_f64((actual_result.sub(expected_factor)).abs())
                 );
                 results.add_fail(fail_info);
             }
@@ -838,9 +838,9 @@ fn run_division_tests_group() -> TestResults {
             };
 
             // Calculate division
-            let calculated_value = test_case.v1 / test_case.v2;
+            let calculated_value = test_case.v1.div(test_case.v2);
             let calculated_factor = u1_result.factor.div(u2_result.factor);
-            let expected_factor = u_res_result.factor.mul(from_f64(test_case.v_res));
+            let expected_factor = u_res_result.factor.mul(test_case.v_res);
 
             // Check dimension compatibility
             let mut expected_dim = [0i8; 7];
@@ -865,7 +865,7 @@ fn run_division_tests_group() -> TestResults {
             let tolerance = from_f64(1e-10)
                 .mul(expected_factor.abs())
                 .max(from_f64(1.0));
-            let actual_result = from_f64(calculated_value).mul(calculated_factor);
+            let actual_result = calculated_value.mul(calculated_factor);
 
             if (actual_result.sub(expected_factor)).abs() <= tolerance {
                 results.add_pass();
@@ -873,11 +873,11 @@ fn run_division_tests_group() -> TestResults {
                 let fail_info = format!(
                     "{} - {} {} / {} {} = {} {}: expected {}, got {} (diff: {})",
                     test_case.id,
-                    test_case.v1,
+                    to_f64(test_case.v1),
                     test_case.u1,
-                    test_case.v2,
+                    to_f64(test_case.v2),
                     test_case.u2,
-                    test_case.v_res,
+                    to_f64(test_case.v_res),
                     test_case.u_res,
                     to_f64(expected_factor),
                     to_f64(actual_result),

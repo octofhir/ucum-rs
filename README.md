@@ -23,7 +23,7 @@ octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
 
 ## Features
 
-### 🚀 Enhanced API (ADR-001 Implementation)
+### 🚀 Enhanced API (ADR-001 + Phase 3 Implementation)
 | Feature                | Status   | Notes                                  |
 |------------------------|----------|----------------------------------------|
 | **Comprehensive Validation** | ✅ | `validate()` with detailed error reporting |
@@ -35,6 +35,9 @@ octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
 | **Canonical Forms**    | ✅       | `get_canonical_units()` for normalization |
 | **Special Unit System** | ✅      | Extensible handlers for temperature, logarithmic units |
 | **Precision Arithmetic** | ✅     | Optional `rust_decimal` support for high precision |
+| **🆕 Model Introspection** | ✅   | `get_model()`, `validate_ucum()`, `get_properties()` |
+| **🆕 Enhanced Display Names** | ✅ | `get_common_display()` with prefixed unit support |
+| **🆕 Advanced Conversion** | ✅   | `convert_with_context()` with precision control |
 
 ### 🔧 Core Capabilities  
 | Feature                | Status   | Notes                                  |
@@ -100,7 +103,11 @@ import {
   get_unit_info, 
   convert, 
   evaluate_expression, 
-  arithmetic 
+  arithmetic,
+  // Phase 3 functions
+  get_ucum_model,
+  get_unit_display_name,
+  convert_advanced_simple
 } from '@octofhir/ucum-wasm';
 
 // Initialize the WASM module
@@ -124,6 +131,127 @@ console.log(evalResult.factor);  // 0.00001
 // Perform arithmetic operations
 const arithResult = arithmetic('mg', 'mul', 'mL', 1);
 console.log(arithResult.dimensions);  // [1, 3, 0, 0, 0, 0, 0]
+
+// Phase 3: Model introspection
+const model = get_ucum_model();
+console.log(model.version);       // '2.1'
+console.log(model.total_units);   // 312
+
+// Phase 3: Enhanced display names
+console.log(get_unit_display_name('kg'));    // 'kilogram'
+console.log(get_unit_display_name('m/s'));   // '(meter) / (second)'
+
+// Phase 3: Advanced conversion with precision
+const advResult = convert_advanced_simple(1000, 'g', 'kg', 3);
+console.log(advResult.value);         // 1.000
+console.log(advResult.precision_info); // '3 decimal places'
+```
+
+## Phase 3 API Completeness
+
+Phase 3 introduces comprehensive model introspection and advanced conversion capabilities to enhance the UCUM implementation.
+
+### Model Introspection
+
+```rust
+use octofhir_ucum_core::{get_model, validate_ucum, get_properties, get_common_display};
+
+// Get model information
+let model = get_model();
+println!("UCUM Version: {}", model.version);        // "2.1"
+println!("Total Units: {}", model.units.len());     // 312
+println!("Total Prefixes: {}", model.prefixes.len()); // 24
+
+// Validate implementation self-consistency
+let issues = validate_ucum();
+if issues.is_empty() {
+    println!("UCUM implementation is valid");
+} else {
+    println!("Issues found: {:?}", issues);
+}
+
+// Get all available properties
+let properties = get_properties();
+println!("Available properties: {}", properties.len()); // 101
+
+// Enhanced display names (handles prefixed units)
+println!("{}", get_common_display("kg"));    // "kilogram"
+println!("{}", get_common_display("cm"));    // "centimeter"
+println!("{}", get_common_display("m/s"));   // "(meter) / (second)"
+```
+
+### Advanced Conversion with Precision Control
+
+```rust
+use octofhir_ucum_core::{
+    convert_with_context, 
+    AdvancedConversionContext,
+    DecimalPrecision,
+    RoundingMode,
+    TemperatureScale
+};
+
+// Create conversion context with precise control
+let context = AdvancedConversionContext {
+    precision: DecimalPrecision::Fixed(3),
+    rounding: RoundingMode::Nearest,
+    temperature_scale: TemperatureScale::Celsius,
+    use_special_units: true,
+};
+
+// Convert with advanced precision
+let result = convert_with_context(1000.0, "g", "kg", &context)?;
+println!("Value: {}", result.value);           // 1.000
+println!("Precision: {}", result.precision_info); // "3 decimal places"
+println!("Used special units: {}", result.used_special_units); // false
+
+// Temperature conversion with special handling
+let temp_result = convert_with_context(100.0, "Cel", "K", &context)?;
+println!("Value: {}", temp_result.value);      // 373.150
+println!("Used special units: {}", temp_result.used_special_units); // true
+```
+
+### CLI Integration
+
+All Phase 3 features are available through the CLI:
+
+```sh
+# Model introspection
+octofhir-ucum model
+octofhir-ucum self-validate
+octofhir-ucum properties --limit 10
+
+# Enhanced display names
+octofhir-ucum display kg           # kilogram
+octofhir-ucum display "m/s"        # (meter) / (second)
+
+# Advanced conversion with precision
+octofhir-ucum convert-advanced --value 1000 --from g --to kg --precision 3
+octofhir-ucum convert-advanced --value 100 --from Cel --to K --precision 2
+```
+
+### WASM Integration
+
+Phase 3 functions are fully exposed in the WASM package:
+
+```javascript
+// Model introspection
+const model = get_ucum_model();
+const validation = validate_ucum_implementation();
+const properties = get_ucum_properties();
+
+// Enhanced display names
+const displayName = get_unit_display_name('kg');
+
+// Advanced conversion
+const result = convert_advanced_simple(1000, 'g', 'kg', 3);
+const advancedResult = convert_advanced(100, 'Cel', 'K', {
+  precision_type: 'fixed',
+  precision_value: 2,
+  rounding_mode: 'nearest',
+  temperature_scale: 'celsius',
+  use_special_units: true
+});
 ```
 
 ## Interactive Playground
@@ -136,6 +264,7 @@ An interactive web-based playground is available to explore the UCUM library's c
 - **Unit Information**: Get detailed information about units
 - **Conversion**: Convert values between compatible units
 - **Arithmetic**: Perform arithmetic operations on units
+- **Phase 3 Capabilities**: Model introspection, enhanced display names, and advanced conversion with precision control
 
 ### Running Locally
 

@@ -1,4 +1,5 @@
 use octofhir_ucum_core::{Dimension, EvalResult, UcumError, evaluate, parse_expression};
+use octofhir_ucum_core::precision::{NumericOps, from_f64};
 
 fn eval(expr: &str) -> Result<EvalResult, UcumError> {
     let ast = parse_expression(expr).expect("parse ok");
@@ -13,7 +14,7 @@ fn arbitrary_unit_dimensionless() {
     // Test that arbitrary units are dimensionless
     let iu = eval("[IU]").unwrap();
     assert_eq!(iu.dim, Dimension([0; 7]));
-    assert!((iu.factor - 1.0).abs() < 1e-12);
+    assert!((iu.factor.sub(from_f64(1.0))).abs() < from_f64(1e-12));
 }
 
 #[test]
@@ -21,7 +22,7 @@ fn arbitrary_unit_custom() {
     // Test that custom arbitrary units work
     let custom = eval("[custom'U]").unwrap();
     assert_eq!(custom.dim, Dimension([0; 7]));
-    assert!((custom.factor - 1.0).abs() < 1e-12);
+    assert!((custom.factor.sub(from_f64(1.0))).abs() < from_f64(1e-12));
 }
 
 #[test]
@@ -29,7 +30,7 @@ fn arbitrary_unit_with_prefix() {
     // Test that prefixed arbitrary units work
     let kiu = eval("k[IU]").unwrap();
     assert_eq!(kiu.dim, Dimension([0; 7]));
-    assert!((kiu.factor - 1000.0).abs() < 1e-12);
+    assert!((kiu.factor.sub(from_f64(1000.0))).abs() < from_f64(1e-12));
 }
 
 #[test]
@@ -51,7 +52,7 @@ fn arbitrary_unit_multiplication() {
     // Should have dimension of 1/volume (L^-3)
     assert_eq!(iu_per_ml.dim, Dimension([0, -3, 0, 0, 0, 0, 0]));
     // 1 / (0.001 L) = 1000
-    assert!((iu_per_ml.factor - 1000.0).abs() < 1e-12);
+    assert!((iu_per_ml.factor.sub(from_f64(1000.0))).abs() < from_f64(1e-12));
 }
 
 #[test]
@@ -72,7 +73,7 @@ fn arbitrary_unit_conversion() {
     assert_eq!(arbu.dim, Dimension([0; 7]));
 
     // Conversion factor should be 1.0 for the same unit
-    assert!((iu1.factor / iu2.factor - 1.0).abs() < 1e-12);
+    assert!((iu1.factor.div(iu2.factor).sub(from_f64(1.0))).abs() < from_f64(1e-12));
 }
 
 #[test]
@@ -82,7 +83,7 @@ fn arbitrary_unit_with_numeric() {
     let result = evaluate(&expr).unwrap();
 
     // Should have factor of 5.0 and dimensionless
-    assert!((result.factor - 5.0).abs() < 1e-12);
+    assert!((result.factor.sub(from_f64(5.0))).abs() < from_f64(1e-12));
     assert_eq!(result.dim, Dimension([0; 7]));
 }
 
@@ -96,5 +97,5 @@ fn arbitrary_unit_in_complex_expression() {
     assert_eq!(result.dim, Dimension([0, -2, -1, 0, 0, 0, 0]));
 
     // Factor should be 10.0 / 1.0
-    assert!((result.factor - 10.0).abs() < 1e-12);
+    assert!((result.factor.sub(from_f64(10.0))).abs() < from_f64(1e-12));
 }
