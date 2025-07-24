@@ -5,7 +5,7 @@
 
 use octofhir_ucum_core::{
     optimize_expression, canonicalize_expression, simplify_expression,
-    MeasurementContext, Domain,
+    MeasurementContext,
 };
 
 fn main() {

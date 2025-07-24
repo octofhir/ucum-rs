@@ -39,13 +39,13 @@ use octofhir_ucum_core::{
     // Enhanced Error Handling
     UcumError,
     ErrorKind,
-    SuggestionEngine,
+
     // Extended Functionality
     optimize_expression,
     canonicalize_expression,
     simplify_expression,
     MeasurementContext,
-    Domain,
+
 };
 use std::io;
 

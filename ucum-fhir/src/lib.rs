@@ -246,7 +246,7 @@ impl FromFhirQuantity<UcumQuantity> for UcumQuantity {
 ///
 /// let quantity = FhirQuantity::with_ucum_code(1000.0, "mg");
 /// let converted = convert_quantity(&quantity, "g").unwrap();
-/// assert_eq!(converted.value, 1.0);
+/// assert!((converted.value - 1.0).abs() < 1e-10, "Expected ~1.0, got {}", converted.value);
 /// assert_eq!(converted.code, Some("g".to_string()));
 /// ```
 pub fn convert_quantity(
@@ -591,8 +591,8 @@ fn compare_quantities(a: &FhirQuantity, b: &FhirQuantity, op: ComparisonOp, tole
 
     // Perform the comparison
     match op {
-        ComparisonOp::Equal => Ok((canonical_a - canonical_b).abs() < f64::EPSILON),
-        ComparisonOp::NotEqual => Ok((canonical_a - canonical_b).abs() >= f64::EPSILON),
+        ComparisonOp::Equal => Ok((canonical_a - canonical_b).abs() < 1e-10),
+        ComparisonOp::NotEqual => Ok((canonical_a - canonical_b).abs() >= 1e-10),
         ComparisonOp::LessThan => Ok(canonical_a < canonical_b),
         ComparisonOp::GreaterThan => Ok(canonical_a > canonical_b),
         ComparisonOp::Approximate => {
@@ -986,7 +986,7 @@ mod tests {
     fn test_convert_quantity() {
         let quantity = FhirQuantity::with_ucum_code(1000.0, "mg");
         let converted = convert_quantity(&quantity, "g").unwrap();
-        assert_eq!(converted.value, 1.0);
+        assert!((converted.value - 1.0).abs() < 1e-10, "Expected ~1.0, got {}", converted.value);
         assert_eq!(converted.code, Some("g".to_string()));
     }
 

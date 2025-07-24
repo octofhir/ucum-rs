@@ -44,7 +44,7 @@ use octofhir_ucum_core::{
     canonicalize_expression,
     simplify_expression,
     MeasurementContext,
-    Domain,
+
 };
 use octofhir_ucum_fhir::{
     FhirError, FhirQuantity, ToFhirQuantity, are_equivalent, convert_quantity,

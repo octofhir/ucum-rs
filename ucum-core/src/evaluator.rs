@@ -43,28 +43,6 @@ thread_local! {
     static EVAL_CACHE: std::cell::RefCell<HashMap<String, EvalResult>> = std::cell::RefCell::new(HashMap::new());
 }
 
-// Helper function to generate cache key from UnitExpr
-fn expr_to_cache_key(expr: &UnitExpr) -> String {
-    match expr {
-        UnitExpr::Numeric(n) => format!("num:{}", n),
-        UnitExpr::Symbol(s) => format!("sym:{}", s),
-        UnitExpr::Product(factors) => {
-            let mut parts: Vec<String> = factors
-                .iter()
-                .map(|f| format!("{}^{}", expr_to_cache_key(&f.expr), f.exponent))
-                .collect();
-            parts.sort(); // Ensure consistent ordering for commutative operations
-            format!("prod:[{}]", parts.join(","))
-        }
-        UnitExpr::Quotient(num, den) => {
-            format!("quot:{}/{}", expr_to_cache_key(num), expr_to_cache_key(den))
-        }
-        UnitExpr::Power(base, exp) => {
-            format!("pow:{}^{}", expr_to_cache_key(base), exp)
-        }
-    }
-}
-
 /// Result returned by `evaluate()` – canonical factor, dimension vector, offset.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EvalResult {

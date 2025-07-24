@@ -1,4 +1,4 @@
-use octofhir_ucum_core::{UcumError, UnitExpr, parse_expression, ErrorKind};
+use octofhir_ucum_core::{UnitExpr, parse_expression, ErrorKind};
 
 #[test]
 fn multiple_slash_allowed() {

@@ -25,6 +25,8 @@ import {
   validate, 
   convert, 
   get_unit_info,
+  analyze_unit,
+  validate_property,
   get_ucum_model,
   get_unit_display_name,
   convert_advanced_simple,
@@ -61,6 +63,14 @@ console.log(get_unit_display_name('m/s')); // '(meter) / (second)'
 const advResult = convert_advanced_simple(1000, 'g', 'kg', 3);
 console.log(advResult.value); // 1.000
 console.log(advResult.precision_info); // '3 decimal places'
+
+// Analyze unit expressions
+const analysis = analyze_unit('kg.m/s2');
+console.log(analysis.canonical_form); // 'kg.m.s-2'
+
+// Validate units by property
+console.log(validate_property('kg', 'mass')); // true
+console.log(validate_property('m/s', 'velocity')); // true
 ```
 
 ## API Reference
@@ -116,6 +126,69 @@ const result = evaluate_expression('kg.m/s2');
 //   offset: 0,
 //   dimensions: [1, 1, -2, 0, 0, 0, 0] // Force dimensions
 // }
+```
+
+#### `analyze_unit(expression: string): UnitAnalysis`
+Analyze a UCUM unit expression and get detailed information about its structure.
+
+```javascript
+const analysis = analyze_unit('kg.m/s2');
+// Returns:
+// {
+//   expression: 'kg.m/s2',
+//   factor: 1000000,
+//   offset: 0,
+//   dimensions: [1, 1, -2, 0, 0, 0, 0], // Force dimensions
+//   is_coherent: true,
+//   canonical_form: 'kg.m.s-2'
+// }
+```
+
+#### `validate_property(expression: string, property: string): boolean`
+Validate that a UCUM expression belongs to a specific property (dimension).
+
+```javascript
+validate_property('kg', 'mass'); // true
+validate_property('m', 'mass'); // false
+validate_property('m/s', 'velocity'); // true
+```
+
+#### `units_comparable(unit1: string, unit2: string): boolean`
+Check if two units are comparable (have the same dimensions).
+
+```javascript
+units_comparable('kg', 'g'); // true - both are mass
+units_comparable('m', 's'); // false - different dimensions
+units_comparable('m/s', 'km/h'); // true - both are velocity
+```
+
+#### `get_canonical(expression: string): string`
+Get the canonical (base unit) representation of a UCUM expression.
+
+```javascript
+const canonical = get_canonical('N');
+console.log(canonical); // 'kg.m.s-2'
+
+const pressureCanonical = get_canonical('Pa');
+console.log(pressureCanonical); // 'kg.m-1.s-2'
+```
+
+#### `multiply_units(unit1: string, unit2: string): EvaluationResult`
+Multiply two unit expressions together.
+
+```javascript
+const result = multiply_units('kg', 'm/s2');
+// Returns evaluation result for kg⋅m/s² (force units)
+console.log(result.canonical_form); // 'kg.m.s-2'
+```
+
+#### `divide_units(numerator: string, denominator: string): EvaluationResult`
+Divide one unit expression by another.
+
+```javascript
+const result = divide_units('m', 's');
+// Returns evaluation result for m/s (velocity units)
+console.log(result.canonical_form); // 'm.s-1'
 ```
 
 #### `arithmetic(left_unit: string, operation: "mul" | "div", right_unit: string, value: number): EvaluationResult`
@@ -321,6 +394,18 @@ interface EvaluationResult {
   factor: number;       // Conversion factor
   offset: number;       // Linear offset
   dimensions: number[]; // Dimensional vector
+}
+```
+
+### `UnitAnalysis`
+```typescript
+interface UnitAnalysis {
+  expression: string;   // The analyzed expression
+  factor: number;       // Conversion factor to canonical unit
+  offset: number;       // Offset for units with linear offset
+  dimensions: number[]; // Dimensional vector [M, L, T, I, Θ, N, J]
+  is_coherent: boolean; // Whether the unit is coherent (derived without numerical factors)
+  canonical_form: string; // Canonical form of the unit
 }
 ```
 

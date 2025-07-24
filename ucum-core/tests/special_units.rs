@@ -1,5 +1,5 @@
 use octofhir_ucum_core::{EvalResult, UnitExpr, UnitFactor, evaluate};
-use octofhir_ucum_core::precision::{NumericOps, Number, from_f64, to_f64};
+use octofhir_ucum_core::precision::{NumericOps, from_f64, to_f64};
 
 fn eval_ratio(expr: UnitExpr) -> f64 {
     to_f64(evaluate(&expr).unwrap().factor)

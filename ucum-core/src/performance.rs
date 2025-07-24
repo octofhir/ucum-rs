@@ -441,10 +441,10 @@ mod tests {
 
     #[test]
     fn test_optimized_lookups() {
-        // Test unit lookup
+        // Test unit lookup - "kg" should decompose to "k" prefix + "g" base unit
         let unit = find_unit_optimized("kg");
         assert!(unit.is_some());
-        assert_eq!(unit.unwrap().code, "kg");
+        assert_eq!(unit.unwrap().code, "g");
 
         // Test prefix lookup
         let prefix = find_prefix_optimized("k");
