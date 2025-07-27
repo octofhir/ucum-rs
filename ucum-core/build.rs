@@ -483,6 +483,8 @@ fn main() {
             "m2" => [0, 2, 0, 0, 0, 0, 0],     // Area
             "m3" => [0, 3, 0, 0, 0, 0, 0],     // Volume
             "s" => [0, 0, 1, 0, 0, 0, 0],      // Time
+            "s-1" => [0, 0, -1, 0, 0, 0, 0],   // Frequency (1/time)
+            "Hz" => [0, 0, -1, 0, 0, 0, 0],    // Frequency (hertz)
             "A" => [0, 0, 0, 1, 0, 0, 0],      // Current
             "A2" => [0, 0, 0, 2, 0, 0, 0],     // Current squared
             _ => {
@@ -756,6 +758,7 @@ fn main() {
                 "luminous flux" => [0, 0, 0, 0, 0, 0, 1],
                 "illuminance" => [0, -2, 0, 0, 0, 0, 1],
                 "radioactivity" => [0, 0, -1, 0, 0, 0, 0],
+                "frequency" => [0, 0, -1, 0, 0, 0, 0],
                 "plane angle" => [0, 0, 0, 0, 0, 0, 0], // dimensionless
                 "solid angle" => [0, 0, 0, 0, 0, 0, 0], // dimensionless
                 _ => [0i8; 7],                          // unknown, will try other methods
@@ -797,6 +800,7 @@ fn main() {
                         "luminous flux" => [0, 0, 0, 0, 0, 0, 1],
                         "illuminance" => [0, -2, 0, 0, 0, 0, 1],
                         "radioactivity" => [0, 0, -1, 0, 0, 0, 0],
+                        "frequency" => [0, 0, -1, 0, 0, 0, 0],
                         "plane angle" => [0, 0, 0, 0, 0, 0, 0], // dimensionless
                         "solid angle" => [0, 0, 0, 0, 0, 0, 0], // dimensionless
                         _ => [0i8; 7],                          // unknown, keep dimensionless

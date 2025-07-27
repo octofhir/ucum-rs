@@ -19,7 +19,7 @@ use crate::{
     ast::*,
     error::UcumError,
     find_unit,
-    performance::{with_global_cache, find_prefix_optimized},
+    performance::find_prefix_optimized,
     precision::{Number, NumericOps, from_f64, to_f64},
     types::Dimension,
 };
@@ -37,11 +37,6 @@ lazy_static! {
     };
 }
 
-// Cache for evaluation results to avoid re-computing the same expressions
-// Using a simple string-based cache key for now - could be optimized further with expression hashing
-thread_local! {
-    static EVAL_CACHE: std::cell::RefCell<HashMap<String, EvalResult>> = std::cell::RefCell::new(HashMap::new());
-}
 
 /// Result returned by `evaluate()` – canonical factor, dimension vector, offset.
 #[derive(Debug, Clone, PartialEq)]
@@ -157,12 +152,8 @@ impl EvalResult {
 }
 
 /// Evaluate a parsed `UnitExpr` into canonical factor, dimension and offset.
-/// Uses enhanced caching to avoid re-computing the same expressions.
 pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
-    // Use the enhanced global cache for better performance
-    with_global_cache(|cache| {
-        cache.get_or_compute_expression(expr, || evaluate_impl(expr))
-    })?
+    evaluate_impl(expr)
 }
 
 /// Internal implementation of evaluate without caching.

@@ -239,10 +239,6 @@ lazy_static! {
         map
     };
 
-    /// Global thread-safe evaluation cache
-    static ref GLOBAL_CACHE: std::sync::Mutex<EvaluationCache> = {
-        std::sync::Mutex::new(EvaluationCache::new())
-    };
 }
 
 /// Optimized unit lookup with O(1) HashMap access
@@ -378,39 +374,32 @@ pub fn find_longest_prefix_with_trie(text: &str) -> Option<&'static Prefix> {
     PREFIX_TRIE.find_longest_prefix(text)
 }
 
-/// Get cache statistics from the global cache
+/// Get cache statistics (WASM-compatible - returns dummy values)
+/// Note: Caching has been disabled for WASM compatibility
 pub fn get_cache_stats() -> Result<CacheStats, UcumError> {
-    GLOBAL_CACHE
-        .lock()
-        .map(|cache| cache.stats().clone())
-        .map_err(|_| UcumError::conversion_error("cache", "lock", "Failed to acquire cache lock"))
+    Ok(CacheStats::default())
 }
 
-/// Clear the global cache
+/// Clear the global cache (WASM-compatible - no-op)
+/// Note: Caching has been disabled for WASM compatibility
 pub fn clear_global_cache() -> Result<(), UcumError> {
-    GLOBAL_CACHE
-        .lock()
-        .map(|mut cache| cache.clear())
-        .map_err(|_| UcumError::conversion_error("cache", "lock", "Failed to acquire cache lock"))
+    Ok(())
 }
 
-/// Get global cache sizes
+/// Get global cache sizes (WASM-compatible - returns zero sizes)
+/// Note: Caching has been disabled for WASM compatibility
 pub fn get_cache_sizes() -> Result<(usize, usize, usize), UcumError> {
-    GLOBAL_CACHE
-        .lock()
-        .map(|cache| cache.cache_sizes())
-        .map_err(|_| UcumError::conversion_error("cache", "lock", "Failed to acquire cache lock"))
+    Ok((0, 0, 0))
 }
 
-/// Access the global cache for custom operations
+/// Access the global cache for custom operations (WASM-compatible - creates temporary cache)
+/// Note: Caching has been disabled for WASM compatibility
 pub fn with_global_cache<F, R>(f: F) -> Result<R, UcumError>
 where
     F: FnOnce(&mut EvaluationCache) -> R,
 {
-    GLOBAL_CACHE
-        .lock()
-        .map(|mut cache| f(&mut cache))
-        .map_err(|_| UcumError::conversion_error("cache", "lock", "Failed to acquire cache lock"))
+    let mut temp_cache = EvaluationCache::new();
+    Ok(f(&mut temp_cache))
 }
 
 #[cfg(test)]
