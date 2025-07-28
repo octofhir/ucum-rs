@@ -609,11 +609,24 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
 
 /// Attempt to split the leading prefix from a symbol.
 /// Returns (prefix, remainder) if a valid prefix is found.
-/// Enhanced version using optimized lookup and prefix trie for better performance.
+/// Optimized version with fast path for single-character prefixes.
 fn split_prefix(code: &str) -> Option<(crate::types::Prefix, &str)> {
-    // Try prefixes from longest to shortest to handle cases like "da" vs "d"
-    // Most prefixes are 1-2 characters, with a few exceptions
-    for len in (1..=3).rev() {
+    if code.len() < 2 {
+        return None;
+    }
+
+    // Fast path: try single-character prefix first (most common case)
+    // This covers k, m, c, d, n, p, f, a, z, y, E, P, T, G, M, etc.
+    if let Some(prefix) = find_prefix_optimized(&code[..1]) {
+        let remainder = &code[1..];
+        if !remainder.is_empty() {
+            return Some((*prefix, remainder));
+        }
+    }
+
+    // Slower path: try 2-3 character prefixes
+    // This handles cases like "da" (deca), "Ki" (kibi), etc.
+    for len in (2..=3).rev() {
         if len <= code.len() {
             let prefix_candidate = &code[..len];
             if let Some(prefix) = find_prefix_optimized(prefix_candidate) {

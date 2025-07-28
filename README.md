@@ -71,11 +71,10 @@ octofhir-ucum convert --value 100 --from kPa --to mm[Hg]
 | Display name tests     | ✅       | **94.1%** (16/17)                     |
 
 ### ⚡ Performance
-- **Parsing**: ~5.01 µs for multiple unit expressions
-- **Evaluation**: ~718 ns for parsed expressions  
-- **Validation**: ~3.11 µs for comprehensive validation
-- **Analysis**: ~1.65 µs for detailed unit analysis
-- **Arithmetic**: ~1.09 µs for multiplication/division
+- **Validation**: ~322,000 ops/second (~3.1 µs per operation)
+- **Parsing**: ~200,000 ops/second (~5.0 µs per operation)
+- **Evaluation**: ~1,390,000 ops/second (~718 ns per operation)
+- **Analysis**: ~606,000 ops/second (~1.65 µs per operation)
 
 ## WASM Package
 
@@ -448,4 +447,4 @@ cargo test run_official_validation_tests_2 -- --nocapture
 
 ## License
 
-MIT OR Apache-2.0
+Apache-2.0

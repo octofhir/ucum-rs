@@ -3,7 +3,7 @@ name = "octofhir-ucum-cli"
 version.workspace = true
 edition.workspace = true
 description = "UCUM (Unified Code for Units of Measure) command-line interface"
-license = "MIT"
+license = "Apache-2.0"
 documentation = "https://github.com/octofhir/ucum-rs"
 homepage = "https://github.com/octofhir/ucum-rs"
 repository = "https://github.com/octofhir/ucum-rs"
@@ -16,9 +16,7 @@ default = []
 [dependencies]
 octofhir-ucum-core = { path = "../ucum-core" } # Uncomment for local development
 clap = { workspace = true }
-clap_complete = "4"
 anyhow = "1.0"
-dialoguer = { version = "0.11", features = ["fuzzy-select"] }
 human-panic = "2.0.3"
 
 [[bin]]

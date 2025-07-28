@@ -11,9 +11,23 @@ pub struct Prefix {
 }
 
 /// Dimensional vector (M, L, T, I, Θ, N, J) per UCUM spec.
+/// Optimized with repr(C) for consistent memory layout.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Dimension(pub [i8; 7]);
+
+impl Dimension {
+    /// Create a zero dimension (dimensionless).
+    pub const fn zero() -> Self {
+        Self([0; 7])
+    }
+    
+    /// Check if this dimension is dimensionless.
+    pub const fn is_dimensionless(&self) -> bool {
+        matches!(self.0, [0, 0, 0, 0, 0, 0, 0])
+    }
+}
 
 impl fmt::Display for Dimension {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

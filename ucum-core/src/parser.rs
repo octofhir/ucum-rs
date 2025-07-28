@@ -13,16 +13,39 @@ use nom::{
     number::complete::recognize_float,
     sequence::{delimited, pair, preceded},
 };
+use std::borrow::Cow;
 
 // ---------------------- atomic helpers ----------------------
+
+// ASCII lookup table for fast symbol character validation
+static SYMBOL_CHARS: [bool; 128] = {
+    let mut table = [false; 128];
+    let mut i = 0;
+    while i < 128 {
+        let c = i as u8 as char;
+        table[i] = c.is_ascii_alphanumeric() || matches!(c, '%' | '_' | '[' | ']' | '\'' | '-' | '+');
+        i += 1;
+    }
+    table
+};
+
+// Optimized symbol character validation using lookup table
 fn is_symbol_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '%' | '_' | '[' | ']' | '\'' | 'µ' | '-' | '+')
+    if c.is_ascii() {
+        SYMBOL_CHARS[c as usize]
+    } else {
+        c == 'µ' // Handle Unicode micro sign separately
+    }
 }
 
 fn parse_symbol(input: &str) -> IResult<&str, UnitExpr> {
     map_res(take_while1(is_symbol_char), |s: &str| {
-        // Normalise Unicode micro sign to ASCII 'u'
-        let normalized = s.replace('µ', "u");
+        // Optimized normalization: avoid allocation when no µ present
+        let normalized = if s.contains('µ') {
+            Cow::Owned(s.replace('µ', "u"))
+        } else {
+            Cow::Borrowed(s)
+        };
 
         if normalized.contains('%') && normalized.len() > 1 {
             // Percent must be a standalone unit symbol
@@ -32,7 +55,7 @@ fn parse_symbol(input: &str) -> IResult<&str, UnitExpr> {
             if is_invalid_unit_pattern(&normalized) {
                 Err(())
             } else {
-                Ok(UnitExpr::Symbol(normalized))
+                Ok(UnitExpr::Symbol(normalized.into_owned()))
             }
         }
     }).parse(input)
