@@ -1,9 +1,9 @@
-use octofhir_ucum_core::{Dimension, EvalResult, evaluate, parse_expression};
+use octofhir_ucum_core::{Dimension, EvalResult, evaluate_owned, parse_expression};
 use octofhir_ucum_core::precision::{NumericOps, from_f64};
 
 fn eval(expr: &str) -> EvalResult {
     let ast = parse_expression(expr).expect("parse ok");
-    evaluate(&ast).expect("eval ok")
+    evaluate_owned(&ast).expect("eval ok")
 }
 
 #[test]

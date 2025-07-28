@@ -1,28 +1,11 @@
 .sidebar {
   height: 100vh;
-  background: var(--mantine-color-gray-0);
-  border-right: 1px solid var(--mantine-color-gray-2);
-  width: 280px;
+  width: 240px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-}
-
-.fixedNav {
-  flex-shrink: 0;
   background: var(--mantine-color-gray-0);
-  border-bottom: 1px solid var(--mantine-color-gray-2);
-  z-index: 10;
-}
-
-.navContent {
-  padding: 1rem;
-}
-
-.scrollableWidgets {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
+  border-right: 1px solid var(--mantine-color-gray-2);
 }
 
 [data-mantine-color-scheme="dark"] .sidebar {
@@ -30,197 +13,50 @@
   border-right-color: var(--mantine-color-dark-4);
 }
 
-[data-mantine-color-scheme="dark"] .fixedNav {
-  background: var(--mantine-color-dark-8);
-  border-bottom-color: var(--mantine-color-dark-4);
+.fixedNav {
+  flex: 1;
+  padding: 1rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sidebarHeader {
+  /* Styles are applied inline for theme consistency */
+}
+
+.navContent {
+  /* Styles are applied inline for theme consistency */
 }
 
 .navItem {
+  display: block;
   width: 100%;
-  padding: 20px 20px;
-  border-radius: 8px;
-  transition: all 0.2s ease;
-  color: var(--mantine-color-gray-7);
-  cursor: pointer;
-  position: relative;
-  overflow: hidden;
+  text-decoration: none;
+  /* Styles are applied inline for theme consistency and hover effects */
 }
 
-.navItem:hover {
-  background: var(--mantine-color-gray-1);
-  color: var(--mantine-color-gray-9);
-  transform: translateX(2px);
-}
-
-.navItem[data-active="true"] {
-  background: linear-gradient(135deg, var(--mantine-color-blue-0), var(--mantine-color-blue-1));
-  color: var(--mantine-color-blue-8);
-  font-weight: 600;
-  box-shadow: var(--mantine-shadow-sm);
-}
-
-.navItem[data-active="true"]::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--mantine-color-blue-6);
-}
-
-[data-mantine-color-scheme="dark"] .navItem {
-  color: var(--mantine-color-dark-2);
-}
-
-[data-mantine-color-scheme="dark"] .navItem:hover {
-  background: var(--mantine-color-dark-6);
-  color: var(--mantine-color-white);
-}
-
-[data-mantine-color-scheme="dark"] .navItem[data-active="true"] {
-  background: linear-gradient(135deg, var(--mantine-color-dark-6), var(--mantine-color-blue-9));
-  color: var(--mantine-color-blue-2);
+.navItemActive {
+  /* Styles are applied inline for theme consistency */
 }
 
 .statusCard {
-  background: linear-gradient(135deg, var(--mantine-color-blue-0), var(--mantine-color-cyan-0));
-  border: 1px solid var(--mantine-color-blue-2);
-  transition: all 0.3s ease;
+  /* Styles are applied inline for theme consistency */
 }
 
-.statusCard:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--mantine-shadow-md);
+.linkButton {
+  display: block;
+  width: 100%;
+  text-decoration: none;
+  /* Styles are applied inline for theme consistency and hover effects */
 }
 
-[data-mantine-color-scheme="dark"] .statusCard {
-  background: linear-gradient(135deg, var(--mantine-color-dark-7), var(--mantine-color-dark-6));
-  border-color: var(--mantine-color-dark-4);
-}
-
-.analyticsCard {
-  background: linear-gradient(135deg, var(--mantine-color-green-0), var(--mantine-color-teal-0));
-  border: 1px solid var(--mantine-color-green-2);
-  transition: all 0.3s ease;
-}
-
-.analyticsCard:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--mantine-shadow-md);
-}
-
-[data-mantine-color-scheme="dark"] .analyticsCard {
-  background: linear-gradient(135deg, var(--mantine-color-dark-7), var(--mantine-color-dark-6));
-  border-color: var(--mantine-color-dark-4);
-}
-
-.packageCard {
-  background: linear-gradient(135deg, var(--mantine-color-violet-0), var(--mantine-color-purple-0));
-  border: 1px solid var(--mantine-color-violet-2);
-  transition: all 0.3s ease;
-}
-
-.packageCard:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--mantine-shadow-md);
-}
-
-[data-mantine-color-scheme="dark"] .packageCard {
-  background: linear-gradient(135deg, var(--mantine-color-dark-7), var(--mantine-color-dark-6));
-  border-color: var(--mantine-color-dark-4);
-}
-
-.performanceCard {
-  background: linear-gradient(135deg, var(--mantine-color-orange-0), var(--mantine-color-yellow-0));
-  border: 1px solid var(--mantine-color-orange-2);
-  transition: all 0.3s ease;
-}
-
-.performanceCard:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--mantine-shadow-md);
-}
-
-[data-mantine-color-scheme="dark"] .performanceCard {
-  background: linear-gradient(135deg, var(--mantine-color-dark-7), var(--mantine-color-dark-6));
-  border-color: var(--mantine-color-dark-4);
-}
-
-.cacheCard {
-  background: linear-gradient(135deg, var(--mantine-color-orange-0), var(--mantine-color-yellow-0));
-  border: 1px solid var(--mantine-color-orange-2);
-  transition: all 0.3s ease;
-}
-
-.cacheCard:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--mantine-shadow-md);
-}
-
-[data-mantine-color-scheme="dark"] .cacheCard {
-  background: linear-gradient(135deg, var(--mantine-color-dark-7), var(--mantine-color-dark-6));
-  border-color: var(--mantine-color-dark-4);
-}
-
-.quickStats {
-  padding: 12px 16px;
-  background: var(--mantine-color-gray-0);
-  border-radius: 8px;
-  border: 1px solid var(--mantine-color-gray-2);
-}
-
-[data-mantine-color-scheme="dark"] .quickStats {
-  background: var(--mantine-color-dark-7);
-  border-color: var(--mantine-color-dark-4);
-}
-
-/* Scrollbar styling */
-.scrollableWidgets::-webkit-scrollbar {
-  width: 6px;
-}
-
-.scrollableWidgets::-webkit-scrollbar-track {
-  background: var(--mantine-color-gray-1);
-}
-
-.scrollableWidgets::-webkit-scrollbar-thumb {
-  background: var(--mantine-color-gray-4);
-  border-radius: 3px;
-}
-
-.scrollableWidgets::-webkit-scrollbar-thumb:hover {
-  background: var(--mantine-color-gray-6);
-}
-
-[data-mantine-color-scheme="dark"] .scrollableWidgets::-webkit-scrollbar-track {
-  background: var(--mantine-color-dark-8);
-}
-
-[data-mantine-color-scheme="dark"] .scrollableWidgets::-webkit-scrollbar-thumb {
-  background: var(--mantine-color-dark-5);
-}
-
-[data-mantine-color-scheme="dark"] .scrollableWidgets::-webkit-scrollbar-thumb:hover {
-  background: var(--mantine-color-dark-3);
-}
-
-/* Animation for cards */
-.statusCard,
-.analyticsCard,
-.packageCard,
-.performanceCard,
-.cacheCard {
-  animation: slideInLeft 0.4s ease-out;
-}
-
-@keyframes slideInLeft {
-  from {
-    opacity: 0;
-    transform: translateX(-20px);
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .sidebar {
+    width: 100%;
   }
-  to {
-    opacity: 1;
-    transform: translateX(0);
+  
+  .fixedNav {
+    padding: 0.75rem;
   }
 }

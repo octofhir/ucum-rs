@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use octofhir_ucum_core::{
-    analyse, evaluate, get_canonical_units, is_comparable, parse_expression, precision::to_f64,
+    analyse, evaluate_owned, get_canonical_units, is_comparable, parse_expression, precision::to_f64,
     search_units, validate,
 };
 
@@ -126,8 +126,8 @@ fn handle_convert(value: f64, from: String, to: String) -> anyhow::Result<()> {
     let from_expr = parse_expression(&from)?;
     let to_expr = parse_expression(&to)?;
 
-    let from_res = evaluate(&from_expr)?;
-    let to_res = evaluate(&to_expr)?;
+    let from_res = evaluate_owned(&from_expr)?;
+    let to_res = evaluate_owned(&to_expr)?;
 
     if from_res.dim != to_res.dim {
         anyhow::bail!("Incompatible dimensions between '{}' and '{}'", from, to);

@@ -9,9 +9,7 @@ import {
 import { IconFlask, IconMoon, IconSun } from '@tabler/icons-react';
 import { useState } from 'react';
 import styles from './App.module.css';
-import ArithmeticTab from './components/ArithmeticTab';
 import ConversionTab from './components/ConversionTab';
-import FhirTab from './components/FhirTab';
 import Sidebar from './components/Sidebar';
 import UnitInfoTab from './components/UnitInfoTab';
 import ValidationTab from './components/ValidationTab';
@@ -23,7 +21,7 @@ export default function App() {
   return (
     <AppShell
       header={{ height: 60 }}
-      navbar={{ width: 280, breakpoint: 'md', collapsed: { mobile: true } }}
+      navbar={{ width: 240, breakpoint: 'md', collapsed: { mobile: true } }}
       padding="md"
       className={styles.shell}
     >
@@ -56,10 +54,8 @@ export default function App() {
         <Container size="xl" className={styles.content}>
           <div className={styles.tabContent}>
             {activeTab === 'validation' && <ValidationTab />}
-            {activeTab === 'unit-info' && <UnitInfoTab />}
             {activeTab === 'conversion' && <ConversionTab />}
-            {activeTab === 'arithmetic' && <ArithmeticTab />}
-            {activeTab === 'fhir' && <FhirTab />}
+            {activeTab === 'unit-info' && <UnitInfoTab />}
           </div>
         </Container>
       </AppShell.Main>

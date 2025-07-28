@@ -1,9 +1,8 @@
 use octofhir_ucum_core::{
-    EvalResult,
     UcumError,
     UnitRecord,
     analyse,
-    evaluate,
+    evaluate_owned,
     find_unit,
     get_canonical_units,
     is_comparable,
@@ -20,6 +19,9 @@ use wasm_bindgen::prelude::*;
 pub fn start() {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
+    
+    #[cfg(feature = "wee_alloc")]
+    static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -172,6 +174,62 @@ pub fn get_unit_info(code: &str) -> Result<JsValue, JsValue> {
 }
 
 #[wasm_bindgen]
+pub fn analyze_unit(expression: &str) -> Result<JsValue, JsValue> {
+    analyze(expression)
+}
+
+#[wasm_bindgen]
+pub fn search_units_text(query: &str) -> JsValue {
+    search(query)
+}
+
+#[wasm_bindgen]
+pub fn list_units(filter: Option<String>) -> JsValue {
+    let results = if let Some(f) = filter {
+        core_search_units(&f)
+    } else {
+        // Return all units - this would need to be implemented in core
+        core_search_units("")
+    };
+    let unit_infos: Vec<UnitInfo> = results
+        .iter()
+        .map(|unit| convert_unit_record(unit))
+        .collect();
+    let js_result = JsSearchResult { units: unit_infos };
+    to_value(&js_result).unwrap()
+}
+
+#[wasm_bindgen]
+pub fn units_comparable(unit1: &str, unit2: &str) -> Result<bool, JsValue> {
+    comparable(unit1, unit2)
+}
+
+#[wasm_bindgen]
+pub fn multiply_units(_unit1: &str, _unit2: &str) -> Result<JsValue, JsValue> {
+    // This would need to be implemented in core - for now return error
+    let js_error = create_simple_js_error(
+        "multiply_units not implemented yet".to_string(),
+        "NotImplemented".to_string()
+    );
+    Err(to_value(&js_error).unwrap())
+}
+
+#[wasm_bindgen]
+pub fn divide_units(_unit1: &str, _unit2: &str) -> Result<JsValue, JsValue> {
+    // This would need to be implemented in core - for now return error
+    let js_error = create_simple_js_error(
+        "divide_units not implemented yet".to_string(),
+        "NotImplemented".to_string()
+    );
+    Err(to_value(&js_error).unwrap())
+}
+
+#[wasm_bindgen]
+pub fn evaluate_expression(expression: &str) -> Result<JsValue, JsValue> {
+    analyze(expression)
+}
+
+#[wasm_bindgen]
 pub fn convert(value: f64, from_unit: &str, to_unit: &str) -> Result<f64, JsValue> {
     let from_expr = match parse_expression(from_unit) {
         Ok(expr) => expr,
@@ -183,12 +241,12 @@ pub fn convert(value: f64, from_unit: &str, to_unit: &str) -> Result<f64, JsValu
         Err(err) => return Err(to_value(&convert_error(err)).unwrap()),
     };
 
-    let from_result = match evaluate(&from_expr) {
+    let from_result = match evaluate_owned(&from_expr) {
         Ok(result) => result,
         Err(err) => return Err(to_value(&convert_error(err)).unwrap()),
     };
 
-    let to_result = match evaluate(&to_expr) {
+    let to_result = match evaluate_owned(&to_expr) {
         Ok(result) => result,
         Err(err) => return Err(to_value(&convert_error(err)).unwrap()),
     };

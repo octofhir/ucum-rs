@@ -39,9 +39,9 @@ fn milligram_unit_test() {
     );
 
     // Test if we can parse and evaluate "mg" as a prefixed unit
-    use octofhir_ucum_core::{evaluate, parse_expression};
+    use octofhir_ucum_core::{evaluate_owned, parse_expression};
     let expr = parse_expression("mg").expect("should parse mg");
-    let result = evaluate(&expr).expect("should evaluate mg");
+    let result = evaluate_owned(&expr).expect("should evaluate mg");
 
     // mg should have factor 1e-3 (milli) and mass dimension
     assert!(

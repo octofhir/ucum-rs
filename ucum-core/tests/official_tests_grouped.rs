@@ -1,5 +1,5 @@
 use octofhir_ucum_core::precision::{NumericOps, Number, from_f64, to_f64};
-use octofhir_ucum_core::{evaluate, generate_display_name, parse_expression};
+use octofhir_ucum_core::{evaluate_owned, generate_display_name_owned, parse_expression};
 use std::fs;
 use std::path::Path;
 
@@ -456,7 +456,7 @@ fn run_conversion_tests_group() -> TestResults {
             };
 
             // Evaluate both units
-            let source_result = match evaluate(&source_expr) {
+            let source_result = match evaluate_owned(&source_expr) {
                 Ok(result) => result,
                 Err(e) => {
                     let fail_info = format!(
@@ -468,7 +468,7 @@ fn run_conversion_tests_group() -> TestResults {
                 }
             };
 
-            let target_result = match evaluate(&target_expr) {
+            let target_result = match evaluate_owned(&target_expr) {
                 Ok(result) => result,
                 Err(e) => {
                     let fail_info = format!(
@@ -553,7 +553,7 @@ fn run_display_name_tests_group() -> TestResults {
 
             match parse_result {
                 Ok(expr) => {
-                    let generated_display = generate_display_name(&expr);
+                    let generated_display = generate_display_name_owned(&expr);
 
                     if generated_display == test_case.display {
                         results.add_pass();
@@ -622,7 +622,7 @@ fn run_multiplication_tests_group() -> TestResults {
                 }
             };
 
-            let u1_result = match evaluate(&u1_expr) {
+            let u1_result = match evaluate_owned(&u1_expr) {
                 Ok(result) => result,
                 Err(e) => {
                     let fail_info = format!(
@@ -646,7 +646,7 @@ fn run_multiplication_tests_group() -> TestResults {
                 }
             };
 
-            let u2_result = match evaluate(&u2_expr) {
+            let u2_result = match evaluate_owned(&u2_expr) {
                 Ok(result) => result,
                 Err(e) => {
                     let fail_info = format!(
@@ -670,7 +670,7 @@ fn run_multiplication_tests_group() -> TestResults {
                 }
             };
 
-            let u_res_result = match evaluate(&u_res_expr) {
+            let u_res_result = match evaluate_owned(&u_res_expr) {
                 Ok(result) => result,
                 Err(e) => {
                     let fail_info = format!(
@@ -777,7 +777,7 @@ fn run_division_tests_group() -> TestResults {
                 }
             };
 
-            let u1_result = match evaluate(&u1_expr) {
+            let u1_result = match evaluate_owned(&u1_expr) {
                 Ok(result) => result,
                 Err(e) => {
                     let fail_info = format!(
@@ -801,7 +801,7 @@ fn run_division_tests_group() -> TestResults {
                 }
             };
 
-            let u2_result = match evaluate(&u2_expr) {
+            let u2_result = match evaluate_owned(&u2_expr) {
                 Ok(result) => result,
                 Err(e) => {
                     let fail_info = format!(
@@ -825,7 +825,7 @@ fn run_division_tests_group() -> TestResults {
                 }
             };
 
-            let u_res_result = match evaluate(&u_res_expr) {
+            let u_res_result = match evaluate_owned(&u_res_expr) {
                 Ok(result) => result,
                 Err(e) => {
                     let fail_info = format!(

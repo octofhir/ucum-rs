@@ -1,10 +1,10 @@
-use octofhir_ucum_core::{Dimension, EvalResult, UcumError, evaluate, parse_expression};
+use octofhir_ucum_core::{Dimension, EvalResult, UcumError, evaluate_owned, parse_expression};
 use octofhir_ucum_core::precision::{NumericOps, from_f64};
 
 fn eval(expr: &str) -> Result<EvalResult, UcumError> {
     let ast = parse_expression(expr).expect("parse ok");
     println!("AST for {}: {:?}", expr, ast);
-    let result = evaluate(&ast);
+    let result = evaluate_owned(&ast);
     println!("Result for {}: {:?}", expr, result);
     result
 }
@@ -80,7 +80,7 @@ fn arbitrary_unit_conversion() {
 fn arbitrary_unit_with_numeric() {
     // Test numeric value with arbitrary unit
     let expr = parse_expression("5[IU]").unwrap();
-    let result = evaluate(&expr).unwrap();
+    let result = evaluate_owned(&expr).unwrap();
 
     // Should have factor of 5.0 and dimensionless
     assert!((result.factor.sub(from_f64(5.0))).abs() < from_f64(1e-12));
@@ -91,7 +91,7 @@ fn arbitrary_unit_with_numeric() {
 fn arbitrary_unit_in_complex_expression() {
     // Test arbitrary unit in a complex expression
     let expr = parse_expression("10[IU]/(m2.s)").unwrap();
-    let result = evaluate(&expr).unwrap();
+    let result = evaluate_owned(&expr).unwrap();
 
     // Should have dimension of 1/(L^2*T)
     assert_eq!(result.dim, Dimension([0, -2, -1, 0, 0, 0, 0]));

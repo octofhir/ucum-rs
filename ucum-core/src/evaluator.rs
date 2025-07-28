@@ -26,6 +26,15 @@ use crate::{
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 
+/// Helper to extract string from either Symbol or SymbolOwned variants
+fn extract_symbol_str<'a>(expr: &'a UnitExpr<'a>) -> Option<&'a str> {
+    match expr {
+        UnitExpr::Symbol(s) => Some(s),
+        UnitExpr::SymbolOwned(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
 // Optimized prefix lookup using HashMap for O(1) performance
 lazy_static! {
     static ref PREFIX_MAP: HashMap<&'static str, crate::types::Prefix> = {
@@ -156,11 +165,17 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
     evaluate_impl(expr)
 }
 
+/// Evaluate an owned `UnitExpr` into canonical factor, dimension and offset.
+pub fn evaluate_owned(expr: &crate::ast::OwnedUnitExpr) -> Result<EvalResult, UcumError> {
+    evaluate_owned_impl(expr)
+}
+
 /// Internal implementation of evaluate without caching.
 fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
     match expr {
         UnitExpr::Numeric(v) => Ok(EvalResult::numeric(*v)),
         UnitExpr::Symbol(sym) => EvalResult::from_unit(sym),
+        UnitExpr::SymbolOwned(sym) => EvalResult::from_unit(sym),
         UnitExpr::Product(factors) => {
             // special-case numeric × special log unit
             if factors.len() == 2 {
@@ -170,10 +185,10 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                         .find(|f| matches!(f.expr, UnitExpr::Numeric(_)) && f.exponent == 1),
                     factors
                         .iter()
-                        .find(|f| matches!(f.expr, UnitExpr::Symbol(_)) && f.exponent == 1),
+                        .find(|f| matches!(f.expr, UnitExpr::Symbol(_) | UnitExpr::SymbolOwned(_)) && f.exponent == 1),
                 ) {
                     if let UnitExpr::Numeric(ref v) = num_fac.expr {
-                        if let UnitExpr::Symbol(ref code) = unit_fac.expr {
+                        if let Some(code) = extract_symbol_str(&unit_fac.expr) {
                             let (pref_factor, unit) = if let Some((pref, rest)) = split_prefix(code)
                             {
                                 if let Some(u) = find_unit(rest) {
@@ -276,6 +291,22 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                                 .mul(from_f64(*n).pow(factor.exponent));
                                         }
                                         UnitExpr::Symbol(sym) => {
+                                            let res = if *sym == code {
+                                                // For the special unit, apply its ratio and dimension
+                                                EvalResult {
+                                                    factor: ratio,
+                                                    dim: dim,
+                                                    offset: Number::zero(),
+                                                }
+                                            } else {
+                                                // For regular units, evaluate normally
+                                                EvalResult::from_unit(sym)?
+                                            };
+                                            result.factor = result
+                                                .factor
+                                                .mul(from_f64(to_f64(res.factor).powf(factor.exponent as f64)));
+                                        }
+                                        UnitExpr::SymbolOwned(sym) => {
                                             let res = if sym == code {
                                                 // For the special unit, apply its ratio and dimension
                                                 EvalResult {
@@ -334,24 +365,11 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                 result.factor = result.factor.mul(numeric_factor);
                                 return Ok(result);
                             } else {
-                                // For special units, we need to handle both standalone and combined cases
-                                // If this is part of a larger expression, we need to apply the special unit's
-                                // effect on the result while preserving the factor for combinations
-                                let result = if let UnitExpr::Numeric(numeric_value) = expr {
-                                    // If there's a numeric value, use it directly as the factor
-                                    // This handles cases like 10 dB/m where 10 should be preserved
-                                    EvalResult {
-                                        factor: from_f64(*numeric_value),
-                                        dim: dim, // Keep the special unit's dimension
-                                        offset: Number::zero(),
-                                    }
-                                } else {
-                                    // For standalone special units, apply the ratio and dimension
-                                    EvalResult {
-                                        factor: ratio,
-                                        dim: dim,
-                                        offset: Number::zero(),
-                                    }
+                                // For special units, apply the ratio and dimension
+                                let result = EvalResult {
+                                    factor: ratio,
+                                    dim: dim,
+                                    offset: Number::zero(),
                                 };
 
                                 return Ok(result);
@@ -374,7 +392,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 }
 
                 // Check for special units
-                if let UnitExpr::Symbol(unit) = &fac.expr {
+                if let Some(unit) = extract_symbol_str(&fac.expr) {
                     if let Some(unit_record) = find_unit(unit) {
                         if unit_record.special != crate::types::SpecialKind::None {
                             // Skip special units in first pass, they'll be handled in second pass
@@ -400,7 +418,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
 
             // Second pass: handle special units if present
             for fac in factors {
-                if let UnitExpr::Symbol(unit) = &fac.expr {
+                if let Some(unit) = extract_symbol_str(&fac.expr) {
                     if let Some(unit_record) = find_unit(unit) {
                         if unit_record.special != crate::types::SpecialKind::None {
                             // Handle arbitrary units differently from other special units
@@ -485,6 +503,13 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                 // Multiply the factor from this unit
                                 total_factor = total_factor
                                     .mul(from_f64(unit_record.factor).pow(fac.exponent));
+                            }
+                        }
+                        UnitExpr::SymbolOwned(unit) => {
+                            if let Some(unit_record) = find_unit(unit) {
+                                // Multiply the factor from this unit
+                                total_factor = total_factor
+                                    .mul(from_f64(unit_record.factor).pow(fac.exponent));
 
                                 // Add dimensions
                                 for i in 0..7 {
@@ -553,8 +578,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
             // but need to adopt the inverse dimension of what they're divided by (e.g., [IU]/mL should have
             // dimension L^-3, the inverse of volume). This ensures proper dimensional analysis and
             // commensurability checks when working with arbitrary units in complex expressions.
-            let is_arbitrary_numerator = match num.as_ref() {
-                UnitExpr::Symbol(sym) => {
+            let is_arbitrary_numerator = if let Some(sym) = extract_symbol_str(num.as_ref()) {
                     // Check if the unit is actually marked as arbitrary in the registry
                     if let Some(unit) = find_unit(sym) {
                         unit.special == crate::types::SpecialKind::Arbitrary
@@ -562,8 +586,8 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                         // Fallback: check for square brackets only if not found in registry
                         sym.starts_with('[') && sym.ends_with(']')
                     }
-                }
-                _ => false,
+            } else {
+                false
             };
 
             let mut dim_vec = [0i8; 7];
@@ -638,4 +662,57 @@ fn split_prefix(code: &str) -> Option<(crate::types::Prefix, &str)> {
         }
     }
     None
+}
+
+/// Internal implementation of evaluate for owned AST
+fn evaluate_owned_impl(expr: &crate::ast::OwnedUnitExpr) -> Result<EvalResult, UcumError> {
+    match expr {
+        crate::ast::OwnedUnitExpr::Numeric(v) => Ok(EvalResult::numeric(*v)),
+        crate::ast::OwnedUnitExpr::Symbol(sym) => EvalResult::from_unit(sym),
+        crate::ast::OwnedUnitExpr::Product(factors) => {
+            // Convert owned factors to borrowed for evaluation
+            let borrowed_factors: Vec<UnitFactor> = factors.iter().map(|f| UnitFactor {
+                expr: owned_to_borrowed(&f.expr),
+                exponent: f.exponent,
+            }).collect();
+            
+            let borrowed_expr = UnitExpr::Product(borrowed_factors);
+            evaluate_impl(&borrowed_expr)
+        }
+        crate::ast::OwnedUnitExpr::Quotient(num, den) => {
+            let borrowed_num = owned_to_borrowed(num);
+            let borrowed_den = owned_to_borrowed(den);
+            let borrowed_expr = UnitExpr::Quotient(Box::new(borrowed_num), Box::new(borrowed_den));
+            evaluate_impl(&borrowed_expr)
+        }
+        crate::ast::OwnedUnitExpr::Power(expr, exp) => {
+            let borrowed_expr_inner = owned_to_borrowed(expr);
+            let borrowed_expr = UnitExpr::Power(Box::new(borrowed_expr_inner), *exp);
+            evaluate_impl(&borrowed_expr)
+        }
+    }
+}
+
+/// Convert owned AST to borrowed AST for evaluation
+fn owned_to_borrowed(expr: &crate::ast::OwnedUnitExpr) -> UnitExpr {
+    match expr {
+        crate::ast::OwnedUnitExpr::Numeric(v) => UnitExpr::Numeric(*v),
+        crate::ast::OwnedUnitExpr::Symbol(sym) => UnitExpr::SymbolOwned(sym.clone()),
+        crate::ast::OwnedUnitExpr::Product(factors) => {
+            let borrowed_factors: Vec<UnitFactor> = factors.iter().map(|f| UnitFactor {
+                expr: owned_to_borrowed(&f.expr),
+                exponent: f.exponent,
+            }).collect();
+            UnitExpr::Product(borrowed_factors)
+        }
+        crate::ast::OwnedUnitExpr::Quotient(num, den) => {
+            UnitExpr::Quotient(
+                Box::new(owned_to_borrowed(num)), 
+                Box::new(owned_to_borrowed(den))
+            )
+        }
+        crate::ast::OwnedUnitExpr::Power(expr, exp) => {
+            UnitExpr::Power(Box::new(owned_to_borrowed(expr)), *exp)
+        }
+    }
 }

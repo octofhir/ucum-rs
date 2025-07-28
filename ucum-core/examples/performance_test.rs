@@ -1,7 +1,7 @@
 //! Manual performance test to validate Phase 4 improvements
 
 use octofhir_ucum_core::{
-    parse_expression, evaluate, find_unit, find_unit_optimized, 
+    parse_expression, evaluate_owned, find_unit, find_unit_optimized, 
     get_cache_stats, clear_global_cache, get_cache_sizes,
 };
 use std::time::Instant;
@@ -36,14 +36,14 @@ fn test_expression_caching() {
     // First run - should populate cache
     let start = Instant::now();
     for expr in &parsed_expressions {
-        let _ = evaluate(expr).unwrap();
+        let _ = evaluate_owned(expr).unwrap();
     }
     let first_run = start.elapsed();
     
     // Second run - should hit cache
     let start = Instant::now();
     for expr in &parsed_expressions {
-        let _ = evaluate(expr).unwrap();
+        let _ = evaluate_owned(expr).unwrap();
     }
     let second_run = start.elapsed();
     
@@ -111,7 +111,7 @@ fn test_cache_effectiveness() {
     for _ in 0..repetitions {
         for expr_str in &test_expressions {
             let expr = parse_expression(expr_str).unwrap();
-            let _ = evaluate(&expr).unwrap();
+            let _ = evaluate_owned(&expr).unwrap();
         }
     }
     

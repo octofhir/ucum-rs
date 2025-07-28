@@ -13,7 +13,57 @@ use nom::{
     number::complete::recognize_float,
     sequence::{delimited, pair, preceded},
 };
-use std::borrow::Cow;
+
+/// Fast Unicode normalization: only allocate when µ is present
+fn normalize_symbol_if_needed(s: &str) -> Option<String> {
+    if s.contains('µ') {
+        Some(s.replace('µ', "u"))
+    } else {
+        None
+    }
+}
+
+/// Extract implicit exponent from symbol, returning (base, exponent) if found
+fn extract_implicit_exponent(sym: &str) -> Option<(&str, i32)> {
+    // Scan for an implicit exponent suffix which may include an optional sign, e.g. "m2", "s-1", "mol+3".
+    // Algorithm:
+    // 1. Walk backwards gathering trailing digits.
+    // 2. Optionally capture a preceding '+' or '-' sign.
+    // 3. If we found at least one digit, treat the collected substring as the exponent.
+    // 4. Everything before the exponent substring is considered the base symbol.
+    let mut chars = sym.char_indices().collect::<Vec<_>>();
+    let mut idx = sym.len();
+
+    // Step backwards over digits
+    while let Some(&(pos, ch)) = chars.last() {
+        if ch.is_ascii_digit() {
+            idx = pos;
+            chars.pop();
+        } else {
+            break;
+        }
+    }
+
+    // Capture optional sign character immediately preceding the digits
+    if idx < sym.len() {
+        if let Some(&(pos, ch)) = chars.last() {
+            if ch == '+' || ch == '-' {
+                idx = pos;
+            }
+        }
+    }
+
+    // If we consumed at least one digit, interpret suffix as exponent (allowing optional sign)
+    if idx < sym.len() && !sym.contains('[') {
+        let exp_str = &sym[idx..];
+        if let Ok(exp) = exp_str.parse::<i32>() {
+            let base = &sym[..idx];
+            return Some((base, exp));
+        }
+    }
+
+    None
+}
 
 // ---------------------- atomic helpers ----------------------
 
@@ -40,22 +90,24 @@ fn is_symbol_char(c: char) -> bool {
 
 fn parse_symbol(input: &str) -> IResult<&str, UnitExpr> {
     map_res(take_while1(is_symbol_char), |s: &str| {
-        // Optimized normalization: avoid allocation when no µ present
-        let normalized = if s.contains('µ') {
-            Cow::Owned(s.replace('µ', "u"))
-        } else {
-            Cow::Borrowed(s)
-        };
-
-        if normalized.contains('%') && normalized.len() > 1 {
-            // Percent must be a standalone unit symbol
-            Err(())
-        } else {
-            // Additional validation for common invalid patterns
-            if is_invalid_unit_pattern(&normalized) {
+        // Fast path: no normalization needed
+        if let Some(normalized) = normalize_symbol_if_needed(s) {
+            // Unicode normalization required - use owned variant
+            if normalized.contains('%') && normalized.len() > 1 {
+                Err(())
+            } else if is_invalid_unit_pattern(&normalized) {
                 Err(())
             } else {
-                Ok(UnitExpr::Symbol(normalized.into_owned()))
+                Ok(UnitExpr::SymbolOwned(normalized))
+            }
+        } else {
+            // Zero-copy path: use borrowed string
+            if s.contains('%') && s.len() > 1 {
+                Err(())
+            } else if is_invalid_unit_pattern(s) {
+                Err(())
+            } else {
+                Ok(UnitExpr::Symbol(s))
             }
         }
     }).parse(input)
@@ -195,8 +247,8 @@ fn parse_standalone_annotation(input: &str) -> IResult<&str, UnitExpr> {
     map(
         delimited(char('{'), annotation_body, char('}')),
         |content: &str| {
-            // Return the annotation content as a symbol with braces
-            UnitExpr::Symbol(format!("{{{}}}", content))
+            // Return the annotation content as a symbol with braces (requires allocation)
+            UnitExpr::SymbolOwned(format!("{{{}}}", content))
         },
     ).parse(input)
 }
@@ -232,47 +284,28 @@ pub fn parse_factor(input: &str) -> IResult<&str, UnitFactor> {
     let (expr, exponent) = match (&base_expr, explicit_exp) {
         (_, Some(exp)) => (base_expr.clone(), exp),
         (UnitExpr::Symbol(sym), None) => {
-            // Scan for an implicit exponent suffix which may include an optional sign, e.g. "m2", "s-1", "mol+3".
-            // Algorithm:
-            // 1. Walk backwards gathering trailing digits.
-            // 2. Optionally capture a preceding '+' or '-' sign.
-            // 3. If we found at least one digit, treat the collected substring as the exponent.
-            // 4. Everything before the exponent substring is considered the base symbol.
-            let mut chars = sym.char_indices().collect::<Vec<_>>();
-            let mut idx = sym.len();
-
-            // Step backwards over digits
-            while let Some(&(pos, ch)) = chars.last() {
-                if ch.is_ascii_digit() {
-                    idx = pos;
-                    chars.pop();
-                } else {
-                    break;
-                }
+            // Handle implicit exponent in borrowed symbol (zero-copy)
+            if let Some((base_str, exp)) = extract_implicit_exponent(sym) {
+                return Ok((
+                    rest,
+                    UnitFactor {
+                        expr: UnitExpr::Symbol(base_str),
+                        exponent: exp,
+                    },
+                ));
             }
-
-            // Capture optional sign character immediately preceding the digits
-            if idx < sym.len() {
-                if let Some(&(pos, ch)) = chars.last() {
-                    if ch == '+' || ch == '-' {
-                        idx = pos;
-                    }
-                }
-            }
-
-            // If we consumed at least one digit, interpret suffix as exponent (allowing optional sign)
-            if idx < sym.len() && !sym.contains('[') {
-                let exp_str = &sym[idx..];
-                if let Ok(exp) = exp_str.parse::<i32>() {
-                    let base = &sym[..idx];
-                    return Ok((
-                        rest,
-                        UnitFactor {
-                            expr: UnitExpr::Symbol(base.to_string()),
-                            exponent: exp,
-                        },
-                    ));
-                }
+            (base_expr.clone(), 1)
+        }
+        (UnitExpr::SymbolOwned(sym), None) => {
+            // Handle implicit exponent in owned symbol
+            if let Some((base_str, exp)) = extract_implicit_exponent(sym) {
+                return Ok((
+                    rest,
+                    UnitFactor {
+                        expr: UnitExpr::SymbolOwned(base_str.to_string()),
+                        exponent: exp,
+                    },
+                ));
             }
             (base_expr.clone(), 1)
         }
@@ -327,27 +360,31 @@ pub fn parse_product(input: &str) -> IResult<&str, UnitExpr> {
     Ok((rest, factors_to_expr(factors)))
 }
 
-fn has_invalid_string_patterns(input: &str) -> bool {
-    // Check for invalid patterns in the original string before parsing
-
-    // 1. Check for numeric time unit patterns without decimal points
-    // Pattern: digits followed directly by time unit (no decimal point)
-    // Invalid: 12h, 48h, 2h, 1h
-    // Valid: 12.h, 48.h, 2.h, 1.h
-    let time_units = [
-        "h", "hr", "min", "s", "ms", "us", "ns", "d", "wk", "mo", "a",
-    ];
-
-    for unit in time_units {
-        let mut chars = input.char_indices().peekable();
-
-        while let Some((i, ch)) = chars.next() {
-            if ch.is_ascii_digit() {
-                // Found a digit, collect consecutive digits
+/// Consolidated pattern validation - single pass through input
+fn validate_patterns_fast(input: &str) -> Result<(), &'static str> {
+    static TIME_UNITS: &[&str] = &["h", "hr", "min", "s", "ms", "us", "ns", "d", "wk", "mo", "a"];
+    
+    let mut chars = input.char_indices().peekable();
+    let mut has_paren = false;
+    let mut has_time_unit = false;
+    let mut annotation_positions = Vec::new();
+    
+    // Single scan collecting all relevant information
+    while let Some((i, ch)) = chars.next() {
+        match ch {
+            '(' => has_paren = true,
+            '{' => {
+                // Track annotation positions for later validation
+                if let Some(close_pos) = input[i..].find('}') {
+                    annotation_positions.push((i, i + close_pos));
+                }
+            }
+            '0'..='9' => {
+                // Check for invalid numeric time patterns
                 let start_idx = i;
                 let mut end_idx = i + ch.len_utf8();
-
-                // Collect all consecutive digits
+                
+                // Collect consecutive digits
                 while let Some(&(next_i, next_ch)) = chars.peek() {
                     if next_ch.is_ascii_digit() {
                         end_idx = next_i + next_ch.len_utf8();
@@ -356,73 +393,61 @@ fn has_invalid_string_patterns(input: &str) -> bool {
                         break;
                     }
                 }
-
-                // Check if the digits are followed by the time unit
-                if input[end_idx..].starts_with(unit) {
-                    // Check if NOT preceded by a decimal point
-                    let preceded_by_dot =
-                        start_idx > 0 && input.chars().nth(start_idx - 1) == Some('.');
-
-                    if !preceded_by_dot {
-                        // Check if it's at word boundary (not part of larger symbol)
-                        let unit_end = end_idx + unit.len();
-                        let at_boundary = unit_end >= input.len()
-                            || !input
-                                .chars()
-                                .nth(unit_end)
-                                .unwrap_or(' ')
-                                .is_ascii_alphanumeric();
-
-                        if at_boundary {
-                            let _matched = &input[start_idx..unit_end];
-                            return true;
+                
+                // Check if followed by time unit
+                for &unit in TIME_UNITS {
+                    if input[end_idx..].starts_with(unit) {
+                        has_time_unit = true;
+                        // Check if NOT preceded by decimal point
+                        let preceded_by_dot = start_idx > 0 && 
+                            input.chars().nth(start_idx - 1) == Some('.');
+                        
+                        if !preceded_by_dot {
+                            let unit_end = end_idx + unit.len();
+                            let at_boundary = unit_end >= input.len() || 
+                                !input.chars().nth(unit_end).unwrap_or(' ').is_ascii_alphanumeric();
+                            
+                            if at_boundary {
+                                return Err("Invalid numeric time unit pattern");
+                            }
                         }
+                        break;
                     }
                 }
             }
+            _ => {}
         }
     }
-
-    // 2. Check for parentheses with time units (but allow valid division expressions)
-    // Invalid: ug(8.h), ug(8hr) - unit symbols followed by parentheses with time units
-    // Valid: mmol/(8.h), g/(8.h) - division expressions with parentheses
-    if input.contains('(') && (input.contains(".h") || input.contains("hr")) {
-        // Check if it's NOT a division expression (doesn't have '/' before '(')
+    
+    // Validate parentheses with time units
+    if has_paren && has_time_unit {
         if let Some(paren_pos) = input.find('(') {
-            // Look for '/' immediately before the '(' (allowing whitespace)
             let before_paren = &input[..paren_pos].trim_end();
             if !before_paren.ends_with('/') {
-                return true;
+                return Err("Invalid parentheses with time unit");
             }
         }
     }
-
-    // 3. Check for complex annotation patterns starting with annotation
-    // Invalid: {a}rad2{b} - annotation directly followed by unit without separator
-    // Valid: {a}.rad2{b} - annotation followed by dot separator and unit
-    // Valid: {a}/rad2{b} - annotation followed by division
-    if input.starts_with('{') && input.contains('}') {
-        if let Some(close_pos) = input.find('}') {
-            if close_pos + 1 < input.len() {
-                let after_annotation = &input[close_pos + 1..];
-                // If there's content after the first annotation, check if it has proper separator
-                if !after_annotation.trim().is_empty() {
-                    // Allow if it starts with '/' (division) or '.' (product separator)
-                    if !after_annotation.starts_with('/') && !after_annotation.starts_with('.') {
-                        return true;
-                    }
+    
+    // Validate annotation patterns
+    for &(_start, end) in &annotation_positions {
+        if end + 1 < input.len() {
+            let after_annotation = &input[end + 1..];
+            if !after_annotation.trim().is_empty() {
+                if !after_annotation.starts_with('/') && !after_annotation.starts_with('.') {
+                    return Err("Invalid annotation pattern");
                 }
             }
         }
     }
-
-    false
+    
+    Ok(())
 }
 
 fn parse_quotient_remainder(input: &str) -> IResult<&str, UnitExpr> {
     // Parse remaining part of quotient for right-associativity
     if input.trim().is_empty() {
-        return Ok((input, UnitExpr::Symbol("".to_string())));
+        return Ok((input, UnitExpr::SymbolOwned("".to_string())));
     }
 
     // Look for division operator
@@ -438,10 +463,10 @@ fn parse_quotient_remainder(input: &str) -> IResult<&str, UnitExpr> {
 
         // Recursively parse remaining divisions
         if let Ok((final_rest, remaining_expr)) = parse_quotient_remainder(rest) {
-            if let UnitExpr::Symbol(s) = &remaining_expr {
-                if s.is_empty() {
-                    return Ok((final_rest, denominator));
-                }
+            match &remaining_expr {
+                UnitExpr::Symbol(s) if s.is_empty() => return Ok((final_rest, denominator)),
+                UnitExpr::SymbolOwned(s) if s.is_empty() => return Ok((final_rest, denominator)),
+                _ => {}
             }
             let combined = UnitExpr::Product(vec![
                 UnitFactor {
@@ -458,18 +483,18 @@ fn parse_quotient_remainder(input: &str) -> IResult<&str, UnitExpr> {
             Ok((rest, denominator))
         }
     } else {
-        Ok((input, UnitExpr::Symbol("".to_string())))
+        Ok((input, UnitExpr::SymbolOwned("".to_string())))
     }
 }
 
 pub fn parse_quotient(input: &str) -> IResult<&str, UnitExpr> {
     // Handle empty input as unity
     if input.trim().is_empty() {
-        return Ok((input, UnitExpr::Symbol("".to_string())));
+        return Ok((input, UnitExpr::SymbolOwned("".to_string())));
     }
 
-    // Validate for invalid string patterns before parsing
-    if has_invalid_string_patterns(input) {
+    // Fast pattern validation before parsing
+    if let Err(_) = validate_patterns_fast(input) {
         return Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Verify,
@@ -522,10 +547,10 @@ pub fn parse_quotient(input: &str) -> IResult<&str, UnitExpr> {
             let remaining_input = new_rest;
             if let Ok((final_rest, remaining_expr)) = parse_quotient_remainder(remaining_input) {
                 // If there's more to parse, create right-associative structure
-                let combined_denominator = if let UnitExpr::Symbol(s) = &remaining_expr {
-                    if s.is_empty() {
-                        denominator
-                    } else {
+                let combined_denominator = match &remaining_expr {
+                    UnitExpr::Symbol(s) if s.is_empty() => denominator,
+                    UnitExpr::SymbolOwned(s) if s.is_empty() => denominator,
+                    _ => {
                         UnitExpr::Product(vec![
                             UnitFactor {
                                 expr: denominator,
@@ -537,17 +562,6 @@ pub fn parse_quotient(input: &str) -> IResult<&str, UnitExpr> {
                             },
                         ])
                     }
-                } else {
-                    UnitExpr::Product(vec![
-                        UnitFactor {
-                            expr: denominator,
-                            exponent: 1,
-                        },
-                        UnitFactor {
-                            expr: remaining_expr,
-                            exponent: 1,
-                        },
-                    ])
                 };
                 result = UnitExpr::Quotient(Box::new(result), Box::new(combined_denominator));
                 rest = final_rest;
@@ -601,3 +615,4 @@ pub fn parse_quotient(input: &str) -> IResult<&str, UnitExpr> {
 
     Ok((rest, result))
 }
+

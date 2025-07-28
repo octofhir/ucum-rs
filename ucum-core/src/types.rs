@@ -65,7 +65,7 @@ pub struct DerivedUnit {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Quantity {
     pub value: f64,
-    pub unit: crate::ast::UnitExpr,
+    pub unit: crate::ast::OwnedUnitExpr,
 }
 
 /// Record used in generated registry for both base and derived units.

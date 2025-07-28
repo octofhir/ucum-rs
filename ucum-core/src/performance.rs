@@ -191,8 +191,12 @@ fn hash_unit_expr<H: Hasher>(expr: &UnitExpr, hasher: &mut H) {
             1u8.hash(hasher); // discriminant
             s.hash(hasher);
         }
-        UnitExpr::Product(factors) => {
+        UnitExpr::SymbolOwned(s) => {
             2u8.hash(hasher); // discriminant
+            s.hash(hasher);
+        }
+        UnitExpr::Product(factors) => {
+            3u8.hash(hasher); // discriminant
 
             // Sort factors by their hash to ensure consistent ordering
             // This is important for commutative operations
@@ -207,12 +211,12 @@ fn hash_unit_expr<H: Hasher>(expr: &UnitExpr, hasher: &mut H) {
             factor_hashes.hash(hasher);
         }
         UnitExpr::Quotient(num, den) => {
-            3u8.hash(hasher); // discriminant
+            4u8.hash(hasher); // discriminant
             hash_unit_expr(num, hasher);
             hash_unit_expr(den, hasher);
         }
         UnitExpr::Power(base, exp) => {
-            4u8.hash(hasher); // discriminant
+            5u8.hash(hasher); // discriminant
             hash_unit_expr(base, hasher);
             exp.hash(hasher);
         }
@@ -409,8 +413,8 @@ mod tests {
 
     #[test]
     fn test_cache_hash_consistency() {
-        let expr1 = UnitExpr::Symbol("kg".to_string());
-        let expr2 = UnitExpr::Symbol("kg".to_string());
+        let expr1 = UnitExpr::Symbol("kg");
+        let expr2 = UnitExpr::Symbol("kg");
 
         assert_eq!(EvaluationCache::hash_expr(&expr1), EvaluationCache::hash_expr(&expr2));
     }

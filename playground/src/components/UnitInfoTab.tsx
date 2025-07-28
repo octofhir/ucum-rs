@@ -3,303 +3,335 @@ import {
   Badge,
   Card,
   Code,
-  Divider,
   Group,
   Loader,
   Paper,
   Stack,
   Table,
   Text,
+  TextInput,
   Title,
+  Transition,
+  useMantineTheme,
+  useMantineColorScheme,
 } from '@mantine/core';
-import { IconAlertCircle, IconInfoCircle, IconSearch } from '@tabler/icons-react';
+import { IconAlertCircle, IconInfoCircle, IconSearch, IconSparkles } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { useUcum } from '../hooks/useUcum';
-import UnitAutocomplete from './UnitAutocomplete';
 import styles from './UnitInfoTab.module.css';
 
 const EXAMPLE_UNITS = [
-  'kg',
-  'm',
-  's',
-  'mol',
-  'A',
-  'K',
-  'cd',
-  'g/L',
-  'mg/dL',
-  'mmol/L',
-  'IU/L',
-  'U/L',
-  'cel',
-  '[degF]',
-  'mm[Hg]',
-  'kPa',
-  'L/min',
+  { code: 'kg', label: 'Kilogram', category: 'mass' },
+  { code: 'm', label: 'Meter', category: 'length' },
+  { code: 's', label: 'Second', category: 'time' },
+  { code: 'mol', label: 'Mole', category: 'amount' },
+  { code: 'A', label: 'Ampere', category: 'current' },
+  { code: 'K', label: 'Kelvin', category: 'temperature' },
+  { code: 'cd', label: 'Candela', category: 'luminosity' },
+  { code: 'Pa', label: 'Pascal', category: 'pressure' },
+  { code: 'J', label: 'Joule', category: 'energy' },
+  { code: 'W', label: 'Watt', category: 'power' },
+  { code: 'N', label: 'Newton', category: 'force' },
+  { code: 'Hz', label: 'Hertz', category: 'frequency' },
 ];
 
-interface UnitInfo {
-  code: string;
-  display_name?: string;
-  property?: string;
-  factor?: number;
-}
-
 export default function UnitInfoTab() {
+  const theme = useMantineTheme();
+  const { colorScheme } = useMantineColorScheme();
   const [unit, setUnit] = useState('');
   const [result, setResult] = useState<any>(null);
+  const [unitInfo, setUnitInfo] = useState<any>(null);
+  const [, setLoading] = useState(false);
+  const [showResult, setShowResult] = useState(false);
 
-  const { isLoaded, error, getUnitInfoCached: getUnitInfo } = useUcum();
+  const { isLoaded, error, analyzeUnitCached: analyzeUnit, getUnitInfoCached: getUnitInfo } = useUcum();
+
+  const isDark = colorScheme === 'dark';
 
   const handleGetInfo = useCallback(
     async (unitCode?: string) => {
       const targetUnit = unitCode || unit;
       if (!targetUnit.trim()) return;
 
+      setLoading(true);
+      setShowResult(false);
+      
       try {
-        const result = await getUnitInfo(targetUnit);
-        setResult(result);
+        const [analysisResult, unitInfoResult] = await Promise.all([
+          analyzeUnit(targetUnit),
+          getUnitInfo(targetUnit)
+        ]);
+        
+        setResult(analysisResult);
+        setUnitInfo(unitInfoResult);
+        setTimeout(() => setShowResult(true), 100);
       } catch (err) {
-        // Handle different types of errors
-        let errorMessage = 'An unexpected error occurred';
-        
-        if (err instanceof Error) {
-          errorMessage = err.message;
-        } else if (typeof err === 'string') {
-          errorMessage = err;
-        } else if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string') {
-          errorMessage = err.message;
-        } else if (err && typeof err === 'object') {
-          errorMessage = JSON.stringify(err);
-        }
-        
-        setResult({ error: errorMessage });
+        setResult({ error: err instanceof Error ? err.message : String(err) });
+        setUnitInfo(null);
+        setTimeout(() => setShowResult(true), 100);
+      } finally {
+        setLoading(false);
       }
     },
-    [unit, getUnitInfo]
+    [unit, analyzeUnit]
   );
 
-  const handleUnitSelect = useCallback(
-    (unitInfo: UnitInfo | null) => {
-      if (unitInfo) {
-        // Automatically get info when a unit is selected
-        handleGetInfo(unitInfo.code);
-      }
-    },
-    [handleGetInfo]
-  );
+  const loadExample = (example: typeof EXAMPLE_UNITS[0]) => {
+    setUnit(example.code);
+    setResult(null);
+    setUnitInfo(null);
+    setShowResult(false);
+    handleGetInfo(example.code);
+  };
 
-  const renderUnitInfo = (info: any) => {
+  const renderUnitInfo = (info: any, unitDetails?: any) => {
     if (!info) return null;
 
+    const rows = [];
+    
+    // Add unit details if available
+    if (unitDetails?.info?.code) {
+      rows.push(
+        <Table.Tr key="unit-code">
+          <Table.Td fw={500} style={{ width: '40%' }} c={isDark ? 'gray.3' : 'gray.7'}>
+            Unit Code
+          </Table.Td>
+          <Table.Td>
+            <Code 
+              style={{
+                backgroundColor: isDark ? theme.colors.dark[5] : theme.colors.gray[1],
+                color: isDark ? theme.colors.gray[2] : theme.colors.gray[8],
+              }}
+            >
+              {unitDetails.info.code}
+            </Code>
+          </Table.Td>
+        </Table.Tr>
+      );
+    }
+    
+    if (unitDetails?.info?.display_name) {
+      rows.push(
+        <Table.Tr key="display-name">
+          <Table.Td fw={500} c={isDark ? 'gray.3' : 'gray.7'}>Display Name</Table.Td>
+          <Table.Td>
+            <Text fw={500} c={isDark ? 'gray.1' : 'gray.9'}>
+              {unitDetails.info.display_name}
+            </Text>
+          </Table.Td>
+        </Table.Tr>
+      );
+    }
+    
+    if (unitDetails?.info?.property) {
+      rows.push(
+        <Table.Tr key="property">
+          <Table.Td fw={500} c={isDark ? 'gray.3' : 'gray.7'}>Property</Table.Td>
+          <Table.Td>
+            <Badge 
+              variant="light" 
+              color="teal"
+              style={{
+                backgroundColor: isDark ? theme.colors.teal[9] : theme.colors.teal[0],
+                color: isDark ? theme.colors.teal[3] : theme.colors.teal[7],
+              }}
+            >
+              {unitDetails.info.property}
+            </Badge>
+          </Table.Td>
+        </Table.Tr>
+      );
+    }
+    
+    if (info.expression) {
+      rows.push(
+        <Table.Tr key="expression">
+          <Table.Td fw={500} style={{ width: '40%' }} c={isDark ? 'gray.3' : 'gray.7'}>
+            Expression
+          </Table.Td>
+          <Table.Td>
+            <Code 
+              style={{
+                backgroundColor: isDark ? theme.colors.dark[5] : theme.colors.gray[1],
+                color: isDark ? theme.colors.gray[2] : theme.colors.gray[8],
+              }}
+            >
+              {info.expression}
+            </Code>
+          </Table.Td>
+        </Table.Tr>
+      );
+    }
+
+    if (info.factor !== undefined) {
+      rows.push(
+        <Table.Tr key="factor">
+          <Table.Td fw={500} c={isDark ? 'gray.3' : 'gray.7'}>Conversion Factor</Table.Td>
+          <Table.Td>
+            <Code 
+              style={{
+                backgroundColor: isDark ? theme.colors.dark[5] : theme.colors.gray[1],
+                color: isDark ? theme.colors.gray[2] : theme.colors.gray[8],
+              }}
+            >
+              {info.factor}
+            </Code>
+          </Table.Td>
+        </Table.Tr>
+      );
+    }
+
+    if (info.offset !== undefined && info.offset !== 0) {
+      rows.push(
+        <Table.Tr key="offset">
+          <Table.Td fw={500} c={isDark ? 'gray.3' : 'gray.7'}>Offset</Table.Td>
+          <Table.Td>
+            <Code 
+              style={{
+                backgroundColor: isDark ? theme.colors.dark[5] : theme.colors.gray[1],
+                color: isDark ? theme.colors.gray[2] : theme.colors.gray[8],
+              }}
+            >
+              {info.offset}
+            </Code>
+          </Table.Td>
+        </Table.Tr>
+      );
+    }
+
+    if (info.dimensions && Array.isArray(info.dimensions)) {
+      const dimensionLabels = ['Mass', 'Length', 'Time', 'Current', 'Temperature', 'Amount', 'Luminosity'];
+      const nonZeroDimensions = info.dimensions
+        .map((dim: number, index: number) => dim !== 0 ? `${dimensionLabels[index]}: ${dim}` : null)
+        .filter(Boolean);
+      
+      rows.push(
+        <Table.Tr key="dimensions">
+          <Table.Td fw={500} c={isDark ? 'gray.3' : 'gray.7'}>Dimensions</Table.Td>
+          <Table.Td>
+            {nonZeroDimensions.length > 0 ? (
+              <Group gap="xs">
+                {nonZeroDimensions.map((dim: string, idx: number) => (
+                  <Badge 
+                    key={idx} 
+                    variant="light" 
+                    size="sm"
+                    style={{
+                      backgroundColor: isDark ? theme.colors.blue[9] : theme.colors.blue[0],
+                      color: isDark ? theme.colors.blue[3] : theme.colors.blue[7],
+                    }}
+                  >
+                    {dim}
+                  </Badge>
+                ))}
+              </Group>
+            ) : (
+              <Badge 
+                variant="light" 
+                color="gray" 
+                size="sm"
+                style={{
+                  backgroundColor: isDark ? theme.colors.gray[8] : theme.colors.gray[1],
+                  color: isDark ? theme.colors.gray[4] : theme.colors.gray[6],
+                }}
+              >
+                Dimensionless
+              </Badge>
+            )}
+          </Table.Td>
+        </Table.Tr>
+      );
+    }
+
+    if (info.is_dimensionless !== undefined) {
+      rows.push(
+        <Table.Tr key="dimensionless">
+          <Table.Td fw={500} c={isDark ? 'gray.3' : 'gray.7'}>Type</Table.Td>
+          <Table.Td>
+            <Badge 
+              color={info.is_dimensionless ? 'gray' : 'blue'} 
+              variant="light"
+              style={{
+                backgroundColor: isDark 
+                  ? info.is_dimensionless 
+                    ? theme.colors.gray[8] 
+                    : theme.colors.blue[9]
+                  : info.is_dimensionless 
+                    ? theme.colors.gray[1] 
+                    : theme.colors.blue[0],
+                color: isDark 
+                  ? info.is_dimensionless 
+                    ? theme.colors.gray[4] 
+                    : theme.colors.blue[3]
+                  : info.is_dimensionless 
+                    ? theme.colors.gray[6] 
+                    : theme.colors.blue[7],
+              }}
+            >
+              {info.is_dimensionless ? 'Dimensionless' : 'Dimensional'}
+            </Badge>
+          </Table.Td>
+        </Table.Tr>
+      );
+    }
+
+    if (info.has_offset !== undefined) {
+      rows.push(
+        <Table.Tr key="has_offset">
+          <Table.Td fw={500} c={isDark ? 'gray.3' : 'gray.7'}>Special Unit</Table.Td>
+          <Table.Td>
+            <Badge 
+              color={info.has_offset ? 'orange' : 'gray'} 
+              variant="light"
+              style={{
+                backgroundColor: isDark 
+                  ? info.has_offset 
+                    ? theme.colors.orange[9] 
+                    : theme.colors.gray[8]
+                  : info.has_offset 
+                    ? theme.colors.orange[0] 
+                    : theme.colors.gray[1],
+                color: isDark 
+                  ? info.has_offset 
+                    ? theme.colors.orange[3] 
+                    : theme.colors.gray[4]
+                  : info.has_offset 
+                    ? theme.colors.orange[7] 
+                    : theme.colors.gray[6],
+              }}
+            >
+              {info.has_offset ? 'Has Offset' : 'No Offset'}
+            </Badge>
+          </Table.Td>
+        </Table.Tr>
+      );
+    }
+
     return (
-      <Card withBorder className={styles.infoCard}>
+      <Card 
+        withBorder 
+        className={styles.infoCard}
+        shadow="sm"
+        radius="md"
+        style={{
+          borderColor: isDark ? theme.colors.dark[4] : theme.colors.cyan[2],
+          background: isDark 
+            ? `linear-gradient(135deg, ${theme.colors.dark[6]} 0%, ${theme.colors.dark[7]} 100%)`
+            : `linear-gradient(135deg, ${theme.colors.cyan[0]} 0%, ${theme.white} 100%)`,
+          boxShadow: isDark 
+            ? '0 4px 12px rgba(0,0,0,0.3)'
+            : '0 4px 12px rgba(6, 182, 212, 0.08)',
+        }}
+      >
         <Stack gap="md">
           <Group>
-            <IconInfoCircle size={20} color="var(--mantine-color-blue-6)" />
-            <Title order={4}>Unit Information</Title>
+            <IconInfoCircle size={20} color={theme.colors.cyan[6]} />
+            <Title order={4} c={isDark ? 'gray.1' : 'gray.9'}>Unit Analysis</Title>
           </Group>
 
           <Table>
-            <Table.Tbody>
-              {info.symbol && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Symbol</Table.Td>
-                  <Table.Td>
-                    <Code>{info.symbol}</Code>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.name && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Name</Table.Td>
-                  <Table.Td>{info.name}</Table.Td>
-                </Table.Tr>
-              )}
-              {info.property && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Property</Table.Td>
-                  <Table.Td>
-                    <Badge color="blue" variant="light">
-                      {info.property}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.base_unit && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Base Unit</Table.Td>
-                  <Table.Td>
-                    <Code>{info.base_unit}</Code>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.scale && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Scale</Table.Td>
-                  <Table.Td>
-                    <Code>{info.scale}</Code>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {(info.factor !== undefined && info.factor !== null) && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Conversion Factor</Table.Td>
-                  <Table.Td>
-                    <Code>{info.factor}</Code>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.dimension && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Dimension</Table.Td>
-                  <Table.Td>
-                    <Code>{info.dimension}</Code>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.class && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Class</Table.Td>
-                  <Table.Td>
-                    <Badge color="purple" variant="light">
-                      {info.class}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.metric !== undefined && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Metric</Table.Td>
-                  <Table.Td>
-                    <Badge color={info.metric ? 'green' : 'gray'} variant="light">
-                      {info.metric ? 'Yes' : 'No'}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.special !== undefined && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Special Unit</Table.Td>
-                  <Table.Td>
-                    <Badge color={info.special ? 'orange' : 'gray'} variant="light">
-                      {info.special ? 'Yes' : 'No'}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.arbitrary !== undefined && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Arbitrary</Table.Td>
-                  <Table.Td>
-                    <Badge color={info.arbitrary ? 'red' : 'gray'} variant="light">
-                      {info.arbitrary ? 'Yes' : 'No'}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.isValid !== undefined && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Valid</Table.Td>
-                  <Table.Td>
-                    <Badge color={info.isValid ? 'green' : 'red'} variant="light">
-                      {info.isValid ? 'Valid' : 'Invalid'}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-              {info.kind && (
-                <Table.Tr>
-                  <Table.Td fw={500}>Kind</Table.Td>
-                  <Table.Td>
-                    <Badge color="teal" variant="light">
-                      {info.kind}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-            </Table.Tbody>
+            <Table.Tbody>{rows}</Table.Tbody>
           </Table>
-
-          {info.definition && (
-            <>
-              <Divider />
-              <div>
-                <Text fw={500} mb="xs">
-                  Definition
-                </Text>
-                <Text size="sm" c="dimmed">
-                  {info.definition}
-                </Text>
-              </div>
-            </>
-          )}
-
-          {info.printSymbol && info.printSymbol !== info.symbol && (
-            <>
-              <Divider />
-              <div>
-                <Text fw={500} mb="xs">
-                  Print Symbol
-                </Text>
-                <Code>{info.printSymbol}</Code>
-              </div>
-            </>
-          )}
-
-          {info.annotations && Array.isArray(info.annotations) && info.annotations.length > 0 && (
-            <>
-              <Divider />
-              <div>
-                <Text fw={500} mb="xs">
-                  Annotations
-                </Text>
-                <Stack gap="xs">
-                  {info.annotations.map((annotation: string, index: number) => (
-                    <Text key={index} size="sm" c="dimmed">
-                      • {annotation}
-                    </Text>
-                  ))}
-                </Stack>
-              </div>
-            </>
-          )}
-
-          {info.examples && Array.isArray(info.examples) && info.examples.length > 0 && (
-            <>
-              <Divider />
-              <div>
-                <Text fw={500} mb="xs">
-                  Examples
-                </Text>
-                <Group gap="xs">
-                  {info.examples.slice(0, 5).map((example: string, index: number) => (
-                    <Badge key={index} variant="outline" size="sm">
-                      {example}
-                    </Badge>
-                  ))}
-                </Group>
-              </div>
-            </>
-          )}
-
-          {info.synonyms && Array.isArray(info.synonyms) && info.synonyms.length > 0 && (
-            <>
-              <Divider />
-              <div>
-                <Text fw={500} mb="xs">
-                  Synonyms
-                </Text>
-                <Group gap="xs">
-                  {info.synonyms.slice(0, 5).map((synonym: string, index: number) => (
-                    <Badge key={index} variant="light" color="gray" size="sm">
-                      {synonym}
-                    </Badge>
-                  ))}
-                </Group>
-              </div>
-            </>
-          )}
         </Stack>
       </Card>
     );
@@ -327,104 +359,183 @@ export default function UnitInfoTab() {
   return (
     <Stack gap="xl" className={styles.container}>
       <div>
-        <Title order={2} mb="sm">
-          Unit Information
-        </Title>
-        <Text c="dimmed">
-          Get detailed information about UCUM units including properties, definitions, and metadata
+        <Group mb="sm">
+          <IconInfoCircle size={32} stroke={1.5} color={theme.colors.cyan[6]} />
+          <Title order={2}>Unit Explorer</Title>
+        </Group>
+        <Text c="dimmed" size="lg">
+          Analyze UCUM units to understand their properties and dimensions
         </Text>
       </div>
 
-      <Card withBorder className={styles.searchCard}>
-        <Stack gap="md">
-          <Group>
-            <IconSearch size={20} color="var(--mantine-color-blue-6)" />
-            <Title order={4}>Unit Lookup</Title>
-          </Group>
+      <Card 
+        withBorder 
+        className={styles.searchCard}
+        shadow="sm"
+        radius="md"
+        style={{
+          borderColor: isDark ? theme.colors.dark[4] : theme.colors.cyan[2],
+          background: isDark 
+            ? `linear-gradient(135deg, ${theme.colors.dark[6]} 0%, ${theme.colors.dark[7]} 100%)`
+            : `linear-gradient(135deg, ${theme.colors.cyan[0]} 0%, ${theme.white} 100%)`,
+          boxShadow: isDark 
+            ? '0 4px 12px rgba(0,0,0,0.3)'
+            : '0 4px 12px rgba(6, 182, 212, 0.08)',
+        }}
+      >
+        <Stack gap="lg">
+          <div>
+            <Group mb="xs">
+              <IconSparkles size={20} color={theme.colors.cyan[6]} />
+              <Title order={4} c={isDark ? 'gray.1' : 'gray.9'}>Unit Analysis</Title>
+            </Group>
+            <Text size="sm" c="dimmed">
+              Enter a unit to see its properties, dimensions, and conversion factors
+            </Text>
+          </div>
 
-          <UnitAutocomplete
-            placeholder="Start typing to search units (e.g., kg, m/s2, cel)"
+          <TextInput
+            size="md"
+            placeholder="Enter a UCUM unit (e.g., kg, m/s2, cel)"
             value={unit}
-            onChange={setUnit}
-            onUnitSelect={handleUnitSelect}
-            onEnter={handleGetInfo}
-            className={styles.searchInput}
-            leftSection={<IconSearch size={16} />}
-            clearable
-            maxResults={15}
-            description="Interactive search with autocomplete and suggestions. Press Enter to get info."
+            onChange={(e) => {
+              setUnit(e.target.value);
+              setResult(null);
+              setUnitInfo(null);
+              setShowResult(false);
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && handleGetInfo()}
+            leftSection={<IconSearch size={18} />}
+            styles={{
+              input: {
+                borderColor: isDark ? theme.colors.dark[4] : theme.colors.gray[3],
+                backgroundColor: isDark ? theme.colors.dark[7] : theme.white,
+                color: isDark ? theme.colors.gray[1] : theme.colors.gray[9],
+                '&:focus': {
+                  borderColor: theme.colors.cyan[6],
+                  boxShadow: `0 0 0 2px ${theme.colors.cyan[2]}`,
+                },
+              },
+            }}
           />
 
-          <div>
-            <Text size="sm" fw={500} mb="xs" c="dimmed">
-              Popular units:
+          <Paper 
+            p="sm" 
+            radius="md" 
+            style={{
+              backgroundColor: isDark ? theme.colors.dark[5] : theme.colors.gray[0],
+              border: `1px solid ${isDark ? theme.colors.dark[4] : theme.colors.gray[2]}`,
+            }}
+          >
+            <Text size="xs" fw={600} c="dimmed" mb="xs">
+              Common Units
             </Text>
             <Group gap="xs">
-              {EXAMPLE_UNITS.map((exampleUnit) => (
+              {EXAMPLE_UNITS.slice(0, 12).map((example) => (
                 <Badge
-                  key={exampleUnit}
+                  key={example.code}
                   variant="light"
+                  color="cyan"
+                  size="lg"
+                  radius="md"
                   className={styles.exampleBadge}
-                  onClick={() => {
-                    setUnit(exampleUnit);
-                    setResult(null);
-                    handleGetInfo(exampleUnit);
+                  onClick={() => loadExample(example)}
+                  style={{ 
+                    cursor: 'pointer',
+                    backgroundColor: isDark ? theme.colors.cyan[9] : theme.colors.cyan[0],
+                    color: isDark ? theme.colors.cyan[3] : theme.colors.cyan[7],
                   }}
                 >
-                  {exampleUnit}
+                  {example.code}
                 </Badge>
               ))}
             </Group>
-          </div>
+          </Paper>
         </Stack>
       </Card>
 
-      {result?.error && (
-        <Alert color="red" icon={<IconAlertCircle />}>
-          <Stack gap="xs">
-            <Text fw={500}>Failed to get unit information</Text>
-            <Text size="sm" c="dimmed">
-              {typeof result.error === 'string' ? result.error : 'An error occurred while retrieving unit information'}
-            </Text>
-            {unit && (
-              <Text size="xs" c="dimmed">
-                Searched for: <Code>{unit}</Code>
-              </Text>
+      <Transition
+        mounted={showResult && (result?.error || unitInfo?.error)}
+        transition="fade-up"
+        duration={300}
+        timingFunction="ease"
+      >
+        {(transitionStyles) => (
+          <div style={transitionStyles}>
+            {(result?.error || unitInfo?.error) && (
+              <Alert 
+                color="red" 
+                icon={<IconAlertCircle />} 
+                variant="light" 
+                radius="md"
+                styles={{
+                  root: {
+                    backgroundColor: isDark ? theme.colors.red[9] : theme.colors.red[0],
+                    borderColor: isDark ? theme.colors.red[7] : theme.colors.red[2],
+                  },
+                }}
+              >
+                <Text fw={600} size="sm" c={isDark ? 'gray.1' : 'gray.9'}>
+                  {unitInfo?.error && !result?.error ? 'Unit not found' : 'Failed to analyze unit'}
+                </Text>
+                <Text size="xs" mt="xs" c={isDark ? 'gray.3' : 'gray.7'}>
+                  {result?.error || unitInfo?.error}
+                </Text>
+                {unitInfo?.error && !result?.error && (
+                  <Text size="xs" mt="xs" c={isDark ? 'gray.4' : 'gray.6'}>
+                    The unit '{unit}' is not recognized in the UCUM registry. Please check the spelling or try a different unit.
+                  </Text>
+                )}
+              </Alert>
             )}
-          </Stack>
-        </Alert>
-      )}
+          </div>
+        )}
+      </Transition>
 
-      {result?.info && renderUnitInfo(result.info)}
+      <Transition
+        mounted={showResult && result?.info}
+        transition="fade-up"
+        duration={300}
+        timingFunction="ease"
+      >
+        {(transitionStyles) => (
+          <div style={transitionStyles}>
+            {result?.info && renderUnitInfo(result.info, unitInfo)}
+          </div>
+        )}
+      </Transition>
 
-      {result && !result.info && !result.error && (
-        <Alert color="yellow" icon={<IconAlertCircle />}>
-          No information found for unit: <Code>{unit}</Code>
-        </Alert>
-      )}
-
-      <Paper p="md" withBorder className={styles.helpCard}>
+      <Paper 
+        p="lg" 
+        withBorder 
+        radius="md"
+        style={{
+          borderColor: isDark ? theme.colors.dark[4] : theme.colors.gray[2],
+          background: isDark 
+            ? `linear-gradient(135deg, ${theme.colors.dark[7]} 0%, ${theme.colors.dark[8]} 100%)`
+            : `linear-gradient(135deg, ${theme.colors.gray[0]} 0%, ${theme.colors.gray[1]} 100%)`,
+        }}
+      >
         <Stack gap="sm">
-          <Title order={5}>About UCUM Units</Title>
+          <Group>
+            <IconSparkles size={20} color={theme.colors.blue[6]} />
+            <Title order={5} c={isDark ? 'gray.1' : 'gray.9'}>Understanding Unit Analysis</Title>
+          </Group>
           <Text size="sm" c="dimmed">
-            UCUM (Unified Code for Units of Measure) provides a comprehensive system for
-            representing units of measure. Each unit can have various properties:
+            Each UCUM unit can be analyzed to reveal its fundamental properties:
           </Text>
           <ul className={styles.helpList}>
             <li>
-              <strong>Metric:</strong> Units based on the metric system
+              <strong>Dimensions:</strong> Physical quantities like mass, length, time
             </li>
             <li>
-              <strong>Special:</strong> Units with special conversion rules (like temperature)
+              <strong>Factor:</strong> Conversion factor to base SI units
             </li>
             <li>
-              <strong>Arbitrary:</strong> Units without fixed scale relationships
+              <strong>Offset:</strong> Used for temperature conversions (°C, °F)
             </li>
             <li>
-              <strong>Base Unit:</strong> The fundamental unit in the same dimension
-            </li>
-            <li>
-              <strong>Scale:</strong> Conversion factor to the base unit
+              <strong>Expression:</strong> The canonical form of the unit
             </li>
           </ul>
         </Stack>

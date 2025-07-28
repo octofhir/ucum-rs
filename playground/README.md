@@ -4,11 +4,11 @@ An interactive web-based playground for exploring the UCUM-RS library's capabili
 
 ## Features
 
-- **Validation**: Validate UCUM expressions
-- **Unit Information**: Get detailed information about units
-- **Conversion**: Convert values between compatible units
-- **Arithmetic**: Perform arithmetic operations on units
-- **Interactive UI**: User-friendly interface built with Svelte 5
+The playground provides a simplified, focused interface with three main tools:
+
+- **Validation**: Validate UCUM expressions and get instant feedback
+- **Unit Operations**: Convert values between units and perform arithmetic operations
+- **Unit Explorer**: Look up detailed information about any UCUM unit
 
 ## Getting Started
 
@@ -29,78 +29,69 @@ cd playground
 
 # Install dependencies
 pnpm install
-# or with npm
-npm install
 ```
 
 ### Running the Playground
 
 ```bash
-# Start the development server
-pnpm dev
-# or with npm
+# Start the development server (use npm due to pnpm script execution issues)
 npm run dev
 ```
 
 The playground will be available at http://localhost:6000.
 
-## Usage
+## Usage Guide
 
-### Validating UCUM Expressions
+### 1. Validation Tab
 
-Enter a UCUM expression in the validation input field and click "Validate" to check if it's a valid UCUM expression.
+Validate UCUM expressions to ensure they conform to the specification.
 
-Examples of valid expressions:
-- `kg`
-- `mg/dL`
-- `kg.m/s2`
-- `mm[Hg]`
+**Examples of valid expressions:**
+- `kg` (kilogram)
+- `mg/dL` (milligrams per deciliter)
+- `kg.m/s2` (kilogram meter per second squared)
+- `mm[Hg]` (millimeters of mercury)
 
-### Getting Unit Information
+### 2. Unit Operations Tab
 
-Enter a unit code in the unit information input field and click "Get Info" to see detailed information about the unit, including:
+This tab combines conversion and arithmetic functionality:
 
-- Code
-- Display name
-- Factor
-- Dimensions
-- Property
-- Whether it's a special or arbitrary unit
-
-### Converting Between Units
-
-To convert a value between units:
-
+#### Conversion
+Convert values between compatible units:
 1. Enter the value to convert
-2. Enter the source unit
-3. Enter the target unit
+2. Select or type the source unit
+3. Select or type the target unit
 4. Click "Convert"
 
-The result will show the converted value and indicate whether the conversion was successful.
+**Quick examples:** Mass (kg → g), Temperature (°C → °F), Pressure (mmHg → kPa)
 
-### Performing Arithmetic Operations
+#### Arithmetic
+Perform multiplication and division on units:
+1. Select the operation (× or ÷)
+2. Enter the first unit
+3. Enter the second unit
+4. Click "Calculate"
 
-To perform arithmetic operations on units:
+**Common formulas:** Force × Distance = Energy, Distance ÷ Time = Speed
 
-1. Enter the left unit
-2. Select the operation (multiply, divide)
-3. Enter the right unit
-4. Enter a value (optional)
-5. Click "Calculate"
+### 3. Unit Explorer Tab
 
-The result will show the resulting unit expression and its properties.
+Search and explore detailed information about any unit:
+- Unit code and display name
+- Conversion factor to base units
+- Dimensional analysis
+- Property classification
+- Special unit indicators
+
+## Key Improvements in v0.3.0
+
+- **Simplified UI**: Removed complex widgets and focused on core functionality
+- **Combined Operations**: Merged conversion and arithmetic into a single, intuitive tab
+- **Cleaner Sidebar**: Streamlined status display with essential information only
+- **Better Examples**: More practical, real-world unit conversion examples
+- **Responsive Design**: Improved mobile and tablet experience
 
 ## Development
-
-### Project Structure
-
-- `src/` - Source code
-  - `App.svelte` - Main application component
-  - `lib/` - Utility functions and components
-  - `main.ts` - Entry point
-  - `app.css` - Global styles
-- `public/` - Static assets
-- `vite.config.ts` - Vite configuration
 
 ### Building for Production
 
@@ -112,26 +103,17 @@ wasm-pack build --target web
 # Build the playground
 cd ../playground
 pnpm build
-# or with npm
-npm run build
 ```
 
 The production build will be available in the `dist/` directory.
 
-### Deployment
+### Technology Stack
 
-The playground can be deployed to any static hosting service, such as GitHub Pages, Netlify, or Vercel.
-
-```bash
-# Example: Deploy to GitHub Pages
-pnpm build
-# Then push the dist/ directory to the gh-pages branch
-```
-
-## Contributing
-
-Contributions to the playground are welcome! Please see the main repository's contribution guidelines for more information.
+- React with TypeScript
+- Mantine UI v7
+- WebAssembly (UCUM-RS compiled to WASM)
+- Vite for fast development and building
 
 ## License
 
-MIT OR Apache-2.0
+Apache-2.0

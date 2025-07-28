@@ -3,8 +3,17 @@
 //! This module provides functionality to convert UCUM expressions into human-readable
 //! display names, as specified in the official UCUM test cases.
 
-use crate::ast::{UnitExpr, UnitFactor};
+use crate::ast::{UnitExpr, UnitFactor, OwnedUnitExpr};
 use crate::registry;
+
+/// Helper to extract string from either Symbol or SymbolOwned variants
+fn extract_symbol_str<'a>(expr: &'a UnitExpr<'a>) -> Option<&'a str> {
+    match expr {
+        UnitExpr::Symbol(s) => Some(s),
+        UnitExpr::SymbolOwned(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
 
 /// Generate a human-readable display name for a UCUM expression.
 ///
@@ -14,19 +23,20 @@ use crate::registry;
 /// # Examples
 ///
 /// ```
-/// use octofhir_ucum_core::{parse_expression, generate_display_name};
+/// use octofhir_ucum_core::{parse_expression, generate_display_name_owned};
 ///
 /// let expr = parse_expression("m").unwrap();
-/// let display = generate_display_name(&expr);
+/// let display = generate_display_name_owned(&expr);
 /// assert_eq!(display, "(meter)");
 /// ```
 pub fn generate_display_name(expr: &UnitExpr) -> String {
     match expr {
         UnitExpr::Symbol(symbol) => generate_symbol_display_name(symbol),
+        UnitExpr::SymbolOwned(symbol) => generate_symbol_display_name(symbol),
         UnitExpr::Numeric(value) => generate_numeric_display_name(*value),
         UnitExpr::Power(base, exponent) => {
             // Special case: if base is an empty symbol (unity), display as just the exponent number
-            if let UnitExpr::Symbol(symbol) = base.as_ref() {
+            if let Some(symbol) = extract_symbol_str(base.as_ref()) {
                 if symbol.is_empty() {
                     return format!("{}", exponent);
                 }
@@ -294,6 +304,37 @@ fn get_base_unit_display_name(unit_symbol: &str) -> String {
     }
 }
 
+/// Generate display name for owned AST
+pub fn generate_display_name_owned(expr: &OwnedUnitExpr) -> String {
+    // Convert to borrowed AST and use existing implementation
+    let borrowed = owned_to_borrowed_display(expr);
+    generate_display_name(&borrowed)
+}
+
+/// Convert owned AST to borrowed for display generation
+fn owned_to_borrowed_display(expr: &OwnedUnitExpr) -> UnitExpr {
+    match expr {
+        OwnedUnitExpr::Numeric(v) => UnitExpr::Numeric(*v),
+        OwnedUnitExpr::Symbol(sym) => UnitExpr::SymbolOwned(sym.clone()),
+        OwnedUnitExpr::Product(factors) => {
+            let borrowed_factors: Vec<UnitFactor> = factors.iter().map(|f| UnitFactor {
+                expr: owned_to_borrowed_display(&f.expr),
+                exponent: f.exponent,
+            }).collect();
+            UnitExpr::Product(borrowed_factors)
+        }
+        OwnedUnitExpr::Quotient(num, den) => {
+            UnitExpr::Quotient(
+                Box::new(owned_to_borrowed_display(num)), 
+                Box::new(owned_to_borrowed_display(den))
+            )
+        }
+        OwnedUnitExpr::Power(expr, exp) => {
+            UnitExpr::Power(Box::new(owned_to_borrowed_display(expr)), *exp)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,7 +343,7 @@ mod tests {
     #[test]
     fn test_basic_units() {
         let expr = parse_expression("m").unwrap();
-        let display = generate_display_name(&expr);
+        let display = generate_display_name_owned(&expr);
         println!("Display for 'm': {}", display);
 
         // Debug: Check what's in the registry
@@ -331,7 +372,7 @@ mod tests {
     #[test]
     fn test_prefixed_units() {
         let expr = parse_expression("mm").unwrap();
-        let display = generate_display_name(&expr);
+        let display = generate_display_name_owned(&expr);
         println!("Display for 'mm': {}", display);
 
         // Debug: Check if "mm" is found directly in registry
@@ -367,31 +408,31 @@ mod tests {
     #[test]
     fn test_power_expressions() {
         let expr = parse_expression("rad2").unwrap();
-        let display = generate_display_name(&expr);
+        let display = generate_display_name_owned(&expr);
         println!("Display for 'rad2': {}", display);
 
         // Test other power expressions
         let expr2 = parse_expression("m3").unwrap();
-        let display2 = generate_display_name(&expr2);
+        let display2 = generate_display_name_owned(&expr2);
         println!("Display for 'm3': {}", display2);
     }
 
     #[test]
     fn test_product_expressions() {
         let expr = parse_expression("m3.kg-1.s-2").unwrap();
-        let display = generate_display_name(&expr);
+        let display = generate_display_name_owned(&expr);
         println!("Display for 'm3.kg-1.s-2': {}", display);
         println!("Parsed expression: {:?}", expr);
 
         // Test simpler product
         let expr2 = parse_expression("kg.m").unwrap();
-        let display2 = generate_display_name(&expr2);
+        let display2 = generate_display_name_owned(&expr2);
         println!("Display for 'kg.m': {}", display2);
         println!("Parsed expression: {:?}", expr2);
 
         // Test another complex product
         let expr3 = parse_expression("kg-1").unwrap();
-        let display3 = generate_display_name(&expr3);
+        let display3 = generate_display_name_owned(&expr3);
         println!("Display for 'kg-1': {}", display3);
         println!("Parsed expression: {:?}", expr3);
     }
@@ -399,19 +440,19 @@ mod tests {
     #[test]
     fn test_quotient_expressions() {
         let expr = parse_expression("N/A2").unwrap();
-        let display = generate_display_name(&expr);
+        let display = generate_display_name_owned(&expr);
         println!("Display for 'N/A2': {}", display);
 
         // Test simpler quotient
         let expr2 = parse_expression("m/s").unwrap();
-        let display2 = generate_display_name(&expr2);
+        let display2 = generate_display_name_owned(&expr2);
         println!("Display for 'm/s': {}", display2);
     }
 
     #[test]
     fn test_numeric_expressions() {
         let expr = parse_expression("10*23").unwrap();
-        let display = generate_display_name(&expr);
+        let display = generate_display_name_owned(&expr);
         println!("Display for '10*23': {}", display);
     }
 
@@ -419,19 +460,19 @@ mod tests {
     fn test_single_factor_parsing() {
         // Test parsing "kg-1" as a single factor
         let expr = parse_expression("kg-1").unwrap();
-        let display = generate_display_name(&expr);
+        let display = generate_display_name_owned(&expr);
         println!("Display for 'kg-1' (single): {}", display);
         println!("Parsed expression: {:?}", expr);
 
         // Test parsing "m3" as a single factor
         let expr2 = parse_expression("m3").unwrap();
-        let display2 = generate_display_name(&expr2);
+        let display2 = generate_display_name_owned(&expr2);
         println!("Display for 'm3' (single): {}", display2);
         println!("Parsed expression: {:?}", expr2);
 
         // Test parsing "s-2" as a single factor
         let expr3 = parse_expression("s-2").unwrap();
-        let display3 = generate_display_name(&expr3);
+        let display3 = generate_display_name_owned(&expr3);
         println!("Display for 's-2' (single): {}", display3);
         println!("Parsed expression: {:?}", expr3);
     }
@@ -444,19 +485,19 @@ mod tests {
         match parse_expression(expr_str) {
             Ok(expr) => {
                 println!("[DEBUG_LOG] Parsed expression: {:?}", expr);
-                let display = generate_display_name(&expr);
+                let display = generate_display_name_owned(&expr);
                 println!("[DEBUG_LOG] Display: '{}'", display);
 
                 // Test individual components
                 if let Ok(pi_expr) = parse_expression("[pi]") {
                     println!("[DEBUG_LOG] [pi] parsed as: {:?}", pi_expr);
-                    let pi_display = generate_display_name(&pi_expr);
+                    let pi_display = generate_display_name_owned(&pi_expr);
                     println!("[DEBUG_LOG] [pi] display: '{}'", pi_display);
                 }
 
                 if let Ok(num_expr) = parse_expression("4") {
                     println!("[DEBUG_LOG] 4 parsed as: {:?}", num_expr);
-                    let num_display = generate_display_name(&num_expr);
+                    let num_display = generate_display_name_owned(&num_expr);
                     println!("[DEBUG_LOG] 4 display: '{}'", num_display);
                 }
             }
@@ -497,7 +538,7 @@ mod tests {
 
             match parse_expression(unit) {
                 Ok(expr) => {
-                    let display = generate_display_name(&expr);
+                    let display = generate_display_name_owned(&expr);
                     println!(
                         "[DEBUG_LOG] Unit: '{}' -> Display: '{}' (Expected: '{}')",
                         unit, display, expected

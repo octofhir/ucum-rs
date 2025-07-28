@@ -1,11 +1,11 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use octofhir_ucum_core::{evaluate, parse_expression};
+use octofhir_ucum_core::{evaluate_owned, parse_expression};
 
 fn eval_expression(
     expr: &str,
 ) -> Result<octofhir_ucum_core::EvalResult, octofhir_ucum_core::UcumError> {
     let ast = parse_expression(expr)?;
-    evaluate(&ast)
+    evaluate_owned(&ast)
 }
 
 fn bench_simple_unit_evaluation(c: &mut Criterion) {

@@ -1,22 +1,22 @@
-use octofhir_ucum_core::{EvalResult, UnitExpr, UnitFactor, evaluate};
+use octofhir_ucum_core::{EvalResult, OwnedUnitExpr, OwnedUnitFactor, evaluate_owned};
 use octofhir_ucum_core::precision::{NumericOps, from_f64, to_f64};
 
-fn eval_ratio(expr: UnitExpr) -> f64 {
-    to_f64(evaluate(&expr).unwrap().factor)
+fn eval_ratio(expr: OwnedUnitExpr) -> f64 {
+    to_f64(evaluate_owned(&expr).unwrap().factor)
 }
 
-fn eval_expr(expr: UnitExpr) -> EvalResult {
-    evaluate(&expr).unwrap()
+fn eval_expr(expr: OwnedUnitExpr) -> EvalResult {
+    evaluate_owned(&expr).unwrap()
 }
 
-fn product_expr(value: f64, unit: &str) -> UnitExpr {
-    UnitExpr::Product(vec![
-        UnitFactor {
-            expr: UnitExpr::Numeric(value),
+fn product_expr(value: f64, unit: &str) -> OwnedUnitExpr {
+    OwnedUnitExpr::Product(vec![
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Numeric(value),
             exponent: 1,
         },
-        UnitFactor {
-            expr: UnitExpr::Symbol(unit.into()),
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Symbol(unit.into()),
             exponent: 1,
         },
     ])
@@ -25,13 +25,13 @@ fn product_expr(value: f64, unit: &str) -> UnitExpr {
 #[test]
 fn test_decibel() {
     // 20 dB should equal ratio 10^2 = 100
-    let expr = UnitExpr::Product(vec![
-        UnitFactor {
-            expr: UnitExpr::Numeric(20.0),
+    let expr = OwnedUnitExpr::Product(vec![
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Numeric(20.0),
             exponent: 1,
         },
-        UnitFactor {
-            expr: UnitExpr::Symbol("dB".into()),
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Symbol("dB".into()),
             exponent: 1,
         },
     ]);
@@ -42,13 +42,13 @@ fn test_decibel() {
 #[test]
 fn test_neper() {
     // 1 Np == e^1
-    let expr = UnitExpr::Product(vec![
-        UnitFactor {
-            expr: UnitExpr::Numeric(1.0),
+    let expr = OwnedUnitExpr::Product(vec![
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Numeric(1.0),
             exponent: 1,
         },
-        UnitFactor {
-            expr: UnitExpr::Symbol("Np".into()),
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Symbol("Np".into()),
             exponent: 1,
         },
     ]);
@@ -59,13 +59,13 @@ fn test_neper() {
 #[test]
 fn test_prism_diopter() {
     // 100 [p'diop] == tan(1 rad) ≈ 1.5574
-    let expr = UnitExpr::Product(vec![
-        UnitFactor {
-            expr: UnitExpr::Numeric(100.0),
+    let expr = OwnedUnitExpr::Product(vec![
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Numeric(100.0),
             exponent: 1,
         },
-        UnitFactor {
-            expr: UnitExpr::Symbol("[p'diop]".into()),
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Symbol("[p'diop]".into()),
             exponent: 1,
         },
     ]);
@@ -174,17 +174,17 @@ fn test_special_unit_prefixes() {
 #[test]
 fn test_special_unit_combinations() {
     // Test combining special units with other units
-    let expr = UnitExpr::Product(vec![
-        UnitFactor {
-            expr: UnitExpr::Numeric(10.0),
+    let expr = OwnedUnitExpr::Product(vec![
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Numeric(10.0),
             exponent: 1,
         },
-        UnitFactor {
-            expr: UnitExpr::Symbol("dB".into()),
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Symbol("dB".into()),
             exponent: 1,
         },
-        UnitFactor {
-            expr: UnitExpr::Symbol("m".into()),
+        OwnedUnitFactor {
+            expr: OwnedUnitExpr::Symbol("m".into()),
             exponent: -1,
         },
     ]);

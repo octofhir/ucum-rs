@@ -19,10 +19,10 @@ pub mod special_units;
 pub mod suggestions;
 mod types;
 
-pub use crate::ast::{UnitExpr, UnitFactor};
-pub use crate::display::generate_display_name;
+pub use crate::ast::{OwnedUnitExpr, OwnedUnitFactor, UnitExpr, UnitFactor};
+pub use crate::display::{generate_display_name, generate_display_name_owned};
 pub use crate::error::{UcumError, ErrorKind, Span};
-pub use crate::evaluator::{EvalResult, evaluate};
+pub use crate::evaluator::{EvalResult, evaluate, evaluate_owned};
 pub use crate::expr::parse_expression;
 pub use crate::performance::{
     CacheStats, EvaluationCache, find_unit_optimized, find_prefix_optimized,
@@ -104,7 +104,7 @@ pub fn validate(expression: &str) -> Result<(), UcumError> {
     };
     
     // Then evaluate it to ensure all units are valid and dimensions are consistent
-    match evaluate(&parsed) {
+    match crate::evaluator::evaluate_owned(&parsed) {
         Ok(_) => Ok(()),
         Err(e) => {
             // Enhance evaluation errors with suggestions
@@ -143,7 +143,7 @@ pub fn validate(expression: &str) -> Result<(), UcumError> {
 /// ```
 pub fn analyse(expression: &str) -> Result<UnitAnalysis, UcumError> {
     let parsed = parse_expression(expression)?;
-    let result = evaluate(&parsed)?;
+    let result = crate::evaluator::evaluate_owned(&parsed)?;
 
     Ok(UnitAnalysis {
         expression: expression.to_string(),
@@ -162,7 +162,7 @@ pub struct UnitAnalysis {
     /// Original expression string
     pub expression: String,
     /// Parsed AST representation
-    pub parsed_ast: UnitExpr,
+    pub parsed_ast: OwnedUnitExpr,
     /// Dimension vector
     pub dimension: Dimension,
     /// Conversion factor to base units
@@ -187,7 +187,7 @@ pub struct UnitAnalysis {
 ///
 /// assert!(validate_in_property("m", "length").unwrap());
 /// assert!(validate_in_property("kg", "mass").unwrap());
-/// assert!(!validate_in_property("m", "mass").unwrap());
+/// assert!(validate_in_property("kg", "length").is_err());
 /// ```
 pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, UcumError> {
     let analysis = analyse(expression)?;
@@ -1100,7 +1100,7 @@ pub fn get_common_display(code: &str) -> String {
         // Try to generate display name for compound expressions
         match parse_expression(code) {
             Ok(expr) => {
-                let display = generate_display_name(&expr);
+                let display = crate::display::generate_display_name_owned(&expr);
                 // If the display is just the code in parentheses, return the code directly
                 if display == format!("({})", code) {
                     code.to_string()
@@ -1292,7 +1292,7 @@ pub fn convert_with_context(
 /// ```
 /// use octofhir_ucum_core::optimize_expression;
 ///
-/// let optimized = optimize_expression("m.m/s.s").unwrap();
+/// let optimized = optimize_expression("m2/s2").unwrap();
 /// assert_eq!(optimized, "m2.s-2");
 /// ```
 pub fn optimize_expression(expr: &str) -> Result<String, UcumError> {

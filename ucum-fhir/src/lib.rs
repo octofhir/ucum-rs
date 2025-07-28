@@ -30,7 +30,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use octofhir_ucum_core::{Quantity as UcumQuantity, UcumError, evaluate, parse_expression, precision::to_f64};
+use octofhir_ucum_core::{Quantity as UcumQuantity, UcumError, evaluate_owned, parse_expression, precision::to_f64};
 use thiserror::Error;
 
 #[cfg(feature = "serde")]
@@ -225,8 +225,8 @@ pub fn convert_quantity(
 ) -> Result<FhirQuantity, FhirError> {
     let ucum_quantity = quantity.to_ucum_quantity()?;
     let target_expr = parse_expression(target_unit)?;
-    let source_eval = evaluate(&ucum_quantity.unit)?;
-    let target_eval = evaluate(&target_expr)?;
+    let source_eval = evaluate_owned(&ucum_quantity.unit)?;
+    let target_eval = evaluate_owned(&target_expr)?;
 
     if source_eval.dim != target_eval.dim {
         return Err(FhirError::InvalidCode(format!(
@@ -253,8 +253,8 @@ pub fn convert_quantity(
 pub fn are_equivalent(a: &FhirQuantity, b: &FhirQuantity) -> Result<bool, FhirError> {
     let a_ucum = a.to_ucum_quantity()?;
     let b_ucum = b.to_ucum_quantity()?;
-    let a_eval = evaluate(&a_ucum.unit)?;
-    let b_eval = evaluate(&b_ucum.unit)?;
+    let a_eval = evaluate_owned(&a_ucum.unit)?;
+    let b_eval = evaluate_owned(&b_ucum.unit)?;
 
     if a_eval.dim != b_eval.dim {
         return Err(FhirError::InvalidCode(format!(

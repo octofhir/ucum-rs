@@ -265,6 +265,7 @@ impl SpecialUnitHandler for TemperatureHandler {
 /// - Other logarithmic scales commonly used in science
 pub struct LogarithmicHandler {
     /// Reference values for different logarithmic scales
+    #[allow(dead_code)]
     reference_values: HashMap<String, Number>,
 }
 
@@ -308,6 +309,7 @@ impl LogarithmicHandler {
     }
 
     /// Get reference value for pH-like units
+    #[allow(dead_code)]
     fn get_reference_value(&self, unit_code: &str) -> Number {
         self.reference_values.get(unit_code).copied().unwrap_or(Number::one())
     }

@@ -1,11 +1,11 @@
-use octofhir_ucum_core::{UnitExpr, parse_expression, ErrorKind};
+use octofhir_ucum_core::{OwnedUnitExpr, parse_expression, ErrorKind};
 
 #[test]
 fn multiple_slash_allowed() {
     // Multiple slashes should be allowed per UCUM §7.4 (left-to-right evaluation)
     let result = parse_expression("kg/m/s").unwrap();
     // Should parse as ((kg/m)/s)
-    assert!(matches!(result, UnitExpr::Quotient(_, _)));
+    assert!(matches!(result, OwnedUnitExpr::Quotient(_, _)));
 }
 
 #[test]
