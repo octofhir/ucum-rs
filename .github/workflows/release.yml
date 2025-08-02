@@ -40,13 +40,14 @@ jobs:
         run: |
           wasm-pack build --target web --features wasm
 
-      - name: Update package.json version
+      - name: Update package.json version and name
         run: |
           cd pkg
-          # Update version to match Cargo.toml
+          # Update version and ensure correct package name
           node -e "
             const pkg = require('./package.json');
             pkg.version = '${{ steps.get_version.outputs.VERSION }}';
+            pkg.name = '@octofhir/ucum-wasm';
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));
           "
 
