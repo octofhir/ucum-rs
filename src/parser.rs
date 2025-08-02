@@ -696,6 +696,36 @@ impl<'a> OptimizedParser<'a> {
         // Quick pre-validation
         let input = self.tokenizer.input;
 
+        // Check for invalid characters (but allow them inside annotations)
+        let mut in_annotation = false;
+        for (pos, ch) in input.char_indices() {
+            if ch == '{' {
+                in_annotation = true;
+                continue;
+            } else if ch == '}' {
+                in_annotation = false;
+                continue;
+            }
+            
+            if !in_annotation {
+                if ch.is_ascii() {
+                    let ch_class = CHAR_CLASS[ch as u8 as usize];
+                    if matches!(ch_class, CharClass::Invalid) && !ch.is_ascii_whitespace() {
+                        return Err(UcumError::invalid_expression(&format!(
+                            "Invalid character '{}' at position {}",
+                            ch, pos
+                        )));
+                    }
+                } else if ch != 'µ' {
+                    // Allow µ (micro) as it's handled specially
+                    return Err(UcumError::invalid_expression(&format!(
+                        "Invalid non-ASCII character '{}' at position {}",
+                        ch, pos
+                    )));
+                }
+            }
+        }
+
         // Check for % in wrong position
         if let Some(pos) = input.find('%') {
             if input != "%" {
