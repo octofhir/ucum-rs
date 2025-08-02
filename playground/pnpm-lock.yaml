@@ -24,8 +24,8 @@ importers:
         specifier: ^8.2.1
         version: 8.2.1(@mantine/core@8.2.1(@mantine/hooks@8.2.1(react@19.1.0))(@types/react@19.1.8)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(@mantine/hooks@8.2.1(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@octofhir/ucum-wasm':
-        specifier: file:../ucum-wasm/pkg
-        version: file:../ucum-wasm/pkg
+        specifier: file:../pkg
+        version: file:../pkg
       '@tabler/icons-react':
         specifier: 3.34.1
         version: 3.34.1(react@19.1.0)
@@ -451,8 +451,8 @@ packages:
     peerDependencies:
       react: ^18.x || ^19.x
 
-  '@octofhir/ucum-wasm@file:../ucum-wasm/pkg':
-    resolution: {directory: ../ucum-wasm/pkg, type: directory}
+  '@octofhir/ucum-wasm@file:../pkg':
+    resolution: {directory: ../pkg, type: directory}
 
   '@reduxjs/toolkit@2.8.2':
     resolution: {integrity: sha512-MYlOhQ0sLdw4ud48FoC5w0dH9VfWQjtCjreKwYTT3l+r427qYC5Y8PihNutepr8XrNaBUDQo9khWUwQxZaqt5A==}
@@ -1438,7 +1438,7 @@ snapshots:
     dependencies:
       react: 19.1.0
 
-  '@octofhir/ucum-wasm@file:../ucum-wasm/pkg': {}
+  '@octofhir/ucum-wasm@file:../pkg': {}
 
   '@reduxjs/toolkit@2.8.2(react-redux@9.2.0(@types/react@19.1.8)(react@19.1.0)(redux@5.0.1))(react@19.1.0)':
     dependencies:

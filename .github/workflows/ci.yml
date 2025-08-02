@@ -15,17 +15,62 @@ jobs:
         toolchain: [stable]
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: ${{ matrix.toolchain }}
           override: true
-      - name: Build
-        run: cargo build --all --verbose
-      - name: Test
-        run: cargo test --all --verbose
+      
+      - name: Build (default features)
+        run: cargo build --verbose
+      
+      - name: Build (all features)
+        run: cargo build --all-features --verbose
+      
+      - name: Build (CLI only)
+        run: cargo build --features cli --verbose
+      
+      - name: Build (WASM only)
+        run: cargo build --features wasm --verbose
+      
+      - name: Build (FHIR only)
+        run: cargo build --features fhir --verbose
+      
+      - name: Test (all features)
+        run: cargo test --all-features --verbose
+      
       - name: Lint (clippy)
-        run: cargo clippy --all -- -D warnings || echo "it ok current"
+        run: cargo clippy --all-features -- -D warnings || echo "it ok current"
+      
       - name: Format (rustfmt)
-        run: cargo fmt --all -- --check || echo "it ok current"
+        run: cargo fmt -- --check || echo "it ok current"
+      
       - name: Build docs
-        run: cargo doc --no-deps --all 
+        run: cargo doc --no-deps --all-features
+      
+      - name: Run benchmarks (smoke test)
+        run: cargo bench --no-run
+
+  wasm-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      
+      - name: Build WASM
+        run: wasm-pack build --target web --features wasm
+      
+      - name: Test WASM build
+        run: |
+          # Verify the build artifacts exist
+          ls -la pkg/
+          test -f pkg/package.json
+          test -f pkg/octofhir_ucum_bg.wasm
+          test -f pkg/octofhir_ucum.js

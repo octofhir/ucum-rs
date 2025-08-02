@@ -5,7 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'playground/**'
-      - 'ucum-wasm/**'
+      - 'src/wasm.rs'
       - '.github/workflows/deploy-playground.yml'
   workflow_dispatch:
 
@@ -37,8 +37,7 @@ jobs:
 
       - name: Build WASM package
         run: |
-          cd ucum-wasm
-          wasm-pack build --target web
+          wasm-pack build --target web --features wasm
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

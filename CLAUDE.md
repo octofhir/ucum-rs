@@ -12,10 +12,10 @@ cargo build --all
 # Build with optimizations
 cargo build --release --all
 
-# Build specific crate
-cargo build -p octofhir-ucum-core
-cargo build -p octofhir-ucum-cli
-cargo build -p octofhir-ucum-fhir
+# Build with specific features
+cargo build --features cli
+cargo build --features wasm
+cargo build --features fhir
 ```
 
 ### Testing
@@ -27,11 +27,11 @@ cargo test --all
 cargo test --all -- --nocapture
 
 # Run specific test suite
-cargo test -p octofhir-ucum-core
+cargo test
 cargo test official_tests  # Official UCUM conformance tests
 
 # Run benchmarks
-cargo bench -p octofhir-ucum-core
+cargo bench
 ```
 
 ### Linting and Formatting
@@ -52,14 +52,13 @@ cargo doc --open --no-deps --all
 ### WASM Build
 ```bash
 # Build WASM package
-cd ucum-wasm
-wasm-pack build --target web
+wasm-pack build --target web --features wasm
 ```
 
 ### CLI Usage
 ```bash
 # Install CLI
-cargo install --path ucum-cli
+cargo install --path . --features cli
 
 # CLI commands
 octofhir-ucum validate "mg/dL"
@@ -83,24 +82,24 @@ npm run dev  # Runs on http://localhost:6000
 ### Core Architecture
 The UCUM-RS library implements a zero-copy parsing architecture for performance:
 
-1. **Parser** (`ucum-core/src/parser.rs`):
+1. **Parser** (`src/parser.rs`):
    - Uses `nom` for zero-copy parsing
    - Dual AST architecture: `UnitExpr<'a>` (borrows) and `OwnedUnitExpr` (owns)
    - Lazy Unicode normalization (only when µ detected)
    - Fast pattern validation with single-pass scanning
 
-2. **Evaluator** (`ucum-core/src/evaluator.rs`):
+2. **Evaluator** (`src/evaluator.rs`):
    - Traverses AST to compute canonical form, dimensions, and conversion factors
    - Handles special units (temperature, logarithmic, arbitrary)
    - Uses HashMap-based prefix lookup for O(1) performance
    - Supports both zero-copy and owned evaluation paths
 
-3. **Registry** (`ucum-core/src/registry.rs`):
+3. **Registry** (`src/registry.rs`):
    - Generated at compile-time from `ucum-essence.xml` via `build.rs`
    - Contains all UCUM units, prefixes, and their properties
    - Provides O(1) lookups for units and prefixes
 
-4. **Special Units** (`ucum-core/src/special_units.rs`):
+4. **Special Units** (`src/special_units.rs`):
    - Extensible handler system for temperature, logarithmic, and arbitrary units
    - Context-aware conversions for units with offsets
 
@@ -129,10 +128,11 @@ The UCUM-RS library implements a zero-copy parsing architecture for performance:
 
 ### Multi-Crate Workspace Structure
 
-- **octofhir-ucum-core**: Core parsing, evaluation, and registry functionality
-- **octofhir-ucum-cli**: Command-line interface binary
-- **octofhir-ucum-fhir**: FHIR Quantity data type integration
-- **octofhir-ucum-wasm**: WebAssembly bindings for browser/Node.js
+- **octofhir-ucum**: Single crate with feature flags:
+  - Core functionality (default)
+  - `cli`: Command-line interface binary
+  - `fhir`: FHIR Quantity data type integration
+  - `wasm`: WebAssembly bindings for browser/Node.js
 - **ucum-fuzz**: Fuzzing infrastructure (not published)
 
 ### Performance Characteristics
