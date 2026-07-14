@@ -737,7 +737,7 @@ pub fn search_units_fuzzy(query: &str, threshold: i64) -> Vec<(&'static UnitReco
     }
 
     // Sort by score (descending - best matches first)
-    results.sort_by(|a, b| b.1.cmp(&a.1));
+    results.sort_by_key(|a| std::cmp::Reverse(a.1));
 
     results
 }
@@ -1141,11 +1141,10 @@ pub fn get_common_display(code: &str) -> String {
 
                 if let (Some(prefix), Some(base_unit)) =
                     (find_prefix(prefix_part), find_unit(unit_part))
+                    && base_unit.code == unit_part
                 {
-                    if base_unit.code == unit_part {
-                        // Construct prefixed display name
-                        return format!("{}{}", prefix.display_name, base_unit.display_name);
-                    }
+                    // Construct prefixed display name
+                    return format!("{}{}", prefix.display_name, base_unit.display_name);
                 }
             }
         }
@@ -1745,10 +1744,10 @@ impl MeasurementContext {
 
         // Check preferred units for dimensional compatibility
         for preferred in &self.preferred_units {
-            if let Ok(pref_analysis) = analyse(preferred) {
-                if pref_analysis.dimension == analysis.dimension {
-                    suggestions.push(preferred.clone());
-                }
+            if let Ok(pref_analysis) = analyse(preferred)
+                && pref_analysis.dimension == analysis.dimension
+            {
+                suggestions.push(preferred.clone());
             }
         }
 

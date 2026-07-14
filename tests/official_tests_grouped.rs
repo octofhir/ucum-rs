@@ -112,23 +112,25 @@ fn parse_xml_test_file(file_path: &str) -> Result<Vec<TestCase>, Box<dyn std::er
             continue;
         }
 
-        if in_validation_section && trimmed.starts_with("<case") && trimmed.contains("id=") {
-            if let (Some(id), Some(unit)) = (
+        if in_validation_section
+            && trimmed.starts_with("<case")
+            && trimmed.contains("id=")
+            && let (Some(id), Some(unit)) = (
                 extract_attribute(trimmed, "id"),
                 extract_attribute(trimmed, "unit"),
-            ) {
-                let valid = extract_attribute(trimmed, "valid")
-                    .map(|v| v == "true")
-                    .unwrap_or(false);
-                let reason = extract_attribute(trimmed, "reason");
+            )
+        {
+            let valid = extract_attribute(trimmed, "valid")
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            let reason = extract_attribute(trimmed, "reason");
 
-                test_cases.push(TestCase {
-                    id,
-                    unit,
-                    valid,
-                    reason,
-                });
-            }
+            test_cases.push(TestCase {
+                id,
+                unit,
+                valid,
+                reason,
+            });
         }
     }
 
@@ -166,14 +168,15 @@ fn parse_display_name_tests(
             continue;
         }
 
-        if in_display_section && trimmed.starts_with("<case") {
-            if let (Some(id), Some(unit), Some(display)) = (
+        if in_display_section
+            && trimmed.starts_with("<case")
+            && let (Some(id), Some(unit), Some(display)) = (
                 extract_attribute(trimmed, "id"),
                 extract_attribute(trimmed, "unit"),
                 extract_attribute(trimmed, "display"),
-            ) {
-                test_cases.push(DisplayNameTest { id, unit, display });
-            }
+            )
+        {
+            test_cases.push(DisplayNameTest { id, unit, display });
         }
     }
 
@@ -200,26 +203,24 @@ fn parse_conversion_tests(
             continue;
         }
 
-        if in_conversion_section && trimmed.starts_with("<case") {
-            if let (Some(id), Some(value_str), Some(src_unit), Some(dst_unit), Some(outcome_str)) = (
+        if in_conversion_section
+            && trimmed.starts_with("<case")
+            && let (Some(id), Some(value_str), Some(src_unit), Some(dst_unit), Some(outcome_str)) = (
                 extract_attribute(trimmed, "id"),
                 extract_attribute(trimmed, "value"),
                 extract_attribute(trimmed, "srcUnit"),
                 extract_attribute(trimmed, "dstUnit"),
                 extract_attribute(trimmed, "outcome"),
-            ) {
-                if let (Ok(value), Ok(outcome)) =
-                    (value_str.parse::<f64>(), outcome_str.parse::<f64>())
-                {
-                    test_cases.push(ConversionTest {
-                        id,
-                        value: from_f64(value),
-                        source_unit: src_unit,
-                        target_unit: dst_unit,
-                        outcome: from_f64(outcome),
-                    });
-                }
-            }
+            )
+            && let (Ok(value), Ok(outcome)) = (value_str.parse::<f64>(), outcome_str.parse::<f64>())
+        {
+            test_cases.push(ConversionTest {
+                id,
+                value: from_f64(value),
+                source_unit: src_unit,
+                target_unit: dst_unit,
+                outcome: from_f64(outcome),
+            });
         }
     }
 
@@ -246,8 +247,9 @@ fn parse_multiplication_tests(
             continue;
         }
 
-        if in_multiplication_section && trimmed.starts_with("<case") {
-            if let (
+        if in_multiplication_section
+            && trimmed.starts_with("<case")
+            && let (
                 Some(id),
                 Some(v1_str),
                 Some(u1),
@@ -263,23 +265,22 @@ fn parse_multiplication_tests(
                 extract_attribute(trimmed, "u2"),
                 extract_attribute(trimmed, "vRes"),
                 extract_attribute(trimmed, "uRes"),
-            ) {
-                if let (Ok(v1), Ok(v2), Ok(v_res)) = (
-                    v1_str.parse::<f64>(),
-                    v2_str.parse::<f64>(),
-                    v_res_str.parse::<f64>(),
-                ) {
-                    test_cases.push(MultiplicationTest {
-                        id,
-                        v1: from_f64(v1),
-                        u1,
-                        v2: from_f64(v2),
-                        u2,
-                        v_res: from_f64(v_res),
-                        u_res,
-                    });
-                }
-            }
+            )
+            && let (Ok(v1), Ok(v2), Ok(v_res)) = (
+                v1_str.parse::<f64>(),
+                v2_str.parse::<f64>(),
+                v_res_str.parse::<f64>(),
+            )
+        {
+            test_cases.push(MultiplicationTest {
+                id,
+                v1: from_f64(v1),
+                u1,
+                v2: from_f64(v2),
+                u2,
+                v_res: from_f64(v_res),
+                u_res,
+            });
         }
     }
 
@@ -304,8 +305,9 @@ fn parse_division_tests(file_path: &str) -> Result<Vec<DivisionTest>, Box<dyn st
             continue;
         }
 
-        if in_division_section && trimmed.starts_with("<case") {
-            if let (
+        if in_division_section
+            && trimmed.starts_with("<case")
+            && let (
                 Some(id),
                 Some(v1_str),
                 Some(u1),
@@ -321,23 +323,22 @@ fn parse_division_tests(file_path: &str) -> Result<Vec<DivisionTest>, Box<dyn st
                 extract_attribute(trimmed, "u2"),
                 extract_attribute(trimmed, "vRes"),
                 extract_attribute(trimmed, "uRes"),
-            ) {
-                if let (Ok(v1), Ok(v2), Ok(v_res)) = (
-                    v1_str.parse::<f64>(),
-                    v2_str.parse::<f64>(),
-                    v_res_str.parse::<f64>(),
-                ) {
-                    test_cases.push(DivisionTest {
-                        id,
-                        v1: from_f64(v1),
-                        u1,
-                        v2: from_f64(v2),
-                        u2,
-                        v_res: from_f64(v_res),
-                        u_res,
-                    });
-                }
-            }
+            )
+            && let (Ok(v1), Ok(v2), Ok(v_res)) = (
+                v1_str.parse::<f64>(),
+                v2_str.parse::<f64>(),
+                v_res_str.parse::<f64>(),
+            )
+        {
+            test_cases.push(DivisionTest {
+                id,
+                v1: from_f64(v1),
+                u1,
+                v2: from_f64(v2),
+                u2,
+                v_res: from_f64(v_res),
+                u_res,
+            });
         }
     }
 

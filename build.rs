@@ -288,10 +288,8 @@ fn main() {
                             // the dimension directly. L references l, which references dm3 (cubic decimeter).
                             // We need to explicitly set the dimension to L^3 here to ensure proper
                             // dimensional analysis, especially for arbitrary unit conversions.
-                            "L" | "l" => {
-                                if dim == [0i8; 7] {
-                                    dim[1] = 3; // L^3 for volume
-                                }
+                            "L" | "l" if dim == [0i8; 7] => {
+                                dim[1] = 3; // L^3 for volume
                             }
                             _ => {}
                         }
@@ -387,15 +385,15 @@ fn main() {
                             }
                         }
                         // Skip optional '*' or '^' after numbers
-                        if let Some(&next_ch) = chars.peek() {
-                            if next_ch == '*' || next_ch == '^' {
+                        if let Some(&next_ch) = chars.peek()
+                            && (next_ch == '*' || next_ch == '^')
+                        {
+                            chars.next();
+                            // Skip optional '-' after '^' or '*'
+                            if let Some(&minus_ch) = chars.peek()
+                                && minus_ch == '-'
+                            {
                                 chars.next();
-                                // Skip optional '-' after '^' or '*'
-                                if let Some(&minus_ch) = chars.peek() {
-                                    if minus_ch == '-' {
-                                        chars.next();
-                                    }
-                                }
                             }
                         }
                     }
@@ -429,10 +427,10 @@ fn main() {
                         }
                     }
                     // Skip optional dot after bracket
-                    if let Some(&dot_ch) = chars.peek() {
-                        if dot_ch == '.' {
-                            chars.next();
-                        }
+                    if let Some(&dot_ch) = chars.peek()
+                        && dot_ch == '.'
+                    {
+                        chars.next();
                     }
                 }
                 // Keep other characters
@@ -574,15 +572,15 @@ fn main() {
         }
 
         // Handle power-of-ten notation
-        if let Some(rest) = unit_ref.strip_prefix("10^") {
-            if let Ok(exp) = rest.parse::<i32>() {
-                return 10f64.powi(exp);
-            }
+        if let Some(rest) = unit_ref.strip_prefix("10^")
+            && let Ok(exp) = rest.parse::<i32>()
+        {
+            return 10f64.powi(exp);
         }
-        if let Some(rest) = unit_ref.strip_prefix("10*-") {
-            if let Ok(exp) = rest.parse::<i32>() {
-                return 10f64.powi(-exp);
-            }
+        if let Some(rest) = unit_ref.strip_prefix("10*-")
+            && let Ok(exp) = rest.parse::<i32>()
+        {
+            return 10f64.powi(-exp);
         }
 
         // Handle division expressions like "m/3937"
@@ -929,20 +927,20 @@ fn main() {
 /// don’t yet support.
 fn parse_factor(text: &str) -> f64 {
     let txt = text.trim();
-    if let Some(rest) = txt.strip_prefix("10^") {
-        if let Ok(exp) = rest.parse::<i32>() {
-            return 10f64.powi(exp);
-        }
+    if let Some(rest) = txt.strip_prefix("10^")
+        && let Ok(exp) = rest.parse::<i32>()
+    {
+        return 10f64.powi(exp);
     }
     // Simple numeric literal
     if let Ok(n) = txt.parse::<f64>() {
         return n;
     }
     // 10*-n → 10^(−n)
-    if let Some(rest) = txt.strip_prefix("10*-") {
-        if let Ok(exp) = rest.parse::<i32>() {
-            return 10f64.powi(-exp);
-        }
+    if let Some(rest) = txt.strip_prefix("10*-")
+        && let Ok(exp) = rest.parse::<i32>()
+    {
+        return 10f64.powi(-exp);
     }
     // Simple Kelvin reference (returns canonical factor 1.0)
     if txt == "K" {

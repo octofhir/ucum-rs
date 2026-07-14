@@ -36,10 +36,10 @@ pub fn generate_display_name(expr: &UnitExpr) -> String {
         UnitExpr::Numeric(value) => generate_numeric_display_name(*value),
         UnitExpr::Power(base, exponent) => {
             // Special case: if base is an empty symbol (unity), display as just the exponent number
-            if let Some(symbol) = extract_symbol_str(base.as_ref()) {
-                if symbol.is_empty() {
-                    return format!("{exponent}");
-                }
+            if let Some(symbol) = extract_symbol_str(base.as_ref())
+                && symbol.is_empty()
+            {
+                return format!("{exponent}");
             }
 
             let base_display = generate_display_name(base);
@@ -78,59 +78,43 @@ fn generate_symbol_display_name(symbol: &str) -> String {
     }
 
     // Handle units with annotations like "m[H2O]"
-    if let Some(bracket_start) = symbol.find('[') {
-        if let Some(bracket_end) = symbol.rfind(']') {
-            if bracket_end > bracket_start {
-                let base_unit = &symbol[..bracket_start];
-                let annotation = &symbol[bracket_start + 1..bracket_end];
+    if let Some(bracket_start) = symbol.find('[')
+        && let Some(bracket_end) = symbol.rfind(']')
+        && bracket_end > bracket_start
+    {
+        let base_unit = &symbol[..bracket_start];
+        let annotation = &symbol[bracket_start + 1..bracket_end];
 
-                let base_display = get_base_unit_display_name(base_unit);
-                let annotation_display = match annotation {
-                    "H2O" => " of water column",
-                    "pi" => " pi", // This shouldn't happen in this context but just in case
-                    _ => "",
-                };
+        let base_display = get_base_unit_display_name(base_unit);
+        let annotation_display = match annotation {
+            "H2O" => " of water column",
+            "pi" => " pi", // This shouldn't happen in this context but just in case
+            _ => "",
+        };
 
-                return format!("({base_display}{annotation_display})");
-            }
-        }
+        return format!("({base_display}{annotation_display})");
     }
 
     // Try to find the unit in the registry as a standalone unit first
     if let Some(_unit) = registry::find_unit(symbol) {
         // But check if this might actually be a prefixed unit that should be handled differently
         // Only use direct lookup if it's not a common prefixed unit pattern
-        if let Some((prefix_symbol, base_symbol)) = split_prefix(symbol) {
-            if let Some(_prefix) = registry::find_prefix(prefix_symbol) {
-                if let Some(_base_unit) = registry::find_unit(base_symbol) {
-                    // This could be either a standalone unit or a prefixed unit
-                    // For units like "Pa" (pascal), we want to use the standalone version
-                    // For units like "mm" (millimeter), we want to use the prefixed version
-                    // Check if the standalone unit has a meaningful display name different from the base
-                    let standalone_display = get_base_unit_display_name(symbol);
-                    let base_display = get_base_unit_display_name(base_symbol);
+        if let Some((prefix_symbol, base_symbol)) = split_prefix(symbol)
+            && let Some(_prefix) = registry::find_prefix(prefix_symbol)
+            && let Some(_base_unit) = registry::find_unit(base_symbol)
+        {
+            // This could be either a standalone unit or a prefixed unit
+            // For units like "Pa" (pascal), we want to use the standalone version
+            // For units like "mm" (millimeter), we want to use the prefixed version
+            // Check if the standalone unit has a meaningful display name different from the base
+            let standalone_display = get_base_unit_display_name(symbol);
+            let base_display = get_base_unit_display_name(base_symbol);
 
-                    // If the standalone display is different from the base unit display, use standalone
-                    if standalone_display != base_display {
-                        return format!("({standalone_display})");
-                    } else {
-                        // Otherwise, use the prefixed version
-                        return format!(
-                            "({}{})",
-                            get_prefix_display_name(prefix_symbol),
-                            get_base_unit_display_name(base_symbol)
-                        );
-                    }
-                }
-            }
-        }
-        return format!("({})", get_base_unit_display_name(symbol));
-    }
-
-    // Check if this is a prefixed unit (fallback if direct lookup failed)
-    if let Some((prefix_symbol, base_symbol)) = split_prefix(symbol) {
-        if let Some(_prefix) = registry::find_prefix(prefix_symbol) {
-            if let Some(_base_unit) = registry::find_unit(base_symbol) {
+            // If the standalone display is different from the base unit display, use standalone
+            if standalone_display != base_display {
+                return format!("({standalone_display})");
+            } else {
+                // Otherwise, use the prefixed version
                 return format!(
                     "({}{})",
                     get_prefix_display_name(prefix_symbol),
@@ -138,6 +122,19 @@ fn generate_symbol_display_name(symbol: &str) -> String {
                 );
             }
         }
+        return format!("({})", get_base_unit_display_name(symbol));
+    }
+
+    // Check if this is a prefixed unit (fallback if direct lookup failed)
+    if let Some((prefix_symbol, base_symbol)) = split_prefix(symbol)
+        && let Some(_prefix) = registry::find_prefix(prefix_symbol)
+        && let Some(_base_unit) = registry::find_unit(base_symbol)
+    {
+        return format!(
+            "({}{})",
+            get_prefix_display_name(prefix_symbol),
+            get_base_unit_display_name(base_symbol)
+        );
     }
 
     // Fallback: use the symbol itself
@@ -173,10 +170,11 @@ fn generate_product_display_name(factors: &[UnitFactor]) -> String {
         .map(|factor| {
             // Special case: if the expression is an empty symbol (unity) with an exponent,
             // display it as just the exponent number
-            if let UnitExpr::Symbol(symbol) = &factor.expr {
-                if symbol.is_empty() && factor.exponent != 1 {
-                    return format!("{}", factor.exponent);
-                }
+            if let UnitExpr::Symbol(symbol) = &factor.expr
+                && symbol.is_empty()
+                && factor.exponent != 1
+            {
+                return format!("{}", factor.exponent);
             }
 
             let base_display = generate_display_name(&factor.expr);
@@ -312,7 +310,7 @@ pub fn generate_display_name_owned(expr: &OwnedUnitExpr) -> String {
 }
 
 /// Convert owned AST to borrowed for display generation
-fn owned_to_borrowed_display(expr: &OwnedUnitExpr) -> UnitExpr {
+fn owned_to_borrowed_display(expr: &OwnedUnitExpr) -> UnitExpr<'_> {
     match expr {
         OwnedUnitExpr::Numeric(v) => UnitExpr::Numeric(*v),
         OwnedUnitExpr::Symbol(sym) => UnitExpr::SymbolOwned(sym.clone()),

@@ -153,7 +153,7 @@ pub fn search(query: &str) -> JsValue {
 pub fn get_unit_info(code: &str) -> Result<JsValue, JsValue> {
     match find_unit(code) {
         Some(unit) => {
-            let unit_info = convert_unit_record(&unit);
+            let unit_info = convert_unit_record(unit);
             Ok(to_value(&unit_info)?)
         }
         None => {

@@ -290,11 +290,11 @@ impl<'a> Tokenizer<'a> {
             // Check for implicit exponent (e.g., "m2")
             if let Some(exp_start) = symbol.rfind(|c: char| !c.is_ascii_digit()) {
                 let exp_start = exp_start + 1;
-                if exp_start < symbol.len() {
-                    if let Ok(_exp) = symbol[exp_start..].parse::<i32>() {
-                        self.pos = start + exp_start;
-                        return Some(Token::Symbol(&symbol[..exp_start]));
-                    }
+                if exp_start < symbol.len()
+                    && let Ok(_exp) = symbol[exp_start..].parse::<i32>()
+                {
+                    self.pos = start + exp_start;
+                    return Some(Token::Symbol(&symbol[..exp_start]));
                 }
             }
 
@@ -323,10 +323,10 @@ impl<'a> Tokenizer<'a> {
                         has_exp = true;
                         self.pos += 1;
                         // Optional sign
-                        if let Some(sign) = self.current_byte() {
-                            if sign == b'+' || sign == b'-' {
-                                self.pos += 1;
-                            }
+                        if let Some(sign) = self.current_byte()
+                            && (sign == b'+' || sign == b'-')
+                        {
+                            self.pos += 1;
                         }
                     } else {
                         break;
@@ -336,10 +336,10 @@ impl<'a> Tokenizer<'a> {
             }
         }
 
-        if self.pos > start {
-            if let Ok(num) = self.input[start..self.pos].parse::<f64>() {
-                return Some(Token::Number(num));
-            }
+        if self.pos > start
+            && let Ok(num) = self.input[start..self.pos].parse::<f64>()
+        {
+            return Some(Token::Number(num));
         }
 
         None
@@ -355,10 +355,10 @@ impl<'a> Tokenizer<'a> {
 
             // Parse exponent
             let exp_start = self.pos;
-            if let Some(sign) = self.current_byte() {
-                if sign == b'+' || sign == b'-' {
-                    self.pos += 1;
-                }
+            if let Some(sign) = self.current_byte()
+                && (sign == b'+' || sign == b'-')
+            {
+                self.pos += 1;
             }
 
             let digit_start = self.pos;
@@ -370,10 +370,10 @@ impl<'a> Tokenizer<'a> {
                 }
             }
 
-            if self.pos > digit_start {
-                if let Ok(exp) = self.input[exp_start..self.pos].parse::<i32>() {
-                    return Some(Token::TenPower(exp));
-                }
+            if self.pos > digit_start
+                && let Ok(exp) = self.input[exp_start..self.pos].parse::<i32>()
+            {
+                return Some(Token::TenPower(exp));
             }
         }
 
@@ -706,7 +706,7 @@ impl<'a> OptimizedParser<'a> {
                 in_annotation = false;
                 continue;
             }
-            
+
             if !in_annotation {
                 if ch.is_ascii() {
                     let ch_class = CHAR_CLASS[ch as u8 as usize];
@@ -727,10 +727,10 @@ impl<'a> OptimizedParser<'a> {
         }
 
         // Check for % in wrong position
-        if let Some(pos) = input.find('%') {
-            if input != "%" {
-                return Err(UcumError::invalid_percent_placement(pos));
-            }
+        if let Some(pos) = input.find('%')
+            && input != "%"
+        {
+            return Err(UcumError::invalid_percent_placement(pos));
         }
 
         // Check for addition operators outside of 10*+ or 10^+ contexts

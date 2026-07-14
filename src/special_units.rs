@@ -459,14 +459,12 @@ impl SpecialUnitHandler for LogarithmicHandler {
                     ));
                 }
             }
-            "B" | "dB" | "Np" | "ln" | "log" | "log2" => {
-                if val <= 0.0 {
-                    return Err(UcumError::conversion_error(
-                        "value",
-                        "logarithm",
-                        "Cannot take logarithm of non-positive value",
-                    ));
-                }
+            "B" | "dB" | "Np" | "ln" | "log" | "log2" if val <= 0.0 => {
+                return Err(UcumError::conversion_error(
+                    "value",
+                    "logarithm",
+                    "Cannot take logarithm of non-positive value",
+                ));
             }
             _ => {}
         }

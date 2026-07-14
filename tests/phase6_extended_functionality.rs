@@ -79,15 +79,14 @@ fn test_expression_optimization_equivalence() {
     let test_cases = vec!["m2", "kg.m/s2", "kg.m2/s2", "/s", "kg/(m.s2)"];
 
     for expr in test_cases {
-        if let Ok(original_analysis) = analyse(expr) {
-            if let Ok(optimized) = optimize_expression(expr) {
-                if let Ok(optimized_analysis) = analyse(&optimized) {
-                    assert_eq!(
-                        original_analysis.dimension, optimized_analysis.dimension,
-                        "Optimization changed dimensions for expression: {expr}"
-                    );
-                }
-            }
+        if let Ok(original_analysis) = analyse(expr)
+            && let Ok(optimized) = optimize_expression(expr)
+            && let Ok(optimized_analysis) = analyse(&optimized)
+        {
+            assert_eq!(
+                original_analysis.dimension, optimized_analysis.dimension,
+                "Optimization changed dimensions for expression: {expr}"
+            );
         }
     }
 }
@@ -98,15 +97,14 @@ fn test_simplification_equivalence() {
     let test_cases = vec!["m.s/s", "kg.m/m", "kg.m2/s2"];
 
     for expr in test_cases {
-        if let Ok(original_analysis) = analyse(expr) {
-            if let Ok(simplified) = simplify_expression(expr) {
-                if let Ok(simplified_analysis) = analyse(&simplified) {
-                    assert_eq!(
-                        original_analysis.dimension, simplified_analysis.dimension,
-                        "Simplification changed dimensions for expression: {expr}"
-                    );
-                }
-            }
+        if let Ok(original_analysis) = analyse(expr)
+            && let Ok(simplified) = simplify_expression(expr)
+            && let Ok(simplified_analysis) = analyse(&simplified)
+        {
+            assert_eq!(
+                original_analysis.dimension, simplified_analysis.dimension,
+                "Simplification changed dimensions for expression: {expr}"
+            );
         }
     }
 }
