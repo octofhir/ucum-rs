@@ -5,9 +5,12 @@
 //! and other special cases defined in the UCUM specification.
 
 use crate::error::UcumError;
+use crate::math;
 use crate::precision::{Number, NumericOps, from_f64};
+use crate::prelude::*;
 use crate::types::Dimension;
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use hashbrown::HashMap;
 
 /// Trait for handling special unit conversions.
 ///
@@ -69,7 +72,7 @@ pub struct ConversionContext {
     /// The target unit code (if converting between special units)
     pub target_unit: Option<String>,
     /// Additional parameters for the conversion
-    pub parameters: HashMap<String, Number>,
+    pub parameters: BTreeMap<String, Number>,
 }
 
 impl ConversionContext {
@@ -78,7 +81,7 @@ impl ConversionContext {
         Self {
             source_unit: None,
             target_unit: None,
-            parameters: HashMap::new(),
+            parameters: BTreeMap::new(),
         }
     }
 
@@ -309,8 +312,8 @@ impl LogarithmicHandler {
         match unit_code {
             "B" | "dB" | "pH" | "pOH" | "pKa" | "pKw" | "pK" => 10.0,
             "B[SPL]" | "B[V]" | "B[mV]" | "B[uV]" | "B[10.nV]" | "B[W]" | "B[kW]" => 10.0,
-            "Np" => std::f64::consts::E,
-            "ln" => std::f64::consts::E,
+            "Np" => core::f64::consts::E,
+            "ln" => core::f64::consts::E,
             "log" => 10.0,
             "log2" => 2.0,
             _ => 10.0, // Default to base 10
@@ -393,44 +396,44 @@ impl SpecialUnitHandler for LogarithmicHandler {
         match unit_code {
             "B" => {
                 // Bel: 10^value (power ratio)
-                Ok(from_f64(base.powf(val)))
+                Ok(from_f64(math::powf(base, val)))
             }
             "dB" => {
                 // Decibel: 10^(value/10) (power ratio)
-                Ok(from_f64(base.powf(val / scale)))
+                Ok(from_f64(math::powf(base, val / scale)))
             }
             "Np" => {
                 // Neper: e^value (amplitude ratio)
-                Ok(from_f64(base.powf(val)))
+                Ok(from_f64(math::powf(base, val)))
             }
             "B[SPL]" | "B[V]" | "B[mV]" | "B[uV]" | "B[10.nV]" | "B[W]" | "B[kW]" => {
                 // Specialized bel units: reference_value * 10^(value/scale)
                 let reference = self.get_bel_reference(unit_code);
-                Ok(from_f64(reference * base.powf(val / scale)))
+                Ok(from_f64(reference * math::powf(base, val / scale)))
             }
             "pH" => {
                 // pH to hydrogen ion concentration: [H+] = 10^(-pH)
-                Ok(from_f64(base.powf(scale * val)))
+                Ok(from_f64(math::powf(base, scale * val)))
             }
             "pOH" => {
                 // pOH to hydroxide ion concentration: [OH-] = 10^(-pOH)
-                Ok(from_f64(base.powf(scale * val)))
+                Ok(from_f64(math::powf(base, scale * val)))
             }
             "pKa" | "pKw" | "pK" => {
                 // pK to equilibrium constant: K = 10^(-pK)
-                Ok(from_f64(base.powf(scale * val)))
+                Ok(from_f64(math::powf(base, scale * val)))
             }
             "ln" => {
                 // Natural logarithm: e^value
-                Ok(from_f64(base.powf(val)))
+                Ok(from_f64(math::powf(base, val)))
             }
             "log" => {
                 // Common logarithm: 10^value
-                Ok(from_f64(base.powf(val)))
+                Ok(from_f64(math::powf(base, val)))
             }
             "log2" => {
                 // Binary logarithm: 2^value
-                Ok(from_f64(base.powf(val)))
+                Ok(from_f64(math::powf(base, val)))
             }
             _ => Err(UcumError::conversion_error(
                 "logarithmic unit",
@@ -475,44 +478,44 @@ impl SpecialUnitHandler for LogarithmicHandler {
         match unit_code {
             "B" => {
                 // To Bel: log10(value)
-                Ok(from_f64(val.log(base)))
+                Ok(from_f64(math::log(val, base)))
             }
             "dB" => {
                 // To Decibel: 10 * log10(value)
-                Ok(from_f64(scale * val.log(base)))
+                Ok(from_f64(scale * math::log(val, base)))
             }
             "Np" => {
                 // To Neper: ln(value)
-                Ok(from_f64(val.ln()))
+                Ok(from_f64(math::ln(val)))
             }
             "B[SPL]" | "B[V]" | "B[mV]" | "B[uV]" | "B[10.nV]" | "B[W]" | "B[kW]" => {
                 // To specialized bel units: scale * log10(value/reference)
                 let reference = self.get_bel_reference(unit_code);
-                Ok(from_f64(scale * (val / reference).log(base)))
+                Ok(from_f64(scale * math::log(val / reference, base)))
             }
             "pH" => {
                 // Hydrogen ion concentration to pH: pH = -log10([H+])
-                Ok(from_f64(scale * val.log(base)))
+                Ok(from_f64(scale * math::log(val, base)))
             }
             "pOH" => {
                 // Hydroxide ion concentration to pOH: pOH = -log10([OH-])
-                Ok(from_f64(scale * val.log(base)))
+                Ok(from_f64(scale * math::log(val, base)))
             }
             "pKa" | "pKw" | "pK" => {
                 // Equilibrium constant to pK: pK = -log10(K)
-                Ok(from_f64(scale * val.log(base)))
+                Ok(from_f64(scale * math::log(val, base)))
             }
             "ln" => {
                 // To natural logarithm: ln(value)
-                Ok(from_f64(val.ln()))
+                Ok(from_f64(math::ln(val)))
             }
             "log" => {
                 // To common logarithm: log10(value)
-                Ok(from_f64(val.log10()))
+                Ok(from_f64(math::log10(val)))
             }
             "log2" => {
                 // To binary logarithm: log2(value)
-                Ok(from_f64(val.log2()))
+                Ok(from_f64(math::log2(val)))
             }
             _ => Err(UcumError::conversion_error(
                 "logarithmic unit",

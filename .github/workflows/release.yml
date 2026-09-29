@@ -38,7 +38,7 @@ jobs:
 
       - name: Build WASM package
         run: |
-          wasm-pack build --target web --features wasm
+          wasm-pack build wasm --target web --out-dir ../pkg --out-name octofhir_ucum
 
       - name: Update package.json version and name
         run: |

@@ -1,6 +1,6 @@
-use octofhir_ucum::{
-    ConceptKind, search_units, search_units_filtered, search_units_fuzzy, search_units_regex,
-};
+use octofhir_ucum::{ConceptKind, search_units, search_units_filtered};
+#[cfg(feature = "std")]
+use octofhir_ucum::{search_units_fuzzy, search_units_regex};
 
 #[test]
 fn test_basic_search() {
@@ -17,6 +17,7 @@ fn test_basic_search() {
 }
 
 #[test]
+#[cfg(feature = "std")]
 fn test_regex_search() {
     // Test regex search for units containing "meter" or "metre"
     let results = search_units_regex(r"mete?r", false).unwrap();
@@ -31,6 +32,7 @@ fn test_regex_search() {
 }
 
 #[test]
+#[cfg(feature = "std")]
 fn test_fuzzy_search() {
     // Test fuzzy search with a typo
     let results = search_units_fuzzy("metter", 30); // "metter" instead of "meter"
@@ -71,6 +73,7 @@ fn test_concept_kind_filtering() {
 }
 
 #[test]
+#[cfg(feature = "std")]
 fn test_fuzzy_with_filtering() {
     // Test fuzzy search combined with concept kind filtering
     let results = search_units_filtered("metter", &[ConceptKind::BaseUnit], true);
@@ -83,6 +86,7 @@ fn test_fuzzy_with_filtering() {
 }
 
 #[test]
+#[cfg(feature = "std")]
 fn test_invalid_regex() {
     // Test invalid regex pattern
     let result = search_units_regex("[invalid", false);
@@ -96,6 +100,7 @@ fn test_empty_search() {
     // Should return all units or empty results, depending on implementation
     // This tests that it doesn't crash
 
+    #[cfg(feature = "std")]
     let _fuzzy_results = search_units_fuzzy("", 30);
     // Should handle empty query gracefully
 }

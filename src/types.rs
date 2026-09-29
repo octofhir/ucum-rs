@@ -113,8 +113,8 @@ impl SpecialKind {
     /// For logarithmic units, this returns the base of the logarithm.
     pub fn ratio(&self) -> f64 {
         match self {
-            SpecialKind::Log10 => 10.0,             // 10^(x) for B, 10^(x/10) for dB
-            SpecialKind::Ln => std::f64::consts::E, // e^(x)
+            SpecialKind::Log10 => 10.0,              // 10^(x) for B, 10^(x/10) for dB
+            SpecialKind::Ln => core::f64::consts::E, // e^(x)
             _ => 1.0, // For None, LinearOffset, TanTimes100, Arbitrary
         }
     }

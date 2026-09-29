@@ -14,7 +14,14 @@ High-performance Unified Code for Units of Measure (UCUM) implementation in Rust
 ```sh
 # Add to your project
 cargo add octofhir-ucum
+
+# no_std + alloc (embedded / bare-metal): disable default features
+cargo add octofhir-ucum --no-default-features
 ```
+
+Without the default `std` feature the crate is `no_std` + `alloc`: parsing, validation,
+analysis, conversion and unit arithmetic all work, float math goes through `libm`.
+Only `search_units_regex` and `search_units_fuzzy` require `std`.
 
 ```rust
 use octofhir_ucum::{validate, convert, analyse, unit_multiply};
@@ -225,8 +232,8 @@ ucum-rs/
 │   ├── evaluator.rs        # Unit evaluation
 │   ├── registry.rs         # Unit registry (generated)
 │   ├── bin/cli.rs          # Command-line interface
-│   ├── wasm.rs             # WebAssembly bindings
 │   └── fhir.rs             # FHIR integration
+├── wasm/                   # WebAssembly bindings (npm: @octofhir/ucum-wasm)
 ├── playground/             # Interactive web playground
 ├── ucum-fuzz/              # Fuzzing infrastructure
 └── spec/                   # UCUM specification assets

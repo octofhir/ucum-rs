@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)] // UcumError is intentionally large, see src/lib.rs
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use octofhir_ucum::{analyse, evaluate_owned, parse_expression, validate};
 use std::hint::black_box;

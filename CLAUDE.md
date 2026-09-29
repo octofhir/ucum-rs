@@ -14,8 +14,11 @@ cargo build --release --all
 
 # Build with specific features
 cargo build --features cli
-cargo build --features wasm
 cargo build --features fhir
+cargo build -p octofhir-ucum-wasm
+
+# Build no_std + alloc (core without default features)
+cargo build --no-default-features --target thumbv7em-none-eabihf
 ```
 
 ### Testing
@@ -52,7 +55,7 @@ cargo doc --open --no-deps --all
 ### WASM Build
 ```bash
 # Build WASM package
-wasm-pack build --target web --features wasm
+wasm-pack build wasm --target web --out-dir ../pkg --out-name octofhir_ucum
 ```
 
 ### CLI Usage
@@ -128,11 +131,12 @@ The UCUM-RS library implements a zero-copy parsing architecture for performance:
 
 ### Multi-Crate Workspace Structure
 
-- **octofhir-ucum**: Single crate with feature flags:
-  - Core functionality (default)
+- **octofhir-ucum**: Core crate, `no_std` + `alloc` without default features:
+  - `std` (default): regex/fuzzy unit search, platform float math
   - `cli`: Command-line interface binary
   - `fhir`: FHIR Quantity data type integration
-  - `wasm`: WebAssembly bindings for browser/Node.js
+  - `serde`: Serialization support
+- **octofhir-ucum-wasm** (`wasm/`): WebAssembly bindings, published to npm as `@octofhir/ucum-wasm` (not on crates.io)
 - **ucum-fuzz**: Fuzzing infrastructure (not published)
 
 ### Performance Characteristics
@@ -148,4 +152,4 @@ Current benchmarks (v0.3.0):
 1. **Temperature Conversions**: Special handling required for Celsius/Fahrenheit due to offsets
 2. **Unicode Handling**: µ (micro) symbol normalized to 'u' during parsing
 3. **Precision**: Uses `rust_decimal` for high-precision arithmetic
-4. **WASM Compatibility**: Avoids thread-local storage and ensures `no_std` support
+4. **no_std**: Core is `no_std` + `alloc`. Use `crate::prelude` for `alloc` types, `hashbrown` for maps, `spin::LazyLock` for statics, and `crate::math` for float functions (`f64::powf` etc. are not in `core`)

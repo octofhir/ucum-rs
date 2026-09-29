@@ -685,10 +685,8 @@ fn run_multiplication_tests_group() -> TestResults {
             let expected_factor = u_res_result.factor.mul(test_case.v_res);
 
             // Check dimension compatibility
-            let mut expected_dim = [0i8; 7];
-            for i in 0..7 {
-                expected_dim[i] = u1_result.dim.0[i] + u2_result.dim.0[i];
-            }
+            let expected_dim: [i8; 7] =
+                std::array::from_fn(|i| u1_result.dim.0[i] + u2_result.dim.0[i]);
 
             if expected_dim != u_res_result.dim.0 {
                 let fail_info = format!(
@@ -837,10 +835,8 @@ fn run_division_tests_group() -> TestResults {
             let expected_factor = u_res_result.factor.mul(test_case.v_res);
 
             // Check dimension compatibility
-            let mut expected_dim = [0i8; 7];
-            for i in 0..7 {
-                expected_dim[i] = u1_result.dim.0[i] - u2_result.dim.0[i];
-            }
+            let expected_dim: [i8; 7] =
+                std::array::from_fn(|i| u1_result.dim.0[i] - u2_result.dim.0[i]);
 
             if expected_dim != u_res_result.dim.0 {
                 let fail_info = format!(

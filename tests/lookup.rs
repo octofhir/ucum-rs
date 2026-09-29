@@ -71,8 +71,7 @@ fn special_units_lookup() {
 
     // Test specific units that should exist
     let pi_unit = find_unit("[pi]");
-    if pi_unit.is_some() {
-        let pi = pi_unit.unwrap();
+    if let Some(pi) = pi_unit {
         println!(
             "  [pi] details: factor={}, dim={:?}, code={}",
             pi.factor, pi.dim, pi.code
@@ -80,8 +79,7 @@ fn special_units_lookup() {
     }
 
     let in_i_unit = find_unit("[in_i]");
-    if in_i_unit.is_some() {
-        let in_i = in_i_unit.unwrap();
+    if let Some(in_i) = in_i_unit {
         println!(
             "  [in_i] details: factor={}, dim={:?}, code={}",
             in_i.factor, in_i.dim, in_i.code

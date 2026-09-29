@@ -1,6 +1,6 @@
 [package]
 name = "octofhir-ucum"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2024"
 authors = ["OctoFHIR Team <funyloony@gmail.com>"]
 license = "Apache-2.0"
@@ -19,9 +19,11 @@ include = [
     "build.rs",
 ]
 
+[workspace]
+members = [".", "wasm"]
+
 [lib]
 name = "octofhir_ucum"
-crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "octofhir-ucum"
@@ -30,46 +32,38 @@ required-features = ["cli"]
 
 [features]
 default = ["std"]
-std = []
+# `std` enables regex/fuzzy unit search and uses the platform float math.
+# Without it the crate is `no_std` + `alloc` and float math goes through `libm`.
+std = ["dep:regex", "dep:fuzzy-matcher", "rust_decimal/std", "phf/std", "serde?/std"]
 serde = ["dep:serde"]
 cli = ["std", "dep:clap", "dep:anyhow", "dep:human-panic"]
-wasm = [
-    "dep:wasm-bindgen",
-    "dep:serde-wasm-bindgen",
-    "dep:console_error_panic_hook",
-    "serde",
-]
-fhir = ["std", "serde"]
+fhir = ["std", "serde", "dep:thiserror"]
 
 [dependencies]
-# Core dependencies
-serde = { version = "1.0", features = ["derive"], optional = true }
-thiserror = "2"
-regex = "1.9"
-nom = "8"
-lazy_static = "1.4"
-rust_decimal = "1.36"
-fuzzy-matcher = "0.3"
-phf = { version = "0.14", features = ["macros"] }
-once_cell = "1.19"
-memchr = "2.7"
+# Core dependencies (all `no_std` + `alloc` compatible)
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
+rust_decimal = { version = "1.36", default-features = false }
+phf = { version = "0.14", default-features = false, features = ["macros"] }
 smallvec = "1.13"
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
+foldhash = { version = "0.2", default-features = false }
+spin = { version = "0.12", default-features = false, features = ["lazy"] }
+libm = "0.2"
+
+# std-only dependencies
+regex = { version = "1.9", optional = true }
+fuzzy-matcher = { version = "0.3", optional = true }
+thiserror = { version = "2", optional = true }
 
 # CLI dependencies
 clap = { version = "4", features = ["derive"], optional = true }
 anyhow = { version = "1.0", optional = true }
 human-panic = { version = "2.0.3", optional = true }
 
-# WASM dependencies
-wasm-bindgen = { version = "0.2", optional = true }
-serde-wasm-bindgen = { version = "0.6", optional = true }
-console_error_panic_hook = { version = "0.1", optional = true }
-
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 quick-xml = "0.41"
 serde_json = "1"
-wasm-bindgen-test = "0.3"
 
 [build-dependencies]
 quick-xml = "0.41"

@@ -884,11 +884,11 @@ fn main() {
     for (code, dim, factor, offset, special, property, display_name, _unit_ref) in &units {
         // Format factor with const replacement if needed
         let factor_str = if (*factor - std::f64::consts::PI).abs() < 1e-10 {
-            "std::f64::consts::PI".to_string()
+            "core::f64::consts::PI".to_string()
         } else if (*factor - std::f64::consts::TAU).abs() < 1e-10 {
-            "std::f64::consts::TAU".to_string()
+            "core::f64::consts::TAU".to_string()
         } else if (*factor - std::f64::consts::FRAC_PI_4).abs() < 1e-10 {
-            "std::f64::consts::FRAC_PI_4".to_string()
+            "core::f64::consts::FRAC_PI_4".to_string()
         } else {
             format!("{factor}f64")
         };

@@ -1,9 +1,9 @@
 //! WebAssembly bindings for UCUM operations.
 //!
-//! This module provides JavaScript-compatible bindings for UCUM functionality.
-//! It's only available when the "wasm" feature is enabled.
+//! This crate provides JavaScript-compatible bindings for `octofhir-ucum` and is
+//! published to npm as `@octofhir/ucum-wasm` via `wasm-pack`.
 
-use crate::{
+use octofhir_ucum::{
     UcumError, UnitRecord, analyse, evaluate_owned, find_unit, get_canonical_units, is_comparable,
     parse_expression, precision::to_f64, search_units as core_search_units,
     validate as core_validate,
@@ -14,7 +14,6 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
 pub fn start() {
-    #[cfg(feature = "wasm")]
     console_error_panic_hook::set_once();
 }
 

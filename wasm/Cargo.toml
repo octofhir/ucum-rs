@@ -1,0 +1,21 @@
+[package]
+name = "octofhir-ucum-wasm"
+version = "0.6.0"
+edition = "2024"
+authors = ["OctoFHIR Team <funyloony@gmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/octofhir/ucum-rs"
+readme = "../README.md"
+description = "WebAssembly bindings for octofhir-ucum, published to npm as @octofhir/ucum-wasm"
+publish = false
+
+[lib]
+name = "octofhir_ucum_wasm"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+octofhir-ucum = { path = "..", features = ["serde"] }
+wasm-bindgen = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"

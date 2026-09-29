@@ -27,8 +27,11 @@ We welcome contributions to the UCUM-RS project! This guide will help you get st
 
    # Build with specific features
    cargo build --features cli
-   cargo build --features wasm
    cargo build --features fhir
+   cargo build -p octofhir-ucum-wasm
+
+   # Verify no_std + alloc build
+   cargo build --no-default-features --target thumbv7em-none-eabihf
    ```
 
 3. **Run tests to verify setup:**
@@ -100,7 +103,7 @@ The UCUM-RS library implements a high-performance zero-copy parsing architecture
 
 1. **Zero-Copy Optimization**: Parser creates AST that borrows from input strings
 2. **Compile-Time Code Generation**: Registry generated from XML specification at build time
-3. **WASM Compatibility**: No thread-local storage, `no_std` support where possible
+3. **`no_std` + `alloc`**: Core compiles without `std`; no thread-local storage (WASM)
 4. **Comprehensive Error Handling**: Precise error locations with helpful suggestions
 
 For detailed architecture documentation, see [CLAUDE.md](CLAUDE.md).
@@ -213,8 +216,14 @@ fn test_new_feature() {
 ### WASM Compatibility
 
 - Avoid thread-local storage (`thread_local!`)
-- Test WASM builds: `wasm-pack build --target web --features wasm`
-- Ensure `no_std` compatibility where possible
+- Test WASM builds: `wasm-pack build wasm --target web --out-dir ../pkg --out-name octofhir_ucum`
+
+### no_std Compatibility
+
+- Core must build with `--no-default-features` on a bare-metal target (`thumbv7em-none-eabihf`)
+- Use `alloc`/`core` types via `crate::prelude`, `hashbrown` instead of `std::collections::HashMap`
+- Float math (`powf`, `ln`, `round`, ...) goes through `crate::math`, not `f64` methods
+- Gate anything that needs `std` behind `#[cfg(feature = "std")]`
 
 ### Error Messages
 

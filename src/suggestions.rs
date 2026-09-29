@@ -1,7 +1,8 @@
 //! Suggestion engine for error corrections and unit alternatives (Phase 5).
 
+use crate::prelude::*;
 use crate::{UnitRecord, get_all_units};
-use std::collections::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 /// Suggestion engine for providing error corrections and alternatives
 pub struct SuggestionEngine {
@@ -160,10 +161,10 @@ impl SuggestionEngine {
 
         // Sort by similarity score (highest first)
         scored_suggestions
-            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(core::cmp::Ordering::Equal));
 
         // Add top suggestions
-        let mut added = std::collections::HashSet::new();
+        let mut added = HashSet::new();
         for (score, code, display) in scored_suggestions.into_iter().take(5) {
             if added.insert(code.clone()) {
                 suggestions.push(format!(

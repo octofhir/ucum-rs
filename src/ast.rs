@@ -4,6 +4,7 @@
 //! checks, conversions) can depend on the data model without pulling in the
 //! `nom` parsing machinery.
 
+use crate::prelude::*;
 use core::fmt;
 
 #[cfg(feature = "serde")]

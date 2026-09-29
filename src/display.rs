@@ -4,6 +4,8 @@
 //! display names, as specified in the official UCUM test cases.
 
 use crate::ast::{OwnedUnitExpr, UnitExpr, UnitFactor};
+use crate::math;
+use crate::prelude::*;
 use crate::registry;
 
 /// Helper to extract string from either Symbol or SymbolOwned variants
@@ -145,9 +147,9 @@ fn generate_symbol_display_name(symbol: &str) -> String {
 fn generate_numeric_display_name(value: f64) -> String {
     // Handle powers of 10 (e.g., 10^23)
     if value > 0.0 && value != 1.0 {
-        let log_value = value.log10();
-        if (log_value.round() - log_value).abs() < 1e-10 {
-            let exponent = log_value.round() as i32;
+        let log_value = math::log10(value);
+        if (math::round(log_value) - log_value).abs() < 1e-10 {
+            let exponent = math::round(log_value) as i32;
             return format!("(the number ten for arbitrary powers ^ {exponent})");
         }
     }
@@ -155,7 +157,7 @@ fn generate_numeric_display_name(value: f64) -> String {
     // Handle regular numbers - don't wrap in parentheses for simple coefficients
     if value == 1.0 {
         "(unity)".to_string()
-    } else if value.fract() == 0.0 && value > 0.0 {
+    } else if math::fract(value) == 0.0 && value > 0.0 {
         // Integer values should be displayed as plain numbers (no parentheses)
         format!("{}", value as i64)
     } else {

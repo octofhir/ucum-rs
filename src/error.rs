@@ -1,8 +1,6 @@
 //! Enhanced error types for UCUM operations with detailed diagnostics.
 
-#[cfg(feature = "std")]
-extern crate std;
-
+use crate::prelude::*;
 use crate::types::Dimension;
 
 /// Source location information for parser errors
@@ -247,8 +245,8 @@ impl UcumError {
     }
 }
 
-impl std::fmt::Display for UcumError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for UcumError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Display the primary error message
         write!(f, "{}", self.message)?;
 
@@ -277,7 +275,7 @@ impl std::fmt::Display for UcumError {
     }
 }
 
-impl std::error::Error for UcumError {}
+impl core::error::Error for UcumError {}
 
 // Maintain backward compatibility with the old error types
 impl From<UcumError> for String {

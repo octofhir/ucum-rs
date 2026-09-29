@@ -6,16 +6,17 @@
 //! - Conversion result caching
 //! - Performance monitoring and metrics
 
+use crate::prelude::*;
 use crate::{
     UcumError,
     ast::UnitExpr,
     evaluator::EvalResult,
     types::{Prefix, UnitRecord},
 };
-use lazy_static::lazy_static;
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use core::hash::{BuildHasher, Hash, Hasher};
+use foldhash::fast::FixedState;
+use hashbrown::HashMap;
+use spin::LazyLock as Lazy;
 
 /// Enhanced evaluation cache with multiple cache types
 pub struct EvaluationCache {
@@ -91,7 +92,7 @@ impl EvaluationCache {
 
     /// Generate a hash key for a UnitExpr using a fast hash function
     pub fn hash_expr(expr: &UnitExpr) -> u64 {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = FixedState::default().build_hasher();
         hash_unit_expr(expr, &mut hasher);
         hasher.finish()
     }
@@ -218,7 +219,7 @@ fn hash_unit_expr<H: Hasher>(expr: &UnitExpr, hasher: &mut H) {
             let mut factor_hashes: Vec<_> = factors
                 .iter()
                 .map(|f| {
-                    let mut sub_hasher = DefaultHasher::new();
+                    let mut sub_hasher = FixedState::default().build_hasher();
                     hash_unit_expr(&f.expr, &mut sub_hasher);
                     f.exponent.hash(&mut sub_hasher);
                     sub_hasher.finish()
@@ -242,26 +243,23 @@ fn hash_unit_expr<H: Hasher>(expr: &UnitExpr, hasher: &mut H) {
 }
 
 // Optimized registry lookup using pre-computed HashMaps for O(1) access
-lazy_static! {
-    /// Pre-computed HashMap for O(1) unit lookup
-    static ref UNIT_MAP: HashMap<&'static str, &'static UnitRecord> = {
-        let mut map = HashMap::new();
-        for unit in crate::registry::UNITS.iter() {
-            map.insert(unit.code, unit);
-        }
-        map
-    };
+/// Pre-computed HashMap for O(1) unit lookup
+static UNIT_MAP: Lazy<HashMap<&'static str, &'static UnitRecord>> = Lazy::new(|| {
+    let mut map = HashMap::new();
+    for unit in crate::registry::UNITS.iter() {
+        map.insert(unit.code, unit);
+    }
+    map
+});
 
-    /// Pre-computed HashMap for O(1) prefix lookup (enhanced version)
-    static ref PREFIX_MAP_ENHANCED: HashMap<&'static str, &'static Prefix> = {
-        let mut map = HashMap::new();
-        for prefix in crate::registry::PREFIXES.iter() {
-            map.insert(prefix.symbol, prefix);
-        }
-        map
-    };
-
-}
+/// Pre-computed HashMap for O(1) prefix lookup (enhanced version)
+static PREFIX_MAP_ENHANCED: Lazy<HashMap<&'static str, &'static Prefix>> = Lazy::new(|| {
+    let mut map = HashMap::new();
+    for prefix in crate::registry::PREFIXES.iter() {
+        map.insert(prefix.symbol, prefix);
+    }
+    map
+});
 
 /// Optimized unit lookup with O(1) HashMap access
 pub fn find_unit_optimized(code: &str) -> Option<&'static UnitRecord> {
@@ -387,10 +385,8 @@ impl PrefixTrie {
     }
 }
 
-lazy_static! {
-    /// Global prefix trie for efficient prefix matching
-    static ref PREFIX_TRIE: PrefixTrie = PrefixTrie::new();
-}
+/// Global prefix trie for efficient prefix matching
+static PREFIX_TRIE: Lazy<PrefixTrie> = Lazy::new(PrefixTrie::new);
 
 /// Find prefixes using the optimized trie structure
 pub fn find_prefixes_with_trie(text: &str) -> Vec<&'static Prefix> {

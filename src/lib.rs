@@ -1,20 +1,28 @@
 //! UCUM Core Library – Rust 2024 Edition
 //!
 //! This crate provides parsing, validation and conversion utilities for the
-//! Unified Code for Units of Measure (UCUM). It aims to be `no_std`-optional
-//! and suitable for both embedded and server environments.
+//! Unified Code for Units of Measure (UCUM). It is `no_std` + `alloc`
+//! compatible (disable default features) and suitable for both embedded and
+//! server environments.
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![allow(clippy::result_large_err)] // UcumError is necessarily large due to comprehensive error context
+
+extern crate alloc;
+#[cfg(any(feature = "std", test))]
+#[cfg_attr(test, macro_use)]
+extern crate std;
 
 mod ast;
 mod display;
 mod error;
 mod evaluator;
 mod expr;
+mod math;
 mod parser;
 pub mod performance;
 pub mod precision;
+mod prelude;
 mod registry;
 pub mod special_units;
 pub mod suggestions;
@@ -39,13 +47,19 @@ pub use crate::types::{BaseUnit, DerivedUnit, Dimension, Prefix, Quantity, UnitR
 
 // Extended Functionality - functions are defined below and automatically exported
 
-use std::collections::HashSet;
+use crate::prelude::*;
+use alloc::collections::BTreeSet;
+use hashbrown::HashSet;
 
 // Import precision utilities for internal use
 use crate::precision::{Number, NumericOps, to_f64};
 
 // Re-export for convenience
 pub use crate::evaluator::evaluate as eval;
+
+/// Shared suggestion engine used to enrich validation errors.
+static SUGGESTION_ENGINE: spin::LazyLock<SuggestionEngine> =
+    spin::LazyLock::new(SuggestionEngine::new);
 
 /// Lookup a unit by code using the generated registry.
 pub fn find_unit(code: &str) -> Option<&'static crate::types::UnitRecord> {
@@ -83,11 +97,6 @@ pub fn find_prefix(sym: &str) -> Option<&'static Prefix> {
 #[allow(clippy::result_large_err)]
 pub fn validate(expression: &str) -> Result<(), UcumError> {
     // Create suggestion engine for enhanced error messages
-    lazy_static::lazy_static! {
-        static ref SUGGESTION_ENGINE: crate::suggestions::SuggestionEngine =
-            crate::suggestions::SuggestionEngine::new();
-    }
-
     // First, try to parse the expression
     let parsed = match parse_expression(expression) {
         Ok(parsed) => parsed,
@@ -222,11 +231,6 @@ pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, Uc
         "inductance" => Dimension([1, 2, -2, -2, 0, 0, 0]), // ML²T⁻²I⁻²
         "dimensionless" => Dimension([0, 0, 0, 0, 0, 0, 0]), // 1
         _ => {
-            lazy_static::lazy_static! {
-                static ref SUGGESTION_ENGINE: crate::suggestions::SuggestionEngine =
-                    crate::suggestions::SuggestionEngine::new();
-            }
-
             let available_properties = vec![
                 "length",
                 "mass",
@@ -276,11 +280,6 @@ pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, Uc
 
     // If not valid, provide suggestions for units that would be valid for this property
     if !is_valid {
-        lazy_static::lazy_static! {
-            static ref SUGGESTION_ENGINE: crate::suggestions::SuggestionEngine =
-                crate::suggestions::SuggestionEngine::new();
-        }
-
         let alternative_units = SUGGESTION_ENGINE.suggest_alternatives(expression, property);
         let error = UcumError::dimension_mismatch(
             expected_dimension,
@@ -523,8 +522,11 @@ pub struct UnitResult {
 // Core API Enhancement - Search Functionality
 // ============================================================================
 
+#[cfg(feature = "std")]
 use fuzzy_matcher::FuzzyMatcher;
+#[cfg(feature = "std")]
 use fuzzy_matcher::skim::SkimMatcherV2;
+#[cfg(feature = "std")]
 use regex::Regex;
 
 /// Search for units by name, code, or display name.
@@ -563,8 +565,8 @@ pub fn search_units(query: &str) -> Vec<&'static UnitRecord> {
         let b_exact = b.code.to_lowercase() == query_lower;
 
         match (a_exact, b_exact) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
+            (true, false) => core::cmp::Ordering::Less,
+            (false, true) => core::cmp::Ordering::Greater,
             _ => a.code.len().cmp(&b.code.len()),
         }
     });
@@ -658,6 +660,7 @@ pub fn get_defined_forms(base_code: &str) -> Vec<&'static UnitRecord> {
 /// }
 /// ```
 #[allow(clippy::result_large_err)]
+#[cfg(feature = "std")]
 pub fn search_units_regex(
     pattern: &str,
     case_sensitive: bool,
@@ -689,8 +692,8 @@ pub fn search_units_regex(
         let b_code_match = regex.is_match(b.code);
 
         match (a_code_match, b_code_match) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
+            (true, false) => core::cmp::Ordering::Less,
+            (false, true) => core::cmp::Ordering::Greater,
             _ => a.code.len().cmp(&b.code.len()),
         }
     });
@@ -718,6 +721,7 @@ pub fn search_units_regex(
 ///     println!("{}: {} (score: {})", unit.code, unit.display_name, score);
 /// }
 /// ```
+#[cfg(feature = "std")]
 pub fn search_units_fuzzy(query: &str, threshold: i64) -> Vec<(&'static UnitRecord, i64)> {
     let matcher = SkimMatcherV2::default();
     let mut results = Vec::new();
@@ -737,7 +741,7 @@ pub fn search_units_fuzzy(query: &str, threshold: i64) -> Vec<(&'static UnitReco
     }
 
     // Sort by score (descending - best matches first)
-    results.sort_by_key(|a| std::cmp::Reverse(a.1));
+    results.sort_by_key(|a| core::cmp::Reverse(a.1));
 
     results
 }
@@ -764,7 +768,8 @@ pub enum ConceptKind {
 /// # Arguments
 /// * `query` - Query string to search for
 /// * `kinds` - List of concept kinds to include in results
-/// * `use_fuzzy` - Whether to use fuzzy matching (if false, uses substring matching)
+/// * `use_fuzzy` - Whether to use fuzzy matching (if false, uses substring matching).
+///   Fuzzy matching requires the `std` feature; without it substring matching is used.
 ///
 /// # Examples
 ///
@@ -782,12 +787,18 @@ pub fn search_units_filtered(
     kinds: &[ConceptKind],
     use_fuzzy: bool,
 ) -> Vec<&'static UnitRecord> {
+    #[cfg(feature = "std")]
     let all_results = if use_fuzzy {
         search_units_fuzzy(query, 30)
             .into_iter()
             .map(|(unit, _score)| unit)
             .collect()
     } else {
+        search_units(query)
+    };
+    #[cfg(not(feature = "std"))]
+    let all_results = {
+        let _ = use_fuzzy;
         search_units(query)
     };
 
@@ -1076,8 +1087,8 @@ pub fn validate_ucum() -> Vec<String> {
 ///     println!("Property: {}", property);
 /// }
 /// ```
-pub fn get_properties() -> HashSet<String> {
-    let mut properties = HashSet::new();
+pub fn get_properties() -> BTreeSet<String> {
+    let mut properties = BTreeSet::new();
 
     for unit in get_all_units() {
         properties.insert(unit.property.to_string());
@@ -1300,16 +1311,16 @@ pub fn convert_with_context(
     let final_value = match context.precision {
         DecimalPrecision::Default => converted_value,
         DecimalPrecision::Fixed(places) => {
-            let multiplier = 10f64.powi(places as i32);
-            (converted_value * multiplier).round() / multiplier
+            let multiplier = math::powi(10.0, places as i32);
+            math::round(converted_value * multiplier) / multiplier
         }
         DecimalPrecision::Significant(sig_figs) => {
             if converted_value == 0.0 {
                 0.0
             } else {
-                let magnitude = converted_value.abs().log10().floor();
-                let factor = 10f64.powi((sig_figs as i32 - 1) - magnitude as i32);
-                (converted_value * factor).round() / factor
+                let magnitude = math::floor(math::log10(converted_value.abs()));
+                let factor = math::powi(10.0, (sig_figs as i32 - 1) - magnitude as i32);
+                math::round(converted_value * factor) / factor
             }
         }
     };
@@ -1794,8 +1805,5 @@ impl MeasurementContext {
 }
 
 // Feature-gated modules
-#[cfg(feature = "wasm")]
-pub mod wasm;
-
 #[cfg(feature = "fhir")]
 pub mod fhir;

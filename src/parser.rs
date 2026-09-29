@@ -9,7 +9,8 @@
 
 use crate::ast::{OwnedUnitExpr, UnitExpr, UnitFactor};
 use crate::error::UcumError;
-use once_cell::sync::Lazy;
+use crate::math;
+use crate::prelude::*;
 use phf::phf_map;
 use smallvec::SmallVec;
 
@@ -25,10 +26,10 @@ static TIME_UNITS: phf::Map<&'static str, ()> = phf_map! {
 };
 
 /// ASCII character classification lookup table
-static CHAR_CLASS: Lazy<[CharClass; 256]> = Lazy::new(|| {
+static CHAR_CLASS: [CharClass; 256] = {
     let mut table = [CharClass::Invalid; 256];
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..256 {
+    let mut i = 0;
+    while i < 256 {
         let ch = i as u8 as char;
         table[i] = if ch.is_ascii_alphabetic() {
             CharClass::Letter
@@ -52,9 +53,10 @@ static CHAR_CLASS: Lazy<[CharClass; 256]> = Lazy::new(|| {
                 _ => CharClass::Invalid,
             }
         };
+        i += 1;
     }
     table
-});
+};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum CharClass {
@@ -107,7 +109,7 @@ impl CompactString {
     fn as_str(&self) -> &str {
         match self {
             CompactString::Inline { bytes, len } => unsafe {
-                std::str::from_utf8_unchecked(&bytes[..*len as usize])
+                core::str::from_utf8_unchecked(&bytes[..*len as usize])
             },
             CompactString::Heap(s) => s.as_str(),
         }
@@ -122,7 +124,7 @@ impl CompactString {
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 fn is_ascii_simd(bytes: &[u8]) -> bool {
-    use std::arch::x86_64::*;
+    use core::arch::x86_64::*;
 
     unsafe {
         let ascii_mask = _mm_set1_epi8(0x80u8 as i8);
@@ -529,7 +531,7 @@ impl<'a> OptimizedParser<'a> {
                 self.normalize_symbol(s)
             }
             Token::Number(n) => UnitExpr::Numeric(n),
-            Token::TenPower(exp) => UnitExpr::Numeric(10f64.powi(exp)),
+            Token::TenPower(exp) => UnitExpr::Numeric(math::powi(10.0, exp)),
             Token::OpenParen => {
                 // Parse parenthesized expression
                 let inner = self.parse_expression()?;

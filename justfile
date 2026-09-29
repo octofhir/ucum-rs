@@ -17,7 +17,10 @@ build-cli:
     cargo build --features cli
 
 build-wasm:
-    cargo build --features wasm
+    cargo build -p octofhir-ucum-wasm
+
+build-no-std:
+    cargo build --no-default-features --target thumbv7em-none-eabihf
 
 build-fhir:
     cargo build --features fhir
@@ -100,7 +103,7 @@ doc:
 
 # Build WASM package
 wasm-build:
-    wasm-pack build --target web --features wasm
+    wasm-pack build wasm --target web --out-dir ../pkg --out-name octofhir_ucum
 
 # Install CLI tool
 install-cli:

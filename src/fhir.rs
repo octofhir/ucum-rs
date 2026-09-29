@@ -4,6 +4,7 @@
 //! allowing for conversion between UCUM units and FHIR Quantity data types.
 //! It's only available when the "fhir" feature is enabled.
 
+use crate::prelude::*;
 use crate::{
     Quantity as UcumQuantity, UcumError, evaluate_owned, parse_expression, precision::to_f64,
 };

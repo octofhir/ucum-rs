@@ -15,6 +15,8 @@
 //! • Full offset algebra, logarithmic units, etc.
 //! • Detailed error diagnostics with spans.
 
+use crate::math;
+use crate::prelude::*;
 use crate::{
     ast::*,
     error::UcumError,
@@ -23,8 +25,6 @@ use crate::{
     precision::{Number, NumericOps, from_f64, to_f64},
     types::Dimension,
 };
-use lazy_static::lazy_static;
-use std::collections::HashMap;
 
 /// Helper to extract string from either Symbol or SymbolOwned variants
 fn extract_symbol_str<'a>(expr: &'a UnitExpr<'a>) -> Option<&'a str> {
@@ -33,17 +33,6 @@ fn extract_symbol_str<'a>(expr: &'a UnitExpr<'a>) -> Option<&'a str> {
         UnitExpr::SymbolOwned(s) => Some(s.as_str()),
         _ => None,
     }
-}
-
-// Optimized prefix lookup using HashMap for O(1) performance
-lazy_static! {
-    static ref PREFIX_MAP: HashMap<&'static str, crate::types::Prefix> = {
-        let mut map = HashMap::new();
-        for prefix in crate::registry::PREFIXES.iter() {
-            map.insert(prefix.symbol, *prefix);
-        }
-        map
-    };
 }
 
 /// Result returned by `evaluate()` – canonical factor, dimension vector, offset.
@@ -219,12 +208,12 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                             if (*v - 3.0).abs() < 1e-6 {
                                 // Special case for 3 dB in test_decibel_variations
                                 // Use exact √2 to match test expectation
-                                2.0f64.sqrt()
+                                core::f64::consts::SQRT_2
                             } else {
-                                10f64.powf(*v / 10.0) // 10^(dB/10) for power ratio
+                                math::powf(10.0, *v / 10.0) // 10^(dB/10) for power ratio
                             }
                         } else {
-                            10f64.powf(*v) // 10^B
+                            math::powf(10.0, *v) // 10^B
                         };
                         (from_f64(ratio_f64), EvalResult::ZERO_DIM)
                     }
@@ -233,7 +222,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                         let ratio_f64 = if scaled_val == Number::zero() {
                             1.0
                         } else {
-                            to_f64(scaled_val).exp()
+                            math::exp(to_f64(scaled_val))
                         };
                         (from_f64(ratio_f64), EvalResult::ZERO_DIM)
                     }
@@ -249,7 +238,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                             // For 100 [p'diop], this gives tan(1)
                             // The key is that we're scaling the input value to radians (n/100)
                             // and then taking the tangent of that
-                            let ratio_f64 = (to_f64(scaled_val) / 100.0).tan();
+                            let ratio_f64 = math::tan(to_f64(scaled_val) / 100.0);
                             (from_f64(ratio_f64), EvalResult::ZERO_DIM)
                         }
                     }
@@ -305,9 +294,10 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                                     // For regular units, evaluate normally
                                     EvalResult::from_unit(sym)?
                                 };
-                                result.factor = result
-                                    .factor
-                                    .mul(from_f64(to_f64(res.factor).powf(factor.exponent as f64)));
+                                result.factor = result.factor.mul(from_f64(math::powf(
+                                    to_f64(res.factor),
+                                    factor.exponent as f64,
+                                )));
                             }
                             UnitExpr::SymbolOwned(sym) => {
                                 let res = if sym == code {
@@ -460,7 +450,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                             // For 100 [p'diop], this gives tan(1)
                             // The key is that we're scaling the input value to radians (n/100)
                             // and then taking the tangent of that
-                            factor_acc = from_f64((to_f64(numeric_val) / 100.0).tan());
+                            factor_acc = from_f64(math::tan(to_f64(numeric_val) / 100.0));
                         }
 
                         // Apply dimensions

@@ -30,8 +30,8 @@ jobs:
       - name: Build (CLI only)
         run: cargo build --features cli --verbose
       
-      - name: Build (WASM only)
-        run: cargo build --features wasm --verbose
+      - name: Build (WASM bindings crate)
+        run: cargo build -p octofhir-ucum-wasm --verbose
       
       - name: Build (FHIR only)
         run: cargo build --features fhir --verbose
@@ -39,17 +39,40 @@ jobs:
       - name: Test (all features)
         run: cargo test --all-features --verbose
       
-      - name: Lint (clippy)
-        run: cargo clippy --all-features -- -D warnings || echo "it ok current"
+      - name: Test (no default features)
+        run: cargo test --no-default-features --verbose
+      
+      - name: Lint (clippy, all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      
+      - name: Lint (clippy, no default features)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
       
       - name: Format (rustfmt)
-        run: cargo fmt -- --check || echo "it ok current"
+        run: cargo fmt --all -- --check
       
       - name: Build docs
         run: cargo doc --no-deps --all-features
       
       - name: Run benchmarks (smoke test)
         run: cargo bench --no-run
+
+  no-std:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: thumbv7em-none-eabihf
+          override: true
+      
+      - name: Build (no_std, bare-metal target)
+        run: cargo build --no-default-features --target thumbv7em-none-eabihf --verbose
+      
+      - name: Lint (clippy, bare-metal target)
+        run: cargo clippy --no-default-features --target thumbv7em-none-eabihf -- -D warnings
 
   wasm-test:
     runs-on: ubuntu-latest
@@ -65,7 +88,7 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       
       - name: Build WASM
-        run: wasm-pack build --target web --features wasm
+        run: wasm-pack build wasm --target web --out-dir ../pkg --out-name octofhir_ucum
       
       - name: Test WASM build
         run: |

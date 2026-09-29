@@ -9,6 +9,8 @@
 //! - Conversion error bounds tracking
 //! - Multiple rounding modes
 
+use crate::math;
+use crate::prelude::*;
 use rust_decimal::{Decimal, RoundingStrategy};
 
 /// Numeric type used for UCUM calculations.
@@ -16,7 +18,7 @@ use rust_decimal::{Decimal, RoundingStrategy};
 pub type Number = Decimal;
 
 /// Trait for numeric operations that work with Decimal
-pub trait NumericOps: Copy + Clone + PartialEq + std::fmt::Debug {
+pub trait NumericOps: Copy + Clone + PartialEq + core::fmt::Debug {
     fn zero() -> Self;
     fn one() -> Self;
     fn from_f64(val: f64) -> Self;
@@ -103,7 +105,7 @@ impl NumericOps for f64 {
         self / other
     }
     fn pow(self, exp: i32) -> Self {
-        self.powi(exp)
+        math::powi(self, exp)
     }
     fn abs(self) -> Self {
         self.abs()
@@ -271,12 +273,12 @@ impl SafeFactor {
 
         // Extract mantissa and exponent using scientific notation
         let abs_value = value.abs();
-        let exponent = abs_value.log10().floor() as i16;
-        let mantissa_f64 = abs_value / 10.0_f64.powi(exponent as i32);
+        let exponent = math::floor(math::log10(abs_value)) as i16;
+        let mantissa_f64 = abs_value / math::powi(10.0, exponent as i32);
 
         // Scale to integer mantissa with maximum precision
         let scale = 10_i64.pow(15); // ~15 digits precision
-        let mantissa = (mantissa_f64 * scale as f64).round() as i64;
+        let mantissa = math::round(mantissa_f64 * scale as f64) as i64;
         let mantissa = if value < 0.0 { -mantissa } else { mantissa };
 
         Ok(Self {
@@ -314,7 +316,7 @@ impl SafeFactor {
         Ok(SafeFactor {
             mantissa: result_mantissa,
             exponent: result_exponent,
-            precision_bits: std::cmp::min(self.precision_bits, other.precision_bits),
+            precision_bits: core::cmp::min(self.precision_bits, other.precision_bits),
         })
     }
 
@@ -336,7 +338,7 @@ impl SafeFactor {
         Ok(SafeFactor {
             mantissa,
             exponent,
-            precision_bits: std::cmp::min(self.precision_bits, other.precision_bits),
+            precision_bits: core::cmp::min(self.precision_bits, other.precision_bits),
         })
     }
 
@@ -356,7 +358,7 @@ impl SafeFactor {
         if self.mantissa == 0 {
             0.0
         } else {
-            (self.mantissa as f64) * 10.0_f64.powi(self.exponent as i32)
+            (self.mantissa as f64) * math::powi(10.0, self.exponent as i32)
         }
     }
 }
@@ -386,7 +388,7 @@ pub mod conversion {
 
         // Estimate error bound based on precision
         let error_bound = if config.decimal_places > 0 {
-            10.0_f64.powi(-(config.decimal_places as i32))
+            math::powi(10.0, -(config.decimal_places as i32))
         } else {
             f64::EPSILON
         };

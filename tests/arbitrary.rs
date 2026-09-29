@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)] // UcumError is intentionally large, see src/lib.rs
+
 use octofhir_ucum::precision::{NumericOps, from_f64};
 use octofhir_ucum::{Dimension, EvalResult, UcumError, evaluate_owned, parse_expression};
 
