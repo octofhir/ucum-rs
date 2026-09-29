@@ -120,45 +120,6 @@ impl CompactString {
 // Fast character validation
 // ============================================================================
 
-/// SIMD-accelerated ASCII validation for x86_64
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-#[inline]
-fn is_ascii_simd(bytes: &[u8]) -> bool {
-    use core::arch::x86_64::*;
-
-    unsafe {
-        let ascii_mask = _mm_set1_epi8(0x80u8 as i8);
-
-        // Process 16 bytes at a time
-        let mut i = 0;
-        while i + 16 <= bytes.len() {
-            let chunk = _mm_loadu_si128(bytes.as_ptr().add(i) as *const __m128i);
-            let result = _mm_and_si128(chunk, ascii_mask);
-            if _mm_movemask_epi8(result) != 0 {
-                return false;
-            }
-            i += 16;
-        }
-
-        // Check remaining bytes
-        while i < bytes.len() {
-            if bytes[i] >= 128 {
-                return false;
-            }
-            i += 1;
-        }
-
-        true
-    }
-}
-
-#[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
-#[inline]
-#[allow(dead_code)] // Future optimization, not currently used
-fn is_ascii_simd(bytes: &[u8]) -> bool {
-    bytes.iter().all(|&b| b < 128)
-}
-
 /// Fast symbol character check using lookup table.
 ///
 /// Returns true if the character can be part of a UCUM symbol.
