@@ -638,7 +638,8 @@ fn split_prefix(code: &str) -> Option<(crate::types::Prefix, &str)> {
 
     // Fast path: try single-character prefix first (most common case)
     // This covers k, m, c, d, n, p, f, a, z, y, E, P, T, G, M, etc.
-    if let Some(prefix) = find_prefix_optimized(&code[..1]) {
+    // `get` rather than indexing: the offset may fall inside a multi-byte character
+    if let Some(prefix) = code.get(..1).and_then(find_prefix_optimized) {
         let remainder = &code[1..];
         if !remainder.is_empty() {
             return Some((*prefix, remainder));
@@ -648,13 +649,10 @@ fn split_prefix(code: &str) -> Option<(crate::types::Prefix, &str)> {
     // Slower path: try 2-3 character prefixes
     // This handles cases like "da" (deca), "Ki" (kibi), etc.
     for len in (2..=3).rev() {
-        if len <= code.len() {
-            let prefix_candidate = &code[..len];
-            if let Some(prefix) = find_prefix_optimized(prefix_candidate) {
-                let remainder = &code[len..];
-                if !remainder.is_empty() {
-                    return Some((*prefix, remainder));
-                }
+        if let Some(prefix) = code.get(..len).and_then(find_prefix_optimized) {
+            let remainder = &code[len..];
+            if !remainder.is_empty() {
+                return Some((*prefix, remainder));
             }
         }
     }
