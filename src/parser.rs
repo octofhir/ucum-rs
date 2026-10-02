@@ -256,14 +256,42 @@ impl<'a> Tokenizer<'a> {
                 if exp_start < symbol.len()
                     && let Ok(_exp) = symbol[exp_start..].parse::<i32>()
                 {
-                    self.pos = start + exp_start;
-                    return Some(Token::Symbol(&symbol[..exp_start]));
+                    // A minus sign right before the digits belongs to the exponent (e.g., "s-2")
+                    let base_end = match symbol[..exp_start].strip_suffix('-') {
+                        Some(base) if !base.is_empty() => base.len(),
+                        _ => exp_start,
+                    };
+                    self.pos = start + base_end;
+                    return Some(Token::Symbol(&symbol[..base_end]));
                 }
             }
 
             Some(Token::Symbol(symbol))
         } else {
             None
+        }
+    }
+
+    /// Scan a negative exponent written right after a unit symbol (e.g., the "-2" in "s-2").
+    ///
+    /// Returns `Ok(None)` and leaves the position untouched if there is no such exponent.
+    #[allow(clippy::result_large_err)]
+    fn scan_negative_exponent(&mut self) -> Result<Option<i32>, UcumError> {
+        if self.current_byte() != Some(b'-')
+            || !self.peek_byte(1).is_some_and(|b| b.is_ascii_digit())
+        {
+            return Ok(None);
+        }
+
+        let start = self.pos;
+        self.pos += 1;
+        while self.current_byte().is_some_and(|b| b.is_ascii_digit()) {
+            self.pos += 1;
+        }
+
+        match self.input[start..self.pos].parse::<i32>() {
+            Ok(exp) => Ok(Some(exp)),
+            Err(_) => Err(UcumError::invalid_expression("Invalid exponent")),
         }
     }
 
@@ -465,6 +493,7 @@ impl<'a> OptimizedParser<'a> {
             Some(t) => t,
             None => return Ok(None),
         };
+        let is_symbol = matches!(token, Token::Symbol(_));
 
         let base_expr = match token {
             Token::Symbol(s) => {
@@ -512,18 +541,23 @@ impl<'a> OptimizedParser<'a> {
         let mut exponent = 1;
         let saved_pos = self.tokenizer.pos;
 
-        match self.tokenizer.next_token() {
-            Some(Token::Operator('^')) => match self.tokenizer.next_token() {
-                Some(Token::Number(n)) => exponent = n as i32,
-                _ => return Err(UcumError::invalid_expression("Invalid exponent")),
-            },
-            Some(Token::Number(n)) => {
-                // Implicit exponent (e.g., s2 -> s^2)
-                exponent = n as i32;
-            }
-            _ => {
-                // No exponent, backtrack
-                self.tokenizer.pos = saved_pos;
+        if is_symbol && let Some(exp) = self.tokenizer.scan_negative_exponent()? {
+            // Negative exponent (e.g., s-2 -> s^-2), UCUM §9
+            exponent = exp;
+        } else {
+            match self.tokenizer.next_token() {
+                Some(Token::Operator('^')) => match self.tokenizer.next_token() {
+                    Some(Token::Number(n)) => exponent = n as i32,
+                    _ => return Err(UcumError::invalid_expression("Invalid exponent")),
+                },
+                Some(Token::Number(n)) => {
+                    // Implicit exponent (e.g., s2 -> s^2)
+                    exponent = n as i32;
+                }
+                _ => {
+                    // No exponent, backtrack
+                    self.tokenizer.pos = saved_pos;
+                }
             }
         }
 
