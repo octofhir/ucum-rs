@@ -271,7 +271,10 @@ pub fn find_unit_optimized(code: &str) -> Option<&'static UnitRecord> {
     // If direct lookup fails, try to decompose into prefix + base unit
     // Check all possible prefix lengths (longest first to avoid ambiguity)
     for prefix_len in (1..code.len()).rev() {
-        let (prefix_part, unit_part) = code.split_at(prefix_len);
+        // Skip offsets that fall inside a multi-byte character
+        let Some((prefix_part, unit_part)) = code.split_at_checked(prefix_len) else {
+            continue;
+        };
 
         // Check if prefix_part is a valid prefix and unit_part is a valid unit
         if let (Some(_prefix), Some(&unit)) = (
