@@ -653,7 +653,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-ucum-wasm"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "console_error_panic_hook",
  "octofhir-ucum",
