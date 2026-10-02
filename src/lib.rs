@@ -443,11 +443,8 @@ pub fn multiply(
     let result_factor = analysis1.factor * analysis2.factor;
 
     // Combine dimensions
-    let mut result_dim = [0i8; 7];
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..7 {
-        result_dim[i] = analysis1.dimension.0[i] + analysis2.dimension.0[i];
-    }
+    let mut result_dim = analysis1.dimension.0;
+    crate::evaluator::add_scaled_dim(&mut result_dim, &analysis2.dimension, 1)?;
 
     let result_unit = build_canonical_unit_string(&Dimension(result_dim));
 
@@ -500,11 +497,8 @@ pub fn divide_by(
     let result_factor = analysis1.factor / analysis2.factor;
 
     // Combine dimensions (subtract divisor from dividend)
-    let mut result_dim = [0i8; 7];
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..7 {
-        result_dim[i] = analysis1.dimension.0[i] - analysis2.dimension.0[i];
-    }
+    let mut result_dim = analysis1.dimension.0;
+    crate::evaluator::add_scaled_dim(&mut result_dim, &analysis2.dimension, -1)?;
 
     let result_unit = build_canonical_unit_string(&Dimension(result_dim));
 
@@ -893,11 +887,8 @@ pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, U
     let result_factor = analysis1.factor * analysis2.factor;
 
     // Add dimensions
-    let mut result_dimension = [0i8; 7];
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..7 {
-        result_dimension[i] = analysis1.dimension.0[i].saturating_add(analysis2.dimension.0[i]);
-    }
+    let mut result_dimension = analysis1.dimension.0;
+    crate::evaluator::add_scaled_dim(&mut result_dimension, &analysis2.dimension, 1)?;
 
     // Build result expression string
     let result_expression = if unit1 == "1" {
@@ -956,11 +947,8 @@ pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticR
     let result_factor = analysis1.factor / analysis2.factor;
 
     // Subtract dimensions
-    let mut result_dimension = [0i8; 7];
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..7 {
-        result_dimension[i] = analysis1.dimension.0[i].saturating_sub(analysis2.dimension.0[i]);
-    }
+    let mut result_dimension = analysis1.dimension.0;
+    crate::evaluator::add_scaled_dim(&mut result_dimension, &analysis2.dimension, -1)?;
 
     // Build result expression string
     let result_expression = if denominator == "1" {

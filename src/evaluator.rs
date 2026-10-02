@@ -94,16 +94,21 @@ fn checked_pow(base: Number, exp: i32) -> Result<Number, UcumError> {
 /// `acc += dim * exp` per component, with an error instead of wrapping or saturating
 /// when a component does not fit in `i8`.
 #[allow(clippy::result_large_err)]
-fn add_scaled_dim(acc: &mut [i8; 7], dim: &Dimension, exp: i32) -> Result<(), UcumError> {
+pub(crate) fn add_scaled_dim(
+    acc: &mut [i8; 7],
+    dim: &Dimension,
+    exp: i32,
+) -> Result<(), UcumError> {
     for (a, &d) in acc.iter_mut().zip(dim.0.iter()) {
+        let current = *a;
         *a = i32::from(d)
             .checked_mul(exp)
-            .and_then(|v| v.checked_add(i32::from(*a)))
+            .and_then(|v| v.checked_add(i32::from(current)))
             .and_then(|v| i8::try_from(v).ok())
             .ok_or_else(|| {
                 UcumError::precision_overflow(
                     "dimension exponent",
-                    &format!("{d} * {exp} does not fit in i8"),
+                    &format!("{current} + {d} * {exp} does not fit in i8"),
                 )
             })?;
     }
