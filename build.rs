@@ -96,6 +96,13 @@ fn main() {
         String,
         Option<String>,
     )> = Vec::new();
+    // Dimensions of the base units, the definition of every other unit, and the codes
+    // that take prefixes
+    let mut base_dims: std::collections::HashMap<String, [i8; 7]> =
+        std::collections::HashMap::new();
+    let mut definitions: std::collections::HashMap<String, Definition> =
+        std::collections::HashMap::new();
+    let mut metric_codes: Vec<String> = Vec::new();
 
     // reuse reader on xml_data
     let mut reader = quick_xml::Reader::from_str(&xml_data);
@@ -132,16 +139,24 @@ fn main() {
                                         in_property_tag = false;
                                     }
                                     if in_n_tag {
-                                        display_name =
-                                            String::from_utf8_lossy(text).trim().to_string();
-                                        in_n_tag = false;
+                                        display_name.push_str(&String::from_utf8_lossy(text));
                                     }
+                                }
+                                Ok(Event::GeneralRef(ref r)) if in_n_tag => {
+                                    // Character references, e.g. "&#232;" in "amp&#232;re"
+                                    if let Ok(Some(ch)) = r.resolve_char_ref() {
+                                        display_name.push(ch);
+                                    }
+                                }
+                                Ok(Event::End(ref ve)) if ve.name().as_ref() == b"name" => {
+                                    in_n_tag = false;
                                 }
                                 Ok(Event::Start(ref ve)) if ve.name().as_ref() == b"property" => {
                                     in_property_tag = true;
                                 }
                                 Ok(Event::Start(ref ve)) if ve.name().as_ref() == b"name" => {
-                                    in_n_tag = true;
+                                    // Some units have several names; the first one is the primary
+                                    in_n_tag = display_name.is_empty();
                                 }
                                 Ok(Event::End(ref ve)) if ve.name().as_ref() == b"base-unit" => {
                                     break;
@@ -152,10 +167,13 @@ fn main() {
                         }
 
                         // Default display name to code if not found
+                        display_name = display_name.trim().to_string();
                         if display_name.is_empty() {
                             display_name = code.clone();
                         }
 
+                        base_dims.insert(code.clone(), dim);
+                        metric_codes.push(code.clone());
                         units.push((
                             code,
                             dim,
@@ -180,6 +198,12 @@ fn main() {
                             .find(|a| a.key.as_ref() == b"dim")
                             .map(|a| String::from_utf8_lossy(&a.value).to_string());
                         let mut dim = dim_attr.as_deref().map_or([0i8; 7], parse_dim);
+                        let is_metric = e
+                            .attributes()
+                            .filter_map(|a| a.ok())
+                            .any(|a| a.key.as_ref() == b"isMetric" && a.value.as_ref() == b"yes");
+                        let mut xml_value = 1.0f64;
+                        let mut has_function = false;
                         // Need to capture <value> child to get a factor (may combine Unit attr) and maybe offset
                         // Also capture <property> child to get unit classification and <name> for display name
                         let mut factor: Option<f64> = None;
@@ -210,7 +234,8 @@ fn main() {
                                             unit_ref_for_dim = Some(u.to_string());
                                         }
                                         if let Some(v) = val_num {
-                                            f *= v.parse::<f64>().unwrap_or(1.0);
+                                            xml_value = v.parse::<f64>().unwrap_or(1.0);
+                                            f *= xml_value;
                                         }
                                         factor = Some(f);
                                         if let Some(o_attr) =
@@ -220,10 +245,13 @@ fn main() {
                                                 .parse::<f64>()
                                                 .unwrap_or(0.0);
                                         }
+                                    } else if ve.name().as_ref() == b"function" {
+                                        has_function = true;
                                     } else if ve.name().as_ref() == b"property" {
                                         in_property_tag = true;
                                     } else if ve.name().as_ref() == b"name" {
-                                        in_n_tag = true;
+                                        // Some units have several names; the first one is the primary
+                                        in_n_tag = display_name.is_empty();
                                     }
                                 }
                                 Ok(Event::Text(ref text)) => {
@@ -233,10 +261,17 @@ fn main() {
                                         in_property_tag = false;
                                     }
                                     if in_n_tag {
-                                        display_name =
-                                            String::from_utf8_lossy(text).trim().to_string();
-                                        in_n_tag = false;
+                                        display_name.push_str(&String::from_utf8_lossy(text));
                                     }
+                                }
+                                Ok(Event::GeneralRef(ref r)) if in_n_tag => {
+                                    // Character references, e.g. "&#232;" in "amp&#232;re"
+                                    if let Ok(Some(ch)) = r.resolve_char_ref() {
+                                        display_name.push(ch);
+                                    }
+                                }
+                                Ok(Event::End(ref ve)) if ve.name().as_ref() == b"name" => {
+                                    in_n_tag = false;
                                 }
                                 Ok(Event::End(ref ve)) if ve.name().as_ref() == b"unit" => break,
                                 Ok(Event::Eof) => break,
@@ -245,9 +280,21 @@ fn main() {
                         }
 
                         // Default display name to code if not found
+                        display_name = display_name.trim().to_string();
                         if display_name.is_empty() {
                             display_name = code.clone();
                         }
+                        if is_metric {
+                            metric_codes.push(code.clone());
+                        }
+                        definitions.insert(
+                            code.clone(),
+                            Definition {
+                                value: xml_value,
+                                unit: unit_ref_for_dim.clone(),
+                                has_function,
+                            },
+                        );
                         // Special handling for Celsius, Fahrenheit, Rankine, Réaumur, Liter, and Imperial units
                         match code.as_str() {
                             "Cel" => {
@@ -693,13 +740,16 @@ fn main() {
             if let Some(ref_unit) = unit_ref {
                 // Use the original XML factor, not the current resolved factor
                 let original_factor = original_factors.get(&code).copied().unwrap_or(1.0);
+                // The first pass already multiplied in `parse_factor(Unit)`; take it out so
+                // the reference is not applied twice (e.g. "%" is 1 × 10*-2, not 10*-4)
+                let value = original_factor / parse_factor(&ref_unit);
                 let resolved_factor = resolve_unit_factor(&ref_unit, &unit_factors);
                 let final_factor = if code == "[in_i]" {
                     // Special case for [in_i] to ensure exact precision
                     // 1 inch = 2.54 cm = 0.0254 m (exactly)
                     0.0254
                 } else {
-                    original_factor * resolved_factor
+                    value * resolved_factor
                 };
 
                 // Only update if the resolved factor has changed from 1.0 (meaning we found a better resolution)
@@ -877,6 +927,27 @@ fn main() {
         }
     }
 
+    // Final pass: evaluate every definition ("[ft_i].[lbf_av]/s", "4.[pi].10*-7.N/A2")
+    // from the base units up. This overrides the heuristic factors and dimensions above
+    // for all units except the special ones defined through a function ("cel(1 K)").
+    metric_codes.sort();
+    let mut resolver = Resolver {
+        base_dims: &base_dims,
+        definitions: &definitions,
+        prefixes: prefixes
+            .iter()
+            .map(|p| (p.0.clone(), decimal(p.1)))
+            .collect(),
+        metric_codes: &metric_codes,
+        cache: std::collections::HashMap::new(),
+    };
+    for unit in units.iter_mut() {
+        if let Some((factor, dim)) = resolver.unit(&unit.0) {
+            unit.1 = dim;
+            unit.2 = factor.to_f64();
+        }
+    }
+
     // Units array
     out.push_str("use crate::types::SpecialKind;\n");
     out.push_str("#[allow(clippy::approx_constant)] // Constants come from UCUM specification\n");
@@ -900,6 +971,14 @@ fn main() {
     out.push_str("]\n;\n\n");
 
     // Units array
+
+    // Codes of the units that take prefixes (UCUM isMetric="yes")
+    out.push_str("pub static METRIC_UNITS: &[&str] = &[\n");
+    for code in &metric_codes {
+        out.push_str(&format!("    \"{code}\",\n"));
+    }
+    out.push_str("];\n\n");
+    out.push_str("pub fn is_metric(code: &str) -> bool {\n    METRIC_UNITS.binary_search(&code).is_ok()\n}\n\n");
 
     // lookup functions
     out.push_str("pub fn find_prefix(sym: &str) -> Option<&'static Prefix> {\n    PREFIXES.binary_search_by(|p| p.symbol.cmp(sym)).ok().map(|i| &PREFIXES[i])\n}\n\n");
@@ -967,6 +1046,208 @@ fn parse_factor(text: &str) -> f64 {
     txt.parse::<f64>().unwrap_or(1.0)
 }
 
+/// A unit definition from `<value Unit="..." value="...">`.
+struct Definition {
+    value: f64,
+    unit: Option<String>,
+    /// Defined through a special function such as "cel(1 K)" or "2lg(1 mV)"
+    has_function: bool,
+}
+
+/// A factor kept as `mantissa × 10^exp`, so that decimal prefixes and powers of ten
+/// stay exact ("L" is 10^-3, not 0.1³ = 0.0010000000000000002).
+#[derive(Clone, Copy)]
+struct Factor {
+    mantissa: f64,
+    exp: i32,
+}
+
+impl Factor {
+    const ONE: Self = Self {
+        mantissa: 1.0,
+        exp: 0,
+    };
+
+    fn mul(self, other: Self) -> Self {
+        Self {
+            mantissa: self.mantissa * other.mantissa,
+            exp: self.exp + other.exp,
+        }
+    }
+
+    fn div(self, other: Self) -> Self {
+        Self {
+            mantissa: self.mantissa / other.mantissa,
+            exp: self.exp - other.exp,
+        }
+    }
+
+    fn powi(self, n: i32) -> Self {
+        Self {
+            mantissa: self.mantissa.powi(n),
+            exp: self.exp * n,
+        }
+    }
+
+    fn to_f64(self) -> f64 {
+        // Parsing the decimal rounds once; 10f64.powi is inexact beyond 10^22
+        format!("{}e{}", self.mantissa, self.exp)
+            .parse()
+            .expect("finite factor")
+    }
+}
+
+/// Evaluates unit definitions into a factor (relative to the base units) and a
+/// dimension. Definitions are UCUM terms: factors joined by '.' and '/', evaluated
+/// left to right, with exponents, prefixes, integers and powers of ten.
+struct Resolver<'a> {
+    base_dims: &'a std::collections::HashMap<String, [i8; 7]>,
+    definitions: &'a std::collections::HashMap<String, Definition>,
+    prefixes: std::collections::HashMap<String, Factor>,
+    metric_codes: &'a [String],
+    cache: std::collections::HashMap<String, Option<(Factor, [i8; 7])>>,
+}
+
+impl Resolver<'_> {
+    /// Factor and dimension of a unit code, or `None` for a special unit.
+    fn unit(&mut self, code: &str) -> Option<(Factor, [i8; 7])> {
+        if let Some(resolved) = self.cache.get(code) {
+            return *resolved;
+        }
+        // Guards against cyclic definitions
+        self.cache.insert(code.to_string(), None);
+        let resolved = self.compute(code);
+        self.cache.insert(code.to_string(), resolved);
+        resolved
+    }
+
+    fn compute(&mut self, code: &str) -> Option<(Factor, [i8; 7])> {
+        // Amount of substance is a dimension of its own here, not 6.02214076 10*23
+        if code == "mol" {
+            return Some((Factor::ONE, [0, 0, 0, 0, 0, 1, 0]));
+        }
+        if let Some(dim) = self.base_dims.get(code) {
+            return Some((Factor::ONE, *dim));
+        }
+        let definition = self.definitions.get(code)?;
+        if definition.has_function {
+            return None;
+        }
+        let value = definition.value;
+        let term = definition.unit.clone()?;
+        let (factor, dim) = self.term(&term)?;
+        Some((factor.mul(decimal(value)), dim))
+    }
+
+    /// A unit atom, possibly with a prefix ("kg", "m[Hg]", "mm[Hg]").
+    fn atom(&mut self, symbol: &str) -> Option<(Factor, [i8; 7])> {
+        if symbol == "mol"
+            || self.base_dims.contains_key(symbol)
+            || self.definitions.contains_key(symbol)
+        {
+            return self.unit(symbol);
+        }
+        for len in [1, 2] {
+            let (Some(prefix), Some(rest)) = (symbol.get(..len), symbol.get(len..)) else {
+                continue;
+            };
+            if let Some(&prefix_factor) = self.prefixes.get(prefix)
+                && self
+                    .metric_codes
+                    .binary_search_by(|c| c.as_str().cmp(rest))
+                    .is_ok()
+            {
+                let (factor, dim) = self.unit(rest)?;
+                return Some((prefix_factor.mul(factor), dim));
+            }
+        }
+        None
+    }
+
+    /// One factor of a term: an integer, a power of ten, or an atom with an exponent.
+    fn component(&mut self, text: &str) -> Option<(Factor, [i8; 7])> {
+        if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
+            return Some((decimal(text.parse().ok()?), [0; 7]));
+        }
+        if let Some(exp) = text
+            .strip_prefix("10*")
+            .or_else(|| text.strip_prefix("10^"))
+        {
+            let exp = exp.parse().ok()?;
+            return Some((Factor { mantissa: 1.0, exp }, [0; 7]));
+        }
+        let last = text.bytes().rposition(|b| !b.is_ascii_digit())?;
+        let (symbol, exp) = if last + 1 < text.len() {
+            let base_end = if matches!(text.as_bytes()[last], b'-' | b'+') {
+                last
+            } else {
+                last + 1
+            };
+            (&text[..base_end], text[base_end..].parse::<i32>().ok()?)
+        } else {
+            (text, 1)
+        };
+        let (factor, dim) = self.atom(symbol)?;
+        Some((factor.powi(exp), dim.map(|d| d * exp as i8)))
+    }
+
+    /// A term: components joined by '.' and '/', left to right, with an optional
+    /// leading '/'.
+    fn term(&mut self, text: &str) -> Option<(Factor, [i8; 7])> {
+        let mut factor = Factor::ONE;
+        let mut dim = [0i8; 7];
+        let (mut divide, mut rest) = match text.strip_prefix('/') {
+            Some(rest) => (true, rest),
+            None => (false, text),
+        };
+        loop {
+            // Split at the next operator outside square brackets
+            let mut depth = 0;
+            let end = rest
+                .bytes()
+                .position(|b| {
+                    match b {
+                        b'[' => depth += 1,
+                        b']' => depth -= 1,
+                        _ => {}
+                    }
+                    depth == 0 && (b == b'.' || b == b'/')
+                })
+                .unwrap_or(rest.len());
+            let (f, d) = self.component(&rest[..end])?;
+            factor = if divide { factor.div(f) } else { factor.mul(f) };
+            for (acc, x) in dim.iter_mut().zip(d) {
+                *acc += if divide { -x } else { x };
+            }
+            if end == rest.len() {
+                return Some((factor, dim));
+            }
+            divide = rest.as_bytes()[end] == b'/';
+            rest = &rest[end + 1..];
+        }
+    }
+}
+
+/// A plain number as a `Factor`, pulling out its power of ten when it is one
+/// (0.001 -> 10^-3, 2.54 stays 2.54).
+fn decimal(value: f64) -> Factor {
+    if value > 0.0 {
+        let exp = value.log10().round() as i32;
+        let exact = if exp >= 0 {
+            10f64.powi(exp)
+        } else {
+            1.0 / 10f64.powi(-exp)
+        };
+        if value == exact {
+            return Factor { mantissa: 1.0, exp };
+        }
+    }
+    Factor {
+        mantissa: value,
+        exp: 0,
+    }
+}
+
 fn parse_dim(tag: &str) -> [i8; 7] {
     let mut v = [0i8; 7];
     for ch in tag.chars() {
@@ -977,7 +1258,8 @@ fn parse_dim(tag: &str) -> [i8; 7] {
             'I' => v[3] = 1,
             'C' | 'θ' | 'Θ' => v[4] = 1, // temperature
             'N' => v[5] = 1,
-            'J' => v[6] = 1,
+            // Luminous intensity: "J" in some sources, "F" in ucum-essence.xml
+            'J' | 'F' => v[6] = 1,
             'Q' => {
                 // Charge dimension: time × current
                 v[2] = 1; // time

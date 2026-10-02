@@ -50,7 +50,7 @@ pub struct FhirQuantity {
     pub unit: Option<String>,
 
     /// The system that defines the coded unit form.
-    /// For UCUM, this is "http://unitsofmeasure.org".
+    /// For UCUM, this is `http://unitsofmeasure.org`.
     pub system: Option<String>,
 
     /// The coded form of the unit, from the system.
@@ -77,7 +77,7 @@ impl FhirQuantity {
     /// Create a new FHIR Quantity with a UCUM code.
     ///
     /// This is a convenience method for creating a FHIR Quantity with a UCUM code.
-    /// It sets the system to "http://unitsofmeasure.org" and the code to the provided UCUM code.
+    /// It sets the system to `http://unitsofmeasure.org` and the code to the provided UCUM code.
     ///
     /// # Arguments
     ///
@@ -112,7 +112,7 @@ impl FhirQuantity {
     ///
     /// # Returns
     ///
-    /// `true` if the system is "http://unitsofmeasure.org", `false` otherwise.
+    /// `true` if the system is `http://unitsofmeasure.org`, `false` otherwise.
     pub fn is_ucum(&self) -> bool {
         self.system
             .as_ref()
@@ -129,7 +129,7 @@ impl FhirQuantity {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The system is not "http://unitsofmeasure.org"
+    /// - The system is not `http://unitsofmeasure.org`
     /// - The code is missing
     /// - The code is not a valid UCUM code
     pub fn to_ucum_quantity(&self) -> Result<UcumQuantity, FhirError> {

@@ -43,6 +43,59 @@ pub enum OwnedUnitExpr {
     Symbol(String),
 }
 
+// Display writes UCUM that parses back to the same unit: "kg/(m.s)", "s-2", "10*-3".
+
+/// A number as UCUM can read it back: an integer or a power of ten.
+fn write_numeric(f: &mut fmt::Formatter<'_>, val: f64) -> fmt::Result {
+    if (0.0..1e15).contains(&val) && val == crate::math::round(val) {
+        return write!(f, "{}", val as u64);
+    }
+    if val > 0.0 {
+        let exp = crate::math::round(crate::math::log10(val)) as i32;
+        if crate::math::powi(10.0, exp) == val {
+            return write!(f, "10*{exp}");
+        }
+    }
+    write!(f, "{val}")
+}
+
+/// `base` raised to `exp`: "s-2" after a unit symbol, "(...)^2" otherwise.
+fn write_power(
+    f: &mut fmt::Formatter<'_>,
+    base: &dyn fmt::Display,
+    unit_symbol: bool,
+    exp: i32,
+) -> fmt::Result {
+    if exp == 1 {
+        write!(f, "{base}")
+    } else if unit_symbol {
+        write!(f, "{base}{exp}")
+    } else {
+        write!(f, "({base})^{exp}")
+    }
+}
+
+/// A symbol that can take an exponent right after it (not an annotation or the unity).
+fn is_unit_symbol(sym: &str) -> bool {
+    !sym.is_empty() && !sym.starts_with('{')
+}
+
+impl UnitExpr<'_> {
+    fn is_unit_symbol(&self) -> bool {
+        match self {
+            UnitExpr::Symbol(sym) => is_unit_symbol(sym),
+            UnitExpr::SymbolOwned(sym) => is_unit_symbol(sym),
+            _ => false,
+        }
+    }
+}
+
+impl OwnedUnitExpr {
+    fn is_unit_symbol(&self) -> bool {
+        matches!(self, OwnedUnitExpr::Symbol(sym) if is_unit_symbol(sym))
+    }
+}
+
 impl<'a> fmt::Display for UnitExpr<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -55,9 +108,13 @@ impl<'a> fmt::Display for UnitExpr<'a> {
                 }
                 Ok(())
             }
-            UnitExpr::Quotient(num, den) => write!(f, "{num}/{den}"),
-            UnitExpr::Power(expr, exp) => write!(f, "({expr})^{exp}"),
-            UnitExpr::Numeric(val) => write!(f, "{val}"),
+            // '.' and '/' bind left to right, so a compound denominator needs parentheses
+            UnitExpr::Quotient(num, den) => match den.as_ref() {
+                UnitExpr::Product(_) | UnitExpr::Quotient(..) => write!(f, "{num}/({den})"),
+                _ => write!(f, "{num}/{den}"),
+            },
+            UnitExpr::Power(expr, exp) => write_power(f, expr, expr.is_unit_symbol(), *exp),
+            UnitExpr::Numeric(val) => write_numeric(f, *val),
             UnitExpr::Symbol(sym) => write!(f, "{sym}"),
             UnitExpr::SymbolOwned(sym) => write!(f, "{sym}"),
         }
@@ -76,9 +133,15 @@ impl fmt::Display for OwnedUnitExpr {
                 }
                 Ok(())
             }
-            OwnedUnitExpr::Quotient(num, den) => write!(f, "{num}/{den}"),
-            OwnedUnitExpr::Power(expr, exp) => write!(f, "({expr})^{exp}"),
-            OwnedUnitExpr::Numeric(val) => write!(f, "{val}"),
+            // '.' and '/' bind left to right, so a compound denominator needs parentheses
+            OwnedUnitExpr::Quotient(num, den) => match den.as_ref() {
+                OwnedUnitExpr::Product(_) | OwnedUnitExpr::Quotient(..) => {
+                    write!(f, "{num}/({den})")
+                }
+                _ => write!(f, "{num}/{den}"),
+            },
+            OwnedUnitExpr::Power(expr, exp) => write_power(f, expr, expr.is_unit_symbol(), *exp),
+            OwnedUnitExpr::Numeric(val) => write_numeric(f, *val),
             OwnedUnitExpr::Symbol(sym) => write!(f, "{sym}"),
         }
     }
@@ -101,21 +164,13 @@ pub struct OwnedUnitFactor {
 
 impl<'a> fmt::Display for UnitFactor<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.exponent == 1 {
-            write!(f, "{}", self.expr)
-        } else {
-            write!(f, "{}^{}", self.expr, self.exponent)
-        }
+        write_power(f, &self.expr, self.expr.is_unit_symbol(), self.exponent)
     }
 }
 
 impl fmt::Display for OwnedUnitFactor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.exponent == 1 {
-            write!(f, "{}", self.expr)
-        } else {
-            write!(f, "{}^{}", self.expr, self.exponent)
-        }
+        write_power(f, &self.expr, self.expr.is_unit_symbol(), self.exponent)
     }
 }
 

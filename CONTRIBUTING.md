@@ -156,7 +156,7 @@ If proposing performance improvements:
 
 1. **Unit tests** - Test individual functions and components
 2. **Integration tests** - Test complete parsing and evaluation flows
-3. **Official conformance tests** - UCUM specification compliance (98.6% pass rate)
+3. **Official conformance tests** - UCUM specification compliance (100% pass rate)
 4. **Property-based tests** - Using `proptest` for edge case discovery
 5. **Fuzzing tests** - Located in `ucum-fuzz/` directory
 

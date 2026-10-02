@@ -76,13 +76,10 @@ fn test_concept_kind_filtering() {
 #[cfg(feature = "std")]
 fn test_fuzzy_with_filtering() {
     // Test fuzzy search combined with concept kind filtering
-    let results = search_units_filtered("metter", &[ConceptKind::BaseUnit], true);
+    let results = search_units_filtered("metr", &[ConceptKind::BaseUnit], true);
 
-    // Should find some results
-    assert!(!results.is_empty());
-
-    // All results should be base units (this is a simplified check)
-    // In practice, the classification might be more complex
+    // Should find the meter
+    assert!(results.iter().any(|unit| unit.code == "m"));
 }
 
 #[test]

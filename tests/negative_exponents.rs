@@ -1,8 +1,10 @@
-//! UCUM §9: negative exponents are written with a leading minus sign (`s-1`, `m.s-2`).
+//! UCUM §9: exponents written right after a unit, with an optional sign
+//! (`s-1`, `m.s-2`, `m+2`).
 
 use octofhir_ucum::precision::{NumericOps, from_f64};
 use octofhir_ucum::{
-    Dimension, EvalResult, OwnedUnitExpr, OwnedUnitFactor, evaluate_owned, parse_expression,
+    Dimension, EvalResult, OwnedUnitExpr, OwnedUnitFactor, evaluate_owned, get_canonical_units,
+    parse_expression, validate,
 };
 
 fn sym(s: &str) -> OwnedUnitExpr {
@@ -88,4 +90,57 @@ fn applies_prefix() {
     let per_mm = eval("mm-1");
     assert_eq!(per_mm.dim, Dimension([0, -1, 0, 0, 0, 0, 0]));
     assert!((per_mm.factor.sub(from_f64(1_000.0))).abs() < from_f64(1e-6));
+}
+
+#[test]
+fn parses_plus_sign() {
+    // UCUM §9: positive exponents may carry an optional plus sign
+    assert_eq!(
+        parse_expression("m+2").unwrap(),
+        OwnedUnitExpr::Power(Box::new(sym("m")), 2)
+    );
+    assert_eq!(eval("m+2.s-1").dim, eval("m2/s").dim);
+    assert!(validate("10*+3/uL").is_ok());
+}
+
+#[test]
+fn plus_is_not_addition() {
+    for expr in ["m+", "m+s", "10+3/ul"] {
+        assert!(parse_expression(expr).is_err(), "{expr}");
+    }
+    // ...but annotations may contain it
+    assert!(validate("mg{a+b}").is_ok());
+}
+
+#[test]
+fn parses_after_micro_sign() {
+    assert_eq!(
+        parse_expression("µs-1").unwrap(),
+        parse_expression("us-1").unwrap()
+    );
+    assert_eq!(
+        parse_expression("µm2").unwrap(),
+        OwnedUnitExpr::Power(Box::new(sym("um")), 2)
+    );
+}
+
+#[test]
+fn rejects_malformed() {
+    for expr in ["s-", "s--1", "s-2-3", "(m.s)-1", "m{a}-2", "s -2"] {
+        assert!(validate(expr).is_err(), "{expr}");
+    }
+}
+
+#[test]
+fn round_trips_canonical_units() {
+    // Canonical units are written with negative exponents ("kg.m.s-2")
+    for unit in ["N", "Pa", "Hz", "J/kg"] {
+        let canonical = get_canonical_units(unit).unwrap();
+        assert_eq!(
+            eval(&canonical.unit).dim,
+            canonical.dimension,
+            "{unit} -> {}",
+            canonical.unit
+        );
+    }
 }

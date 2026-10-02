@@ -96,6 +96,14 @@ pub fn find_prefix(sym: &str) -> Option<&'static Prefix> {
 /// ```
 #[allow(clippy::result_large_err)]
 pub fn validate(expression: &str) -> Result<(), UcumError> {
+    // An empty string is not a valid term (the unity is written "1"), although
+    // `parse_expression` reads it as the unity
+    if expression.trim().is_empty() {
+        return Err(UcumError::invalid_expression(
+            "Empty expression: the unity is written \"1\"",
+        ));
+    }
+
     // Create suggestion engine for enhanced error messages
     // First, try to parse the expression
     let parsed = match parse_expression(expression) {

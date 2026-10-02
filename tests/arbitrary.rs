@@ -20,11 +20,10 @@ fn arbitrary_unit_dimensionless() {
 }
 
 #[test]
-fn arbitrary_unit_custom() {
-    // Test that custom arbitrary units work
-    let custom = eval("[custom'U]").unwrap();
-    assert_eq!(custom.dim, Dimension([0; 7]));
-    assert!((custom.factor.sub(from_f64(1.0))).abs() < from_f64(1e-12));
+fn unknown_bracket_unit_is_rejected() {
+    // Official cases 1-247, k=1=271: square brackets do not make up a unit
+    assert!(eval("[custom'U]").is_err());
+    assert!(eval("[BETH'U]").is_err());
 }
 
 #[test]
@@ -53,8 +52,9 @@ fn arbitrary_unit_multiplication() {
     let iu_per_ml = eval("[IU]/mL").unwrap();
     // Should have dimension of 1/volume (L^-3)
     assert_eq!(iu_per_ml.dim, Dimension([0, -3, 0, 0, 0, 0, 0]));
-    // 1 / (0.001 L) = 1000
-    assert!((iu_per_ml.factor.sub(from_f64(1000.0))).abs() < from_f64(1e-12));
+    // 1 [IU]/mL = 1000 [IU]/L
+    let iu_per_l = eval("[IU]/L").unwrap();
+    assert!((iu_per_ml.factor.div(iu_per_l.factor).sub(from_f64(1000.0))).abs() < from_f64(1e-9));
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn arbitrary_unit_conversion() {
 #[test]
 fn arbitrary_unit_with_numeric() {
     // Test numeric value with arbitrary unit
-    let expr = parse_expression("5[IU]").unwrap();
+    let expr = parse_expression("5.[IU]").unwrap();
     let result = evaluate_owned(&expr).unwrap();
 
     // Should have factor of 5.0 and dimensionless
@@ -92,7 +92,7 @@ fn arbitrary_unit_with_numeric() {
 #[test]
 fn arbitrary_unit_in_complex_expression() {
     // Test arbitrary unit in a complex expression
-    let expr = parse_expression("10[IU]/(m2.s)").unwrap();
+    let expr = parse_expression("10.[IU]/(m2.s)").unwrap();
     let result = evaluate_owned(&expr).unwrap();
 
     // Should have dimension of 1/(L^2*T)

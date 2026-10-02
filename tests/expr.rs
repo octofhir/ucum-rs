@@ -29,21 +29,10 @@ fn product_dot() {
 }
 
 #[test]
-fn product_whitespace() {
-    let expr = parse_expression("kg m").unwrap();
-    assert_eq!(
-        expr,
-        OwnedUnitExpr::Product(vec![
-            OwnedUnitFactor {
-                expr: sym("kg"),
-                exponent: 1
-            },
-            OwnedUnitFactor {
-                expr: sym("m"),
-                exponent: 1
-            },
-        ])
-    );
+fn product_needs_operator() {
+    // UCUM §7.2: the multiplication operator must not be omitted or replaced by a space
+    assert!(parse_expression("kg m").is_err());
+    assert!(parse_expression("ug(8.h)").is_err());
 }
 
 #[test]
@@ -108,8 +97,8 @@ fn numeric_multiplier() {
 }
 
 #[test]
-fn implicit_mult_parentheses() {
-    let expr = parse_expression("kg(m/s^2)").unwrap();
+fn product_with_parentheses() {
+    let expr = parse_expression("kg.(m/s^2)").unwrap();
     // Expect kg * (m/s^2)
     let inner = OwnedUnitExpr::Quotient(
         Box::new(sym("m")),
@@ -126,22 +115,25 @@ fn implicit_mult_parentheses() {
         },
     ]);
     assert_eq!(expr, expected);
+    // The operator is mandatory (UCUM §7.2)
+    assert!(parse_expression("kg(m/s^2)").is_err());
 }
 
 #[test]
-fn leading_numeric_symbol() {
-    let expr = parse_expression("2.5kPa").unwrap();
+fn period_between_numbers_multiplies() {
+    // UCUM §7: "2.5" is 2 × 5, terms have no decimal numbers
     let expected = OwnedUnitExpr::Product(vec![
         OwnedUnitFactor {
-            expr: OwnedUnitExpr::Numeric(2.5),
+            expr: OwnedUnitExpr::Numeric(2.0),
             exponent: 1,
         },
         OwnedUnitFactor {
-            expr: sym("kPa"),
+            expr: OwnedUnitExpr::Numeric(5.0),
             exponent: 1,
         },
     ]);
-    assert_eq!(expr, expected);
+    assert_eq!(parse_expression("2.5").unwrap(), expected);
+    assert!(parse_expression("2.5kPa").is_err());
 }
 
 #[test]

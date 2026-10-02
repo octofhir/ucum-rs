@@ -23,7 +23,8 @@ use crate::{
     find_unit,
     performance::find_prefix_optimized,
     precision::{Number, NumericOps, from_f64, to_f64},
-    types::Dimension,
+    registry::is_metric,
+    types::{Dimension, SpecialKind, UnitRecord},
 };
 
 /// Helper to extract string from either Symbol or SymbolOwned variants
@@ -33,6 +34,80 @@ fn extract_symbol_str<'a>(expr: &'a UnitExpr<'a>) -> Option<&'a str> {
         UnitExpr::SymbolOwned(s) => Some(s.as_str()),
         _ => None,
     }
+}
+
+/// A factor as a `Decimal`, with an error instead of a silent 0 when it is out of
+/// the `Decimal` range (about 1e-28 to 7.9e28 in magnitude).
+#[allow(clippy::result_large_err)]
+fn to_number(value: f64) -> Result<Number, UcumError> {
+    let number = from_f64(value);
+    if value != 0.0 && number.is_zero() {
+        return Err(UcumError::precision_overflow(
+            "conversion to Decimal",
+            &format!("{value} is out of range"),
+        ));
+    }
+    Ok(number)
+}
+
+/// `a * b`, with an error instead of a panic when the result does not fit, or
+/// instead of a silent 0 when it is too small.
+#[allow(clippy::result_large_err)]
+fn checked_mul(a: Number, b: Number) -> Result<Number, UcumError> {
+    a.checked_mul(b)
+        .filter(|r| !r.is_zero() || a.is_zero() || b.is_zero())
+        .ok_or_else(|| UcumError::precision_overflow("multiplication", &format!("{a} * {b}")))
+}
+
+/// `a / b`, with an error instead of a panic on overflow or division by zero, or
+/// instead of a silent 0 when the result is too small.
+#[allow(clippy::result_large_err)]
+fn checked_div(a: Number, b: Number) -> Result<Number, UcumError> {
+    a.checked_div(b)
+        .filter(|r| !r.is_zero() || a.is_zero())
+        .ok_or_else(|| UcumError::precision_overflow("division", &format!("{a} / {b}")))
+}
+
+/// `base^exp` by squaring: O(log exp) steps, and an error instead of a panic when the
+/// result does not fit.
+#[allow(clippy::result_large_err)]
+fn checked_pow(base: Number, exp: i32) -> Result<Number, UcumError> {
+    let mut result = Number::one();
+    let mut square = base;
+    let mut n = exp.unsigned_abs();
+    while n > 0 {
+        if n & 1 == 1 {
+            result = checked_mul(result, square)?;
+        }
+        n >>= 1;
+        if n > 0 {
+            square = checked_mul(square, square)?;
+        }
+    }
+    if exp < 0 {
+        checked_div(Number::one(), result)
+    } else {
+        Ok(result)
+    }
+}
+
+/// `acc += dim * exp` per component, with an error instead of wrapping or saturating
+/// when a component does not fit in `i8`.
+#[allow(clippy::result_large_err)]
+fn add_scaled_dim(acc: &mut [i8; 7], dim: &Dimension, exp: i32) -> Result<(), UcumError> {
+    for (a, &d) in acc.iter_mut().zip(dim.0.iter()) {
+        *a = i32::from(d)
+            .checked_mul(exp)
+            .and_then(|v| v.checked_add(i32::from(*a)))
+            .and_then(|v| i8::try_from(v).ok())
+            .ok_or_else(|| {
+                UcumError::precision_overflow(
+                    "dimension exponent",
+                    &format!("{d} * {exp} does not fit in i8"),
+                )
+            })?;
+    }
+    Ok(())
 }
 
 /// Result returned by `evaluate()` – canonical factor, dimension vector, offset.
@@ -46,18 +121,24 @@ pub struct EvalResult {
 impl EvalResult {
     const ZERO_DIM: Dimension = Dimension([0; 7]);
 
-    fn numeric(val: f64) -> Self {
-        Self {
-            factor: from_f64(val),
+    #[allow(clippy::result_large_err)]
+    fn numeric(val: f64) -> Result<Self, UcumError> {
+        Ok(Self {
+            factor: to_number(val)?,
             dim: Self::ZERO_DIM,
             offset: Number::zero(),
-        }
+        })
     }
 
     #[allow(clippy::result_large_err)]
     fn from_unit(code: &str) -> Result<Self, UcumError> {
-        // Handle empty string as dimensionless unit (unity "1")
-        if code.is_empty() {
+        // Handle empty string and a standalone annotation ("{rbc}") as the unity.
+        // Annotations hold the characters 33-126 only (UCUM §6.1)
+        let is_annotation = code.len() >= 2
+            && code.starts_with('{')
+            && code.ends_with('}')
+            && code.bytes().all(|b| b.is_ascii_graphic());
+        if code.is_empty() || is_annotation {
             return Ok(Self {
                 factor: Number::one(),
                 dim: Self::ZERO_DIM,
@@ -65,87 +146,22 @@ impl EvalResult {
             });
         }
 
-        // First try exact match (covers symbols like "Pa" and "Cel")
-        // This prevents units like "Pa" from being incorrectly split into "P" (peta) + "a"
-        if let Some(unit) = find_unit(code) {
-            // Check if this is actually a direct unit match, not a prefixed unit match
-            // If the unit code matches exactly, use it directly
-            if unit.code == code {
-                use crate::types::SpecialKind::*;
-                match unit.special {
-                    None | LinearOffset => {
-                        return Ok(Self {
-                            factor: from_f64(unit.factor),
-                            dim: unit.dim,
-                            offset: from_f64(unit.offset),
-                        });
-                    }
-                    Arbitrary => {
-                        // For arbitrary units, return a special dimension that marks it as arbitrary
-                        // This ensures arbitrary units are only commensurable with themselves
-                        return Ok(Self {
-                            factor: from_f64(unit.factor),
-                            dim: unit.dim,
-                            offset: Number::zero(),
-                        });
-                    }
-                    Log10 | Ln | TanTimes100 => {
-                        // For non-linear special units, keep their proper dimensions
-                        // for commensurability checking, but handle conversion specially
-                        return Ok(Self {
-                            factor: from_f64(unit.factor),
-                            dim: unit.dim,
-                            offset: Number::zero(),
-                        });
-                    }
-                }
-            }
-        }
-
-        // Then attempt prefix split – longest prefix first
-        // This ensures prefixed units like "mg" are handled with proper prefix factors
-        if let Some((pref, rest)) = split_prefix(code)
-            && let Some(unit) = find_unit(rest)
-        {
-            // For special units, handle prefixes differently
-            match unit.special {
-                crate::types::SpecialKind::Log10
-                | crate::types::SpecialKind::Ln
-                | crate::types::SpecialKind::TanTimes100 => {
-                    // For special units, return the unit factor without prefix multiplication
-                    // The prefix will be handled in the product evaluation
-                    return Ok(Self {
-                        factor: from_f64(unit.factor),
-                        dim: Self::ZERO_DIM,
-                        offset: Number::zero(),
-                    });
-                }
-                _ => {
-                    // For regular units, apply prefix factor normally
-                    let factor = from_f64(pref.factor).mul(from_f64(unit.factor));
-                    let dim = unit.dim;
-                    return Ok(Self {
-                        factor,
-                        dim,
-                        offset: from_f64(unit.offset),
-                    });
-                }
-            }
-        }
-
-        // Square bracket arbitrary unit → dimensionless factor 1
-        // This is a fallback for arbitrary units not in the registry
-        if code.starts_with('[') && code.ends_with(']') {
-            // Arbitrary units are dimensionless but should be treated as their own dimension
-            // to ensure they're only commensurable with themselves
-            return Ok(Self {
-                factor: Number::one(),
-                dim: Self::ZERO_DIM, // Dimensionless but will be treated specially in operations
+        let (pref_factor, unit) =
+            lookup_unit(code).ok_or_else(|| UcumError::unit_not_found(code))?;
+        match unit.special {
+            // The prefix of a logarithmic unit scales its argument, see
+            // `special_function_value`
+            SpecialKind::Log10 | SpecialKind::Ln | SpecialKind::TanTimes100 => Ok(Self {
+                factor: to_number(unit.factor)?,
+                dim: unit.dim,
                 offset: Number::zero(),
-            });
+            }),
+            SpecialKind::None | SpecialKind::LinearOffset | SpecialKind::Arbitrary => Ok(Self {
+                factor: checked_mul(to_number(pref_factor)?, to_number(unit.factor)?)?,
+                dim: unit.dim,
+                offset: from_f64(unit.offset),
+            }),
         }
-
-        Err(UcumError::unit_not_found(code))
     }
 }
 
@@ -165,232 +181,26 @@ pub fn evaluate_owned(expr: &crate::ast::OwnedUnitExpr) -> Result<EvalResult, Uc
 #[allow(clippy::result_large_err)]
 fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
     match expr {
-        UnitExpr::Numeric(v) => Ok(EvalResult::numeric(*v)),
+        UnitExpr::Numeric(v) => EvalResult::numeric(*v),
         UnitExpr::Symbol(sym) => EvalResult::from_unit(sym),
         UnitExpr::SymbolOwned(sym) => EvalResult::from_unit(sym),
         UnitExpr::Product(factors) => {
-            // special-case numeric × special log unit
-            if factors.len() == 2
-                && let (Some(num_fac), Some(unit_fac)) = (
-                    factors
-                        .iter()
-                        .find(|f| matches!(f.expr, UnitExpr::Numeric(_)) && f.exponent == 1),
-                    factors.iter().find(|f| {
-                        matches!(f.expr, UnitExpr::Symbol(_) | UnitExpr::SymbolOwned(_))
-                            && f.exponent == 1
-                    }),
+            // A number times a logarithmic or prism diopter unit ("20.dB", "2.Np",
+            // "100.[p'diop]"): the number is the argument of the unit's function
+            if let [a, b] = factors.as_slice()
+                && let Some((v, code)) = numeric_and_symbol(a, b).or(numeric_and_symbol(b, a))
+                && let Some((pref_factor, unit)) = lookup_unit(code)
+                && matches!(
+                    unit.special,
+                    SpecialKind::Log10 | SpecialKind::Ln | SpecialKind::TanTimes100
                 )
-                && let UnitExpr::Numeric(ref v) = num_fac.expr
-                && let Some(code) = extract_symbol_str(&unit_fac.expr)
             {
-                let (pref_factor, unit) = if let Some((pref, rest)) = split_prefix(code) {
-                    if let Some(u) = find_unit(rest) {
-                        (from_f64(pref.factor), u)
-                    } else {
-                        return Err(UcumError::unit_not_found(code));
-                    }
-                } else if let Some(u) = find_unit(code) {
-                    (Number::one(), u)
-                } else {
-                    return Err(UcumError::unit_not_found(code));
-                };
-
-                let scaled_val = from_f64(*v).mul(pref_factor);
-                // For special units, we need to handle them specially based on their type
-                // The numeric value is part of the special unit, not a multiplier
-                let (ratio, dim) = match unit.special {
-                    crate::types::SpecialKind::Log10 => {
-                        // Handle Bel (B) and decibel (dB) units
-                        // B: 10^value (power ratio)
-                        // dB: 10^(value/10) (power ratio, 1 B = 10 dB)
-                        // Special case: 3 dB should be treated as amplitude ratio (exactly √2)
-                        let ratio_f64 = if code.ends_with("dB") {
-                            if (*v - 3.0).abs() < 1e-6 {
-                                // Special case for 3 dB in test_decibel_variations
-                                // Use exact √2 to match test expectation
-                                core::f64::consts::SQRT_2
-                            } else {
-                                math::powf(10.0, *v / 10.0) // 10^(dB/10) for power ratio
-                            }
-                        } else {
-                            math::powf(10.0, *v) // 10^B
-                        };
-                        (from_f64(ratio_f64), EvalResult::ZERO_DIM)
-                    }
-                    crate::types::SpecialKind::Ln => {
-                        // For Np: e^value
-                        let ratio_f64 = if scaled_val == Number::zero() {
-                            1.0
-                        } else {
-                            math::exp(to_f64(scaled_val))
-                        };
-                        (from_f64(ratio_f64), EvalResult::ZERO_DIM)
-                    }
-                    crate::types::SpecialKind::TanTimes100 => {
-                        // For [p'diop]: 100 * tan(1 rad)
-                        // The unit is defined as "100 * tan(1 rad)" in UCUM
-                        // This means 1 [p'diop] = tan(1)/100, and 100 [p'diop] = tan(1)
-                        // Following the mathematical definition, tan(0) = 0
-                        if scaled_val == Number::zero() {
-                            (Number::zero(), EvalResult::ZERO_DIM)
-                        } else {
-                            // For n [p'diop], the result should be n/100 * tan(1)
-                            // For 100 [p'diop], this gives tan(1)
-                            // The key is that we're scaling the input value to radians (n/100)
-                            // and then taking the tangent of that
-                            let ratio_f64 = math::tan(to_f64(scaled_val) / 100.0);
-                            (from_f64(ratio_f64), EvalResult::ZERO_DIM)
-                        }
-                    }
-                    crate::types::SpecialKind::Arbitrary => {
-                        // For arbitrary units, use the numeric value as the factor
-                        // and preserve the unit's dimension (which is typically zero)
-                        (from_f64(*v), unit.dim)
-                    }
-                    _ => {
-                        // For regular units with numeric multiplier
-                        (from_f64(*v), unit.dim)
-                    }
-                };
-
-                // For combinations with other units, we need to handle them specially
-                if factors.len() > 2 {
-                    // Extract the numeric factor if it exists
-                    let numeric_factor = factors
-                        .iter()
-                        .find_map(|f| {
-                            if let UnitExpr::Numeric(n) = &f.expr {
-                                Some(from_f64(*n))
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(Number::one());
-
-                    // Evaluate the rest of the expression
-                    let mut result = EvalResult {
-                        factor: Number::one(),
-                        dim: EvalResult::ZERO_DIM,
-                        offset: Number::zero(),
-                    };
-
-                    // Handle each factor in the product
-                    for factor in factors {
-                        match &factor.expr {
-                            UnitExpr::Numeric(n) => {
-                                // For numeric values, just multiply the factor
-                                result.factor =
-                                    result.factor.mul(from_f64(*n).pow(factor.exponent));
-                            }
-                            UnitExpr::Symbol(sym) => {
-                                let res = if *sym == code {
-                                    // For the special unit, apply its ratio and dimension
-                                    EvalResult {
-                                        factor: ratio,
-                                        dim,
-                                        offset: Number::zero(),
-                                    }
-                                } else {
-                                    // For regular units, evaluate normally
-                                    EvalResult::from_unit(sym)?
-                                };
-                                result.factor = result.factor.mul(from_f64(math::powf(
-                                    to_f64(res.factor),
-                                    factor.exponent as f64,
-                                )));
-                            }
-                            UnitExpr::SymbolOwned(sym) => {
-                                let res = if sym == code {
-                                    // For the special unit, apply its ratio and dimension
-                                    EvalResult {
-                                        factor: ratio,
-                                        dim,
-                                        offset: Number::zero(),
-                                    }
-                                } else {
-                                    // For other units, evaluate them normally
-                                    evaluate(&factor.expr)?
-                                };
-
-                                if res.offset != Number::zero() {
-                                    return Err(UcumError::conversion_error(
-                                        "offset units",
-                                        "products with special units",
-                                        "offset units cannot participate in products with special units",
-                                    ));
-                                }
-
-                                // Apply the exponent from the factor
-                                let exp = factor.exponent;
-                                result.factor = result.factor.mul(res.factor.pow(exp));
-
-                                // Combine dimensions
-                                for i in 0..result.dim.0.len() {
-                                    result.dim.0[i] = result.dim.0[i]
-                                        .saturating_add((res.dim.0[i] as f64 * exp as f64) as i8);
-                                }
-                            }
-                            _ => {
-                                // For complex expressions, evaluate them normally
-                                let res = evaluate(&factor.expr)?;
-                                if res.offset != Number::zero() {
-                                    return Err(UcumError::conversion_error(
-                                        "offset units",
-                                        "products with special units",
-                                        "offset units cannot participate in products with special units",
-                                    ));
-                                }
-
-                                // Apply the exponent from the factor
-                                let exp = factor.exponent;
-                                result.factor = result.factor.mul(res.factor.pow(exp));
-
-                                // Combine dimensions
-                                for i in 0..result.dim.0.len() {
-                                    result.dim.0[i] = result.dim.0[i]
-                                        .saturating_add((res.dim.0[i] as f64 * exp as f64) as i8);
-                                }
-                            }
-                        }
-                    }
-
-                    // Apply the numeric factor to the final result
-                    result.factor = result.factor.mul(numeric_factor);
-                    return Ok(result);
-                } else {
-                    // For special units, apply the ratio and dimension
-                    let result = EvalResult {
-                        factor: ratio,
-                        dim,
-                        offset: Number::zero(),
-                    };
-
-                    return Ok(result);
-                }
+                return special_function_value(v, code, to_number(pref_factor)?, unit.special);
             }
 
-            // Handle regular products (no special unit or special unit with other units)
             let mut factor_acc = Number::one();
             let mut dim_acc = [0i8; 7];
-            let mut has_numeric = false;
-
-            // First pass: handle numeric values and special units
-            for fac in factors.iter() {
-                if let UnitExpr::Numeric(_n) = &fac.expr {
-                    has_numeric = true;
-                    continue;
-                }
-
-                // Check for special units
-                if let Some(unit) = extract_symbol_str(&fac.expr)
-                    && let Some(unit_record) = find_unit(unit)
-                    && unit_record.special != crate::types::SpecialKind::None
-                {
-                    // Skip special units in first pass, they'll be handled in second pass
-                    continue;
-                }
-
-                // Handle regular units
+            for fac in factors {
                 let res = evaluate(&fac.expr)?;
                 if res.offset != Number::zero() {
                     return Err(UcumError::conversion_error(
@@ -399,152 +209,8 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                         "offset units cannot participate in products",
                     ));
                 }
-                factor_acc = factor_acc.mul(res.factor.pow(fac.exponent));
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..7 {
-                    dim_acc[i] =
-                        dim_acc[i].saturating_add(res.dim.0[i].saturating_mul(fac.exponent as i8));
-                }
-            }
-
-            // Second pass: handle special units if present
-            for fac in factors {
-                if let Some(unit) = extract_symbol_str(&fac.expr)
-                    && let Some(unit_record) = find_unit(unit)
-                    && unit_record.special != crate::types::SpecialKind::None
-                {
-                    // Handle arbitrary units differently from other special units
-                    if unit_record.special == crate::types::SpecialKind::Arbitrary {
-                        // For arbitrary units, just add their dimension (typically zero)
-                        // but don't modify the factor (it's already 1.0)
-                        let dim = unit_record.dim;
-                        #[allow(clippy::needless_range_loop)]
-                        for i in 0..7 {
-                            dim_acc[i] = dim_acc[i]
-                                .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
-                        }
-                    } else if unit_record.special == crate::types::SpecialKind::TanTimes100 {
-                        // Special handling for TanTimes100 (prism diopter)
-                        // For [p'diop]: 100 * tan(1 rad)
-                        // The unit is defined as "100 * tan(1 rad)" in UCUM
-                        // This means 1 [p'diop] = tan(1)/100, and 100 [p'diop] = tan(1)
-                        let dim = unit_record.dim;
-
-                        // Find the numeric value associated with this unit, if any
-                        let numeric_val = factors
-                            .iter()
-                            .find_map(|f| {
-                                if let UnitExpr::Numeric(n) = &f.expr {
-                                    Some(from_f64(*n))
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(Number::one()); // Default to 1.0 if no numeric value (per UCUM definition)
-
-                        // Apply the tangent calculation
-                        if numeric_val == Number::zero() {
-                            factor_acc = Number::zero(); // tan(0) = 0
-                        } else {
-                            // For n [p'diop], the result should be tan(n/100)
-                            // For 100 [p'diop], this gives tan(1)
-                            // The key is that we're scaling the input value to radians (n/100)
-                            // and then taking the tangent of that
-                            factor_acc = from_f64(math::tan(to_f64(numeric_val) / 100.0));
-                        }
-
-                        // Apply dimensions
-                        #[allow(clippy::needless_range_loop)]
-                        for i in 0..7 {
-                            dim_acc[i] = dim_acc[i]
-                                .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
-                        }
-                    } else {
-                        // For other special units, apply their ratio and dimension
-                        let ratio = unit_record.special.ratio();
-                        let dim = unit_record.dim;
-
-                        // Apply special unit conversion
-                        factor_acc = factor_acc.mul(from_f64(ratio).pow(fac.exponent));
-                        #[allow(clippy::needless_range_loop)]
-                        for i in 0..7 {
-                            dim_acc[i] = dim_acc[i]
-                                .saturating_add(dim.0[i].saturating_mul(fac.exponent as i8));
-                        }
-                    }
-                }
-            }
-
-            // For products with numeric values, we need to multiply all factors together
-            if has_numeric {
-                // Start with 1.0 and multiply all factors together (including all numeric values)
-                let mut total_factor = Number::one();
-                let mut dim_acc = [0i8; 7];
-
-                for fac in factors {
-                    match &fac.expr {
-                        UnitExpr::Numeric(n) => {
-                            // Include ALL numeric factors in the multiplication
-                            total_factor = total_factor.mul(from_f64(*n).pow(fac.exponent));
-                        }
-                        UnitExpr::Symbol(unit) => {
-                            if let Some(unit_record) = find_unit(unit) {
-                                // Multiply the factor from this unit
-                                total_factor = total_factor
-                                    .mul(from_f64(unit_record.factor).pow(fac.exponent));
-                            }
-                        }
-                        UnitExpr::SymbolOwned(unit) => {
-                            if let Some(unit_record) = find_unit(unit) {
-                                // Multiply the factor from this unit
-                                total_factor = total_factor
-                                    .mul(from_f64(unit_record.factor).pow(fac.exponent));
-
-                                // Add dimensions
-                                #[allow(clippy::needless_range_loop)]
-                                for i in 0..7 {
-                                    dim_acc[i] = dim_acc[i].saturating_add(
-                                        unit_record.dim.0[i].saturating_mul(fac.exponent as i8),
-                                    );
-                                }
-                            } else if let Some((pref, rest)) = split_prefix(unit) {
-                                // Handle prefixed units
-                                if let Some(unit_record) = find_unit(rest) {
-                                    // Apply prefix factor and unit factor
-                                    let combined_factor =
-                                        from_f64(pref.factor).mul(from_f64(unit_record.factor));
-                                    total_factor =
-                                        total_factor.mul(combined_factor.pow(fac.exponent));
-
-                                    #[allow(clippy::needless_range_loop)]
-                                    for i in 0..7 {
-                                        dim_acc[i] = dim_acc[i].saturating_add(
-                                            unit_record.dim.0[i].saturating_mul(fac.exponent as i8),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            // For other expressions, evaluate normally and multiply
-                            let res = evaluate(&fac.expr)?;
-                            total_factor = total_factor.mul(res.factor.pow(fac.exponent));
-                            #[allow(clippy::needless_range_loop)]
-                            for i in 0..7 {
-                                dim_acc[i] = dim_acc[i].saturating_add(
-                                    res.dim.0[i].saturating_mul(fac.exponent as i8),
-                                );
-                            }
-                        }
-                    }
-                }
-
-                // Return the total factor (all numeric values × all other factors)
-                return Ok(EvalResult {
-                    factor: total_factor,
-                    dim: Dimension(dim_acc),
-                    offset: Number::zero(),
-                });
+                factor_acc = checked_mul(factor_acc, checked_pow(res.factor, fac.exponent)?)?;
+                add_scaled_dim(&mut dim_acc, &res.dim, fac.exponent)?;
             }
 
             Ok(EvalResult {
@@ -571,36 +237,22 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
             // but need to adopt the inverse dimension of what they're divided by (e.g., [IU]/mL should have
             // dimension L^-3, the inverse of volume). This ensures proper dimensional analysis and
             // commensurability checks when working with arbitrary units in complex expressions.
-            let is_arbitrary_numerator = if let Some(sym) = extract_symbol_str(num.as_ref()) {
-                // Check if the unit is actually marked as arbitrary in the registry
-                if let Some(unit) = find_unit(sym) {
-                    unit.special == crate::types::SpecialKind::Arbitrary
-                } else {
-                    // Fallback: check for square brackets only if not found in registry
-                    sym.starts_with('[') && sym.ends_with(']')
-                }
-            } else {
-                false
-            };
+            let is_arbitrary_numerator = extract_symbol_str(num.as_ref())
+                .and_then(find_unit)
+                .is_some_and(|unit| unit.special == crate::types::SpecialKind::Arbitrary);
 
-            let mut dim_vec = [0i8; 7];
-            if is_arbitrary_numerator {
+            let mut dim_vec = if is_arbitrary_numerator {
                 // For arbitrary units in numerator, use negated dimension of denominator
                 // This ensures arbitrary units correctly adopt the inverse dimensions of what they're divided by
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..7 {
-                    dim_vec[i] = -d.dim.0[i];
-                }
+                [0i8; 7]
             } else {
                 // Normal case: subtract denominator dimension from numerator dimension
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..7 {
-                    dim_vec[i] = n.dim.0[i] - d.dim.0[i];
-                }
-            }
+                n.dim.0
+            };
+            add_scaled_dim(&mut dim_vec, &d.dim, -1)?;
 
             Ok(EvalResult {
-                factor: n.factor.div(d.factor),
+                factor: checked_div(n.factor, d.factor)?,
                 dim: Dimension(dim_vec),
                 offset: Number::zero(),
             })
@@ -615,12 +267,9 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 ));
             }
             let mut dim_vec = [0i8; 7];
-            #[allow(clippy::needless_range_loop)]
-            for i in 0..7 {
-                dim_vec[i] = base.dim.0[i].saturating_mul(*exp as i8);
-            }
+            add_scaled_dim(&mut dim_vec, &base.dim, *exp)?;
             Ok(EvalResult {
-                factor: base.factor.pow(*exp),
+                factor: checked_pow(base.factor, *exp)?,
                 dim: Dimension(dim_vec),
                 offset: Number::zero(),
             })
@@ -628,42 +277,61 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
     }
 }
 
-/// Attempt to split the leading prefix from a symbol.
-/// Returns (prefix, remainder) if a valid prefix is found.
-/// Optimized version with fast path for single-character prefixes.
-fn split_prefix(code: &str) -> Option<(crate::types::Prefix, &str)> {
-    if code.len() < 2 {
-        return None;
+/// Look up a unit code: an exact match first, then a prefix on a metric unit
+/// ("km", "dam", "mm[Hg]"). Returns the prefix factor and the unit.
+fn lookup_unit(code: &str) -> Option<(f64, &'static UnitRecord)> {
+    if let Some(unit) = find_unit(code)
+        && unit.code == code
+    {
+        return Some((1.0, unit));
     }
+    // Prefixes have one ("k") or two ("da", "Ki") characters; the longest one that
+    // leaves a metric unit wins (UCUM §4.4)
+    (1..=2).rev().find_map(|len| {
+        let prefix = code.get(..len).and_then(find_prefix_optimized)?;
+        let rest = &code[len..];
+        let unit = find_unit(rest).filter(|u| u.code == rest && is_metric(rest))?;
+        Some((prefix.factor, unit))
+    })
+}
 
-    // Fast path: try single-character prefix first (most common case)
-    // This covers k, m, c, d, n, p, f, a, z, y, E, P, T, G, M, etc.
-    // `get` rather than indexing: the offset may fall inside a multi-byte character
-    if let Some(prefix) = code.get(..1).and_then(find_prefix_optimized) {
-        let remainder = &code[1..];
-        if !remainder.is_empty() {
-            return Some((*prefix, remainder));
-        }
+/// `(value, code)` when `a` is a plain number and `b` a plain unit symbol.
+fn numeric_and_symbol<'e>(a: &'e UnitFactor, b: &'e UnitFactor) -> Option<(f64, &'e str)> {
+    match (&a.expr, a.exponent, b.exponent) {
+        (UnitExpr::Numeric(v), 1, 1) => Some((*v, extract_symbol_str(&b.expr)?)),
+        _ => None,
     }
+}
 
-    // Slower path: try 2-3 character prefixes
-    // This handles cases like "da" (deca), "Ki" (kibi), etc.
-    for len in (2..=3).rev() {
-        if let Some(prefix) = code.get(..len).and_then(find_prefix_optimized) {
-            let remainder = &code[len..];
-            if !remainder.is_empty() {
-                return Some((*prefix, remainder));
-            }
-        }
-    }
-    None
+/// The ratio a logarithmic or prism diopter unit stands for, e.g. 20 dB -> 10^2.
+/// The prefix scales the argument: 1 dB is 0.1 B.
+#[allow(clippy::result_large_err)]
+fn special_function_value(
+    value: f64,
+    code: &str,
+    pref_factor: Number,
+    special: SpecialKind,
+) -> Result<EvalResult, UcumError> {
+    let arg = value * to_f64(pref_factor);
+    let ratio = match special {
+        SpecialKind::Log10 => math::powf(10.0, arg),
+        SpecialKind::Ln => math::exp(arg),
+        // 100 [p'diop] is a deflection of tan(1 rad)
+        SpecialKind::TanTimes100 => math::tan(arg / 100.0),
+        _ => return Err(UcumError::special_unit_error(code, "not a function unit")),
+    };
+    Ok(EvalResult {
+        factor: to_number(ratio)?,
+        dim: EvalResult::ZERO_DIM,
+        offset: Number::zero(),
+    })
 }
 
 /// Internal implementation of evaluate for owned AST
 #[allow(clippy::result_large_err)]
 fn evaluate_owned_impl(expr: &crate::ast::OwnedUnitExpr) -> Result<EvalResult, UcumError> {
     match expr {
-        crate::ast::OwnedUnitExpr::Numeric(v) => Ok(EvalResult::numeric(*v)),
+        crate::ast::OwnedUnitExpr::Numeric(v) => EvalResult::numeric(*v),
         crate::ast::OwnedUnitExpr::Symbol(sym) => EvalResult::from_unit(sym),
         crate::ast::OwnedUnitExpr::Product(factors) => {
             // Convert owned factors to borrowed for evaluation

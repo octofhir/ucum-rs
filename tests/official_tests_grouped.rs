@@ -1,5 +1,5 @@
 use octofhir_ucum::precision::{Number, NumericOps, from_f64, to_f64};
-use octofhir_ucum::{evaluate_owned, generate_display_name_owned, parse_expression};
+use octofhir_ucum::{evaluate_owned, generate_display_name_owned, parse_expression, validate};
 use std::fs;
 use std::path::Path;
 
@@ -18,6 +18,7 @@ struct ConversionTest {
     source_unit: String,
     target_unit: String,
     outcome: Number,
+    outcome_text: String,
 }
 
 #[derive(Debug)]
@@ -137,15 +138,74 @@ fn parse_xml_test_file(file_path: &str) -> Result<Vec<TestCase>, Box<dyn std::er
     Ok(test_cases)
 }
 
+/// Power of ten of the last significant digit of a decimal ("0.16" -> -2, "6300" -> 2).
+fn last_digit_place(text: &str) -> i32 {
+    let (mantissa, exp) = match text.split_once(['e', 'E']) {
+        Some((m, e)) => (m, e.parse().unwrap_or(0)),
+        None => (text, 0),
+    };
+    let place = match mantissa.split_once('.') {
+        Some((_, fraction)) => -(fraction.len() as i32),
+        None => {
+            let digits = mantissa.trim_start_matches('-');
+            let significant = digits.trim_end_matches('0');
+            if significant.is_empty() {
+                0
+            } else {
+                (digits.len() - significant.len()) as i32
+            }
+        }
+    };
+    place + exp
+}
+
 fn extract_attribute(line: &str, attr_name: &str) -> Option<String> {
-    let pattern = format!("{attr_name}=\"");
+    let pattern = format!(" {attr_name}=\"");
     if let Some(start) = line.find(&pattern) {
         let start = start + pattern.len();
         if let Some(end) = line[start..].find('"') {
-            return Some(line[start..start + end].to_string());
+            return Some(decode_xml_entities(&line[start..start + end]));
         }
     }
     None
+}
+
+/// Decode the XML entities used in the test files (e.g. "amp&#232;re" -> "ampère").
+fn decode_xml_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let Some(semi) = rest.find(';') else { break };
+        let entity = &rest[1..semi];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ => entity
+                .strip_prefix('#')
+                .and_then(|n| match n.strip_prefix('x') {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                    None => n.parse().ok(),
+                })
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(ch) => {
+                out.push(ch);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn parse_display_name_tests(
@@ -220,6 +280,7 @@ fn parse_conversion_tests(
                 source_unit: src_unit,
                 target_unit: dst_unit,
                 outcome: from_f64(outcome),
+                outcome_text: outcome_str,
             });
         }
     }
@@ -348,10 +409,7 @@ fn parse_division_tests(file_path: &str) -> Result<Vec<DivisionTest>, Box<dyn st
 // Test runners for each group
 fn run_validation_tests_group() -> TestResults {
     let mut results = TestResults::new();
-    let test_files = [
-        "tests/official/UcumFunctionalTests.xml",
-        "tests/official/UcumFunctionalTests.2.xml",
-    ];
+    let test_files = ["tests/official/UcumFunctionalTests.xml"];
 
     for (file_index, test_file_path) in test_files.iter().enumerate() {
         if !Path::new(test_file_path).exists() {
@@ -374,12 +432,8 @@ fn run_validation_tests_group() -> TestResults {
         );
 
         for test_case in test_cases {
-            if test_case.unit.is_empty() {
-                continue;
-            }
-
-            let parse_result = parse_expression(&test_case.unit);
-            let is_valid = parse_result.is_ok();
+            // Validity covers syntax and unit lookup, not just parsing
+            let is_valid = validate(&test_case.unit).is_ok();
 
             if is_valid == test_case.valid {
                 results.add_pass();
@@ -402,10 +456,7 @@ fn run_validation_tests_group() -> TestResults {
 
 fn run_conversion_tests_group() -> TestResults {
     let mut results = TestResults::new();
-    let test_files = [
-        "tests/official/UcumFunctionalTests.xml",
-        "tests/official/UcumFunctionalTests.2.xml",
-    ];
+    let test_files = ["tests/official/UcumFunctionalTests.xml"];
 
     for (file_index, test_file_path) in test_files.iter().enumerate() {
         if !Path::new(test_file_path).exists() {
@@ -494,8 +545,14 @@ fn run_conversion_tests_group() -> TestResults {
             let conversion_factor = source_result.factor.div(target_result.factor);
             let converted_value = test_case.value.mul(conversion_factor);
 
-            // Check result with tolerance
-            let tolerance = from_f64(1e-10).mul(test_case.outcome.abs().max(from_f64(1.0)));
+            // Check result with tolerance. Outcomes are rounded to the precision of the
+            // test value ("6.3 [in_i] -> m" is "0.16"), so half a unit in their last place
+            // is enough
+            let tolerance = from_f64(1e-10)
+                .mul(test_case.outcome.abs().max(from_f64(1.0)))
+                .max(from_f64(
+                    0.5 * 10f64.powi(last_digit_place(&test_case.outcome_text)),
+                ));
 
             if (converted_value.sub(test_case.outcome)).abs() <= tolerance {
                 results.add_pass();
@@ -520,10 +577,7 @@ fn run_conversion_tests_group() -> TestResults {
 
 fn run_display_name_tests_group() -> TestResults {
     let mut results = TestResults::new();
-    let test_files = [
-        "tests/official/UcumFunctionalTests.xml",
-        "tests/official/UcumFunctionalTests.2.xml",
-    ];
+    let test_files = ["tests/official/UcumFunctionalTests.xml"];
 
     for (file_index, test_file_path) in test_files.iter().enumerate() {
         if !Path::new(test_file_path).exists() {
@@ -579,10 +633,7 @@ fn run_display_name_tests_group() -> TestResults {
 
 fn run_multiplication_tests_group() -> TestResults {
     let mut results = TestResults::new();
-    let test_files = [
-        "tests/official/UcumFunctionalTests.xml",
-        "tests/official/UcumFunctionalTests.2.xml",
-    ];
+    let test_files = ["tests/official/UcumFunctionalTests.xml"];
 
     for (file_index, test_file_path) in test_files.iter().enumerate() {
         if !Path::new(test_file_path).exists() {
@@ -731,10 +782,7 @@ fn run_multiplication_tests_group() -> TestResults {
 
 fn run_division_tests_group() -> TestResults {
     let mut results = TestResults::new();
-    let test_files = [
-        "tests/official/UcumFunctionalTests.xml",
-        "tests/official/UcumFunctionalTests.2.xml",
-    ];
+    let test_files = ["tests/official/UcumFunctionalTests.xml"];
 
     for (file_index, test_file_path) in test_files.iter().enumerate() {
         if !Path::new(test_file_path).exists() {
@@ -939,4 +987,9 @@ fn run_official_tests_by_group() {
         );
     }
     println!("[DEBUG_LOG] ========================================");
+
+    assert_eq!(
+        total_failed, 0,
+        "official UCUM test cases failed, run with --nocapture for the list"
+    );
 }

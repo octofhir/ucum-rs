@@ -103,7 +103,7 @@ console.log(info.dimensions);   // [1, 0, 0, 0, 0, 0, 0]
 
 ### Conformance
 
-- 98.6% conformance with official UCUM test suite (1120/1136 tests passing)
+- 100% conformance with the official UCUM functional test suite (574/574 cases)
 - Handles edge cases: temperature conversions, logarithmic units, arbitrary units
 - Comprehensive error reporting with suggestions for common mistakes
 

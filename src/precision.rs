@@ -56,21 +56,24 @@ impl NumericOps for Decimal {
     fn div(self, other: Self) -> Self {
         self / other
     }
+    /// `self^exp` by squaring. Panics on overflow, like `Decimal`'s operators.
     fn pow(self, exp: i32) -> Self {
-        if exp == 0 {
-            Decimal::ONE
-        } else if exp > 0 {
-            let mut result = Decimal::ONE;
-            for _ in 0..exp {
-                result *= self;
+        let mut result = Decimal::ONE;
+        let mut square = self;
+        let mut n = exp.unsigned_abs();
+        while n > 0 {
+            if n & 1 == 1 {
+                result *= square;
             }
-            result
-        } else {
-            let mut result = Decimal::ONE;
-            for _ in 0..(-exp) {
-                result *= self;
+            n >>= 1;
+            if n > 0 {
+                square *= square;
             }
+        }
+        if exp < 0 {
             Decimal::ONE / result
+        } else {
+            result
         }
     }
     fn abs(self) -> Self {
