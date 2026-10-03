@@ -358,7 +358,7 @@ pub fn get_canonical_units(expression: &str) -> Result<CanonicalUnit, UcumError>
 /// Canonical unit representation
 #[derive(Debug, Clone)]
 pub struct CanonicalUnit {
-    /// Canonical unit string (e.g., "kg.m.s-2" for force)
+    /// Canonical unit string (e.g., "g.m.s-2" for force)
     pub unit: String,
     /// Conversion factor from original to canonical
     pub factor: f64,
@@ -385,7 +385,8 @@ pub struct UnitArithmeticResult {
 
 /// Build canonical unit string from dimension vector
 fn build_canonical_unit_string(dim: &Dimension) -> String {
-    let base_units = ["kg", "m", "s", "A", "K", "mol", "cd"];
+    // UCUM base units: the base unit of mass is the gram, not the kilogram (§28)
+    let base_units = ["g", "m", "s", "A", "K", "mol", "cd"];
     let mut parts = Vec::new();
 
     for (i, &exp) in dim.0.iter().enumerate() {
@@ -1386,7 +1387,7 @@ pub fn optimize_expression(expr: &str) -> Result<String, UcumError> {
 /// use octofhir_ucum::canonicalize_expression;
 ///
 /// let canonical = canonicalize_expression("N").unwrap();
-/// assert_eq!(canonical, "kg.m.s-2");
+/// assert_eq!(canonical, "g.m.s-2");
 /// ```
 #[allow(clippy::result_large_err)]
 pub fn canonicalize_expression(expr: &str) -> Result<String, UcumError> {
