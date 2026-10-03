@@ -314,6 +314,8 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// Scan a power-of-ten token (e.g., "10*3" or "10^-2").
+    ///
+    /// "10*" and "10^" are unit atoms worth ten: without an exponent they are "10*1".
     fn scan_ten_power(&mut self) -> Option<Token<'a>> {
         // Check for "10*" or "10^" patterns
         if self.bytes.get(self.pos..self.pos + 3) == Some(b"10*")
@@ -342,6 +344,10 @@ impl<'a> Tokenizer<'a> {
                 && let Ok(exp) = self.input[exp_start..self.pos].parse::<i32>()
             {
                 return Some(Token::TenPower(exp));
+            }
+            if self.pos == exp_start {
+                // No sign and no digits: the atom on its own
+                return Some(Token::TenPower(1));
             }
         }
 
