@@ -133,7 +133,7 @@ fn rejects_malformed() {
 
 #[test]
 fn round_trips_canonical_units() {
-    // Canonical units are written with negative exponents ("kg.m.s-2")
+    // Canonical units are written with negative exponents ("g.m.s-2")
     for unit in ["N", "Pa", "Hz", "J/kg"] {
         let canonical = get_canonical_units(unit).unwrap();
         assert_eq!(

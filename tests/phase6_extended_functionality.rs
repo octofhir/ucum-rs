@@ -22,7 +22,7 @@ fn test_optimize_expression() {
 
     // Test that simple units remain unchanged
     assert_eq!(optimize_expression("m").unwrap(), "m");
-    assert_eq!(optimize_expression("kg").unwrap(), "kg");
+    assert_eq!(optimize_expression("g").unwrap(), "g");
 
     // Test error handling for invalid expressions
     assert!(optimize_expression("invalid_unit").is_err());
@@ -31,19 +31,21 @@ fn test_optimize_expression() {
 #[test]
 fn test_canonicalize_expression() {
     // Test canonicalization of derived units
-    assert_eq!(canonicalize_expression("N").unwrap(), "kg.m.s-2");
-    assert_eq!(canonicalize_expression("J").unwrap(), "kg.m2.s-2");
-    assert_eq!(canonicalize_expression("W").unwrap(), "kg.m2.s-3");
-    assert_eq!(canonicalize_expression("Pa").unwrap(), "kg.m-1.s-2");
+    // The UCUM base unit of mass is the gram
+    assert_eq!(canonicalize_expression("N").unwrap(), "g.m.s-2");
+    assert_eq!(canonicalize_expression("J").unwrap(), "g.m2.s-2");
+    assert_eq!(canonicalize_expression("W").unwrap(), "g.m2.s-3");
+    assert_eq!(canonicalize_expression("Pa").unwrap(), "g.m-1.s-2");
     assert_eq!(canonicalize_expression("Hz").unwrap(), "s-1");
 
     // Test canonicalization of prefixed units
     assert_eq!(canonicalize_expression("km").unwrap(), "m");
-    assert_eq!(canonicalize_expression("mg").unwrap(), "kg");
+    assert_eq!(canonicalize_expression("mg").unwrap(), "g");
+    assert_eq!(canonicalize_expression("kg").unwrap(), "g");
 
     // Test that base units remain in canonical form
     assert_eq!(canonicalize_expression("m").unwrap(), "m");
-    assert_eq!(canonicalize_expression("kg").unwrap(), "kg");
+    assert_eq!(canonicalize_expression("g").unwrap(), "g");
     assert_eq!(canonicalize_expression("s").unwrap(), "s");
 
     // Test dimensionless units
@@ -57,7 +59,7 @@ fn test_canonicalize_expression() {
 fn test_simplify_expression() {
     // Test simplification of redundant operations - use valid UCUM syntax
     assert_eq!(simplify_expression("m.s/s").unwrap(), "m");
-    assert_eq!(simplify_expression("kg.m/m").unwrap(), "kg");
+    assert_eq!(simplify_expression("g.m/m").unwrap(), "g");
 
     // Test that complex expressions are preserved
     let complex_expr = "kg.m2/s3";
@@ -67,7 +69,7 @@ fn test_simplify_expression() {
 
     // Test basic expressions remain the same
     assert_eq!(simplify_expression("m").unwrap(), "m");
-    assert_eq!(simplify_expression("kg").unwrap(), "kg");
+    assert_eq!(simplify_expression("g").unwrap(), "g");
 
     // Test error handling
     assert!(simplify_expression("invalid_unit").is_err());
