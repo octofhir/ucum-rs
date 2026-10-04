@@ -872,17 +872,10 @@ fn classify_unit(unit: &UnitRecord) -> ConceptKind {
 /// ```
 #[allow(clippy::result_large_err)]
 pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, UcumError> {
+    let (unit1, unit2) = (operand_text(unit1), operand_text(unit2));
     let analysis1 = analyse(unit1)?;
     let analysis2 = analyse(unit2)?;
-
-    // Check for offset units (not allowed in multiplication)
-    if analysis1.has_offset || analysis2.has_offset {
-        return Err(UcumError::conversion_error(
-            "offset units",
-            "multiplication",
-            "Offset units cannot be used in multiplication",
-        ));
-    }
+    check_arithmetic_operands(&analysis1, &analysis2, "multiplication")?;
 
     // Multiply factors
     let result_factor = analysis1.factor * analysis2.factor;
@@ -896,6 +889,10 @@ pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, U
         unit2.to_string()
     } else if unit2 == "1" {
         unit1.to_string()
+    } else if unit2.starts_with('/') {
+        // "m" times "/s" is "m/s": terms are evaluated from left to right (UCUM §7.4),
+        // and a solidus needs a left operand everywhere but at the start of the term
+        format!("{unit1}{unit2}")
     } else {
         format!("{unit1}.{unit2}")
     };
@@ -932,17 +929,10 @@ pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, U
 /// ```
 #[allow(clippy::result_large_err)]
 pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticResult, UcumError> {
+    let (numerator, denominator) = (operand_text(numerator), operand_text(denominator));
     let analysis1 = analyse(numerator)?;
     let analysis2 = analyse(denominator)?;
-
-    // Check for offset units (not allowed in division)
-    if analysis1.has_offset || analysis2.has_offset {
-        return Err(UcumError::conversion_error(
-            "offset units",
-            "division",
-            "Offset units cannot be used in division",
-        ));
-    }
+    check_arithmetic_operands(&analysis1, &analysis2, "division")?;
 
     // Divide factors
     let result_factor = analysis1.factor / analysis2.factor;
@@ -951,13 +941,15 @@ pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticR
     let mut result_dimension = analysis1.dimension.0;
     crate::evaluator::add_scaled_dim(&mut result_dimension, &analysis2.dimension, -1)?;
 
-    // Build result expression string
+    // Build result expression string. Terms are evaluated from left to right (UCUM §7.4),
+    // so a compound divisor needs parentheses: "m/(s.kg)", not "m/s.kg".
+    let divisor = divisor_text(denominator, &analysis2.parsed_ast);
     let result_expression = if denominator == "1" {
         numerator.to_string()
     } else if numerator == "1" {
-        format!("/{denominator}")
+        format!("/{divisor}")
     } else {
-        format!("{numerator}/{denominator}")
+        format!("{numerator}/{divisor}")
     };
 
     Ok(UnitArithmeticResult {
@@ -967,6 +959,77 @@ pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticR
         offset: 0.0,
         is_dimensionless: result_dimension == [0; 7],
     })
+}
+
+/// Text of a unit expression used as the right operand of a division.
+fn divisor_text(unit: &str, ast: &OwnedUnitExpr) -> String {
+    let is_compound = matches!(
+        ast,
+        OwnedUnitExpr::Product(_) | OwnedUnitExpr::Quotient(_, _)
+    );
+    let is_parenthesized = unit
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .is_some_and(|inner| parse_expression(inner).is_ok());
+    if !is_compound || is_parenthesized {
+        return unit.to_string();
+    }
+    // A leading solidus is only valid at the start of the whole term (`mainTerm` in the
+    // UCUM grammar): inside parentheses "/s" is written "1/s"
+    match unit.strip_prefix('/') {
+        Some(rest) => format!("(1/{rest})"),
+        None => format!("({unit})"),
+    }
+}
+
+/// An operand of unit arithmetic, without surrounding whitespace. The empty string is the
+/// unity, like for the parser.
+fn operand_text(unit: &str) -> &str {
+    match unit.trim() {
+        "" => "1",
+        trimmed => trimmed,
+    }
+}
+
+/// Whether an expression uses a unit on a logarithmic or tangent scale (`B`, `dB`, `Np`,
+/// `[p'diop]`, ...).
+fn has_function_unit(expr: &OwnedUnitExpr) -> bool {
+    use crate::types::SpecialKind::{Ln, Log10, TanTimes100};
+    match expr {
+        OwnedUnitExpr::Symbol(code) => evaluator::lookup_unit(code)
+            .is_some_and(|(_, unit)| matches!(unit.special, Log10 | Ln | TanTimes100)),
+        OwnedUnitExpr::Numeric(_) => false,
+        OwnedUnitExpr::Product(factors) => factors.iter().any(|f| has_function_unit(&f.expr)),
+        OwnedUnitExpr::Quotient(numerator, denominator) => {
+            has_function_unit(numerator) || has_function_unit(denominator)
+        }
+        OwnedUnitExpr::Power(base, _) => has_function_unit(base),
+    }
+}
+
+/// Special units cannot take part in algebraic operations (UCUM §22.1): reject operands
+/// with an offset (temperature) or on a logarithmic or tangent scale.
+#[allow(clippy::result_large_err)]
+fn check_arithmetic_operands(
+    left: &UnitAnalysis,
+    right: &UnitAnalysis,
+    operation: &str,
+) -> Result<(), UcumError> {
+    if left.has_offset || right.has_offset {
+        return Err(UcumError::conversion_error(
+            "offset units",
+            operation,
+            &format!("Offset units cannot be used in {operation}"),
+        ));
+    }
+    if has_function_unit(&left.parsed_ast) || has_function_unit(&right.parsed_ast) {
+        return Err(UcumError::conversion_error(
+            "special units",
+            operation,
+            &format!("Logarithmic and tangent units cannot be used in {operation}"),
+        ));
+    }
+    Ok(())
 }
 
 // ============================================================================

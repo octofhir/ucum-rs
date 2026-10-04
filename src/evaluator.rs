@@ -284,7 +284,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
 
 /// Look up a unit code: an exact match first, then a prefix on a metric unit
 /// ("km", "dam", "mm[Hg]"). Returns the prefix factor and the unit.
-fn lookup_unit(code: &str) -> Option<(f64, &'static UnitRecord)> {
+pub(crate) fn lookup_unit(code: &str) -> Option<(f64, &'static UnitRecord)> {
     if let Some(unit) = find_unit(code)
         && unit.code == code
     {
