@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `multiply`, `divide_by` and `unit_divide` return a `PrecisionOverflow` error instead of an
+  infinite or NaN result, or a zero that only comes from a result too small for an `f64`
+  (`unit_divide("m", "0")`, `multiply(1e300, "m", 1e300, "s")`, `multiply(f64::NAN, ..)`).
+  `divide_by` with a divisor value of zero now returns the same error kind instead of a
+  `ConversionError`.
+- `multiply` and `divide_by` scale each value by its own unit before combining them, so a
+  result that fits is not lost to an intermediate overflow or underflow.
+
 ## [0.2.0] - 2025-07-22
 
 ### Added

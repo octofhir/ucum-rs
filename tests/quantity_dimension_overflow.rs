@@ -1,18 +1,10 @@
 //! Quantity and unit arithmetic must report a dimension exponent that does not fit in `i8`,
 //! like the evaluator does, instead of overflowing or saturating.
 
-use octofhir_ucum::{
-    Dimension, ErrorKind, UcumError, divide_by, multiply, unit_divide, unit_multiply,
-};
+mod common;
 
-fn assert_overflow<T: std::fmt::Debug>(result: Result<T, UcumError>, what: &str) {
-    let err = result.expect_err(what);
-    assert!(
-        matches!(err.kind, ErrorKind::PrecisionOverflow { .. }),
-        "{what}: unexpected error {:?}",
-        err.kind
-    );
-}
+use common::assert_overflow;
+use octofhir_ucum::{Dimension, divide_by, multiply, unit_divide, unit_multiply};
 
 #[test]
 fn quantity_arithmetic_reports_exponent_overflow() {

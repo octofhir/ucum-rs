@@ -420,6 +420,11 @@ fn build_canonical_unit_string(dim: &Dimension) -> String {
 /// let result = multiply(5.0, "m", 2.0, "s").unwrap();
 /// println!("{} {}", result.value, result.unit); // "10 m.s"
 /// ```
+///
+/// # Errors
+///
+/// A result that is not a number or does not fit in an `f64` (a value out of range or too
+/// small, an operand that is infinite or NaN) is a `PrecisionOverflow`.
 #[allow(clippy::result_large_err)]
 pub fn multiply(
     value1: f64,
@@ -439,9 +444,10 @@ pub fn multiply(
         ));
     }
 
-    // Calculate result
-    let result_value = value1 * value2;
-    let result_factor = analysis1.factor * analysis2.factor;
+    // Calculate result. Each value is scaled by its own unit first, so that an intermediate
+    // product of the values alone cannot overflow or underflow when the result fits
+    let result_value = (value1 * analysis1.factor) * (value2 * analysis2.factor);
+    let is_zero_expected = [value1, analysis1.factor, value2, analysis2.factor].contains(&0.0);
 
     // Combine dimensions
     let mut result_dim = analysis1.dimension.0;
@@ -450,7 +456,9 @@ pub fn multiply(
     let result_unit = build_canonical_unit_string(&Dimension(result_dim));
 
     Ok(UnitResult {
-        value: result_value * result_factor,
+        value: check_number(result_value, is_zero_expected, "multiplication", || {
+            format!("{value1:?} {unit1} * {value2:?} {unit2}")
+        })?,
         unit: result_unit,
         dimension: Dimension(result_dim),
     })
@@ -466,6 +474,12 @@ pub fn multiply(
 /// let result = divide_by(10.0, "m", 2.0, "s").unwrap();
 /// println!("{} {}", result.value, result.unit); // "5 m.s-1"
 /// ```
+///
+/// # Errors
+///
+/// A result that is not a number or does not fit in an `f64` (a division by zero, by the
+/// value or by a unit such as `"0"`, a value out of range or too small, an operand that is
+/// infinite or NaN) is a `PrecisionOverflow`.
 #[allow(clippy::result_large_err)]
 pub fn divide_by(
     dividend_value: f64,
@@ -485,17 +499,15 @@ pub fn divide_by(
         ));
     }
 
-    if divisor_value == 0.0 {
-        return Err(UcumError::conversion_error(
-            "denominator",
-            "zero",
-            "division by zero",
-        ));
-    }
-
-    // Calculate result
-    let result_value = dividend_value / divisor_value;
-    let result_factor = analysis1.factor / analysis2.factor;
+    // Calculate result. Each value is scaled by its own unit first, so that an intermediate
+    // quotient of the values alone cannot overflow or underflow when the result fits. A
+    // finite value divided by an infinite one is zero, which would hide the divisor that is
+    // not a number: the other cases show in the result
+    let operands =
+        || format!("{dividend_value:?} {dividend_unit} / {divisor_value:?} {divisor_unit}");
+    let divisor = check_number(divisor_value * analysis2.factor, true, "division", operands)?;
+    let result_value = (dividend_value * analysis1.factor) / divisor;
+    let is_zero_expected = dividend_value == 0.0 || analysis1.factor == 0.0;
 
     // Combine dimensions (subtract divisor from dividend)
     let mut result_dim = analysis1.dimension.0;
@@ -504,10 +516,26 @@ pub fn divide_by(
     let result_unit = build_canonical_unit_string(&Dimension(result_dim));
 
     Ok(UnitResult {
-        value: result_value * result_factor,
+        value: check_number(result_value, is_zero_expected, "division", operands)?,
         unit: result_unit,
         dimension: Dimension(result_dim),
     })
+}
+
+/// A result of quantity or unit arithmetic must be a number: an infinite or NaN value, or a
+/// zero that only comes from a result too small for an `f64`, is reported like the evaluator
+/// reports it (`m/0`), instead of being returned as a success.
+fn check_number(
+    value: f64,
+    is_zero_expected: bool,
+    operation: &str,
+    operands: impl Fn() -> String,
+) -> Result<f64, UcumError> {
+    if value.is_finite() && (value != 0.0 || is_zero_expected) {
+        Ok(value)
+    } else {
+        Err(UcumError::precision_overflow(operation, &operands()))
+    }
 }
 
 /// Result of mathematical operations with units
@@ -927,6 +955,10 @@ pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, U
 /// println!("Result: {} (factor: {})", result.expression, result.factor);
 /// // Output: Result: m/s (factor: 1)
 /// ```
+///
+/// # Errors
+///
+/// A divisor with a factor of zero, such as `"0"`, is a `PrecisionOverflow`.
 #[allow(clippy::result_large_err)]
 pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticResult, UcumError> {
     let (numerator, denominator) = (operand_text(numerator), operand_text(denominator));
@@ -934,16 +966,23 @@ pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticR
     let analysis2 = analyse(denominator)?;
     check_arithmetic_operands(&analysis1, &analysis2, "division")?;
 
-    // Divide factors
-    let result_factor = analysis1.factor / analysis2.factor;
+    // Terms are evaluated from left to right (UCUM §7.4), so a compound divisor needs
+    // parentheses: "m/(s.kg)", not "m/s.kg".
+    let divisor = divisor_text(denominator, &analysis2.parsed_ast);
+
+    // Divide factors: a divisor such as "0" has a factor of zero
+    let result_factor = check_number(
+        analysis1.factor / analysis2.factor,
+        analysis1.factor == 0.0,
+        "division",
+        || format!("{numerator} / {divisor}"),
+    )?;
 
     // Subtract dimensions
     let mut result_dimension = analysis1.dimension.0;
     crate::evaluator::add_scaled_dim(&mut result_dimension, &analysis2.dimension, -1)?;
 
-    // Build result expression string. Terms are evaluated from left to right (UCUM §7.4),
-    // so a compound divisor needs parentheses: "m/(s.kg)", not "m/s.kg".
-    let divisor = divisor_text(denominator, &analysis2.parsed_ast);
+    // Build result expression string
     let result_expression = if denominator == "1" {
         numerator.to_string()
     } else if numerator == "1" {
