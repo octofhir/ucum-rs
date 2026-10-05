@@ -140,6 +140,15 @@ fn handle_convert(value: f64, from: String, to: String) -> anyhow::Result<()> {
 
     let canonical = value * to_f64(from_res.factor) + to_f64(from_res.offset);
     let result = (canonical - to_f64(to_res.offset)) / to_f64(to_res.factor);
+    if !result.is_finite() {
+        anyhow::bail!(
+            "Cannot convert {} {} to '{}': the result is {}",
+            value,
+            from,
+            to,
+            result
+        );
+    }
     println!("{} {} = {} {}", value, from, result, to);
     Ok(())
 }

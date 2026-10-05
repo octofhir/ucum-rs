@@ -1380,6 +1380,11 @@ pub struct AdvancedConversionResult {
 /// let result = convert_with_context(1.0, "km", "m", &context).unwrap();
 /// println!("Converted: {} {}", result.value, result.unit);
 /// ```
+///
+/// # Errors
+///
+/// A converted value that is infinite or NaN (a target unit that is zero such as `"0"`, a
+/// value out of range or that is not a number) is a `PrecisionOverflow`.
 #[allow(clippy::result_large_err)]
 pub fn convert_with_context(
     value: f64,
@@ -1431,7 +1436,10 @@ pub fn convert_with_context(
     };
 
     Ok(AdvancedConversionResult {
-        value: final_value,
+        // A target unit such as "0" has a factor of zero
+        value: check_number(final_value, true, "conversion", || {
+            format!("{value:?} {from} to {to}")
+        })?,
         unit: to.to_string(),
         factor,
         offset,

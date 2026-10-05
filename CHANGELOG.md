@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ConversionError`.
 - `multiply` and `divide_by` scale each value by its own unit before combining them, so a
   result that fits is not lost to an intermediate overflow or underflow.
+- Conversions return an error instead of an infinite or NaN value: `convert_with_context`,
+  `fhir::convert_quantity`, the `convert` subcommand of the CLI and `convert` in the WASM
+  package (`convert_with_context(5.0, "1", "0", ..)`).
+- `fhir::convert_quantity` and `fhir::are_equivalent` no longer panic when the target unit
+  is zero or when the ratio of the two factors does not fit in a `Decimal` (`Ym` to `ym`).
 
 ## [0.2.0] - 2025-07-22
 

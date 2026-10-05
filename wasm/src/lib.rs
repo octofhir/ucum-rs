@@ -271,5 +271,12 @@ pub fn convert(value: f64, from_unit: &str, to_unit: &str) -> Result<f64, JsValu
 
     let canonical = value * to_f64(from_res.factor) + to_f64(from_res.offset);
     let result = (canonical - to_f64(to_res.offset)) / to_f64(to_res.factor);
+    if !result.is_finite() {
+        let js_error = convert_error(UcumError::precision_overflow(
+            "conversion",
+            &format!("{value:?} {from_unit} to {to_unit}"),
+        ));
+        return Err(to_value(&js_error)?);
+    }
     Ok(result)
 }
