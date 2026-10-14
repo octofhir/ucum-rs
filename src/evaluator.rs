@@ -236,24 +236,9 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 ));
             }
 
-            // Check if numerator is an arbitrary unit (dimensionless)
-            // For arbitrary units in the numerator, we need to adopt the inverse dimension of the denominator
-            // This is a special case for arbitrary units like [IU] that are dimensionless by definition
-            // but need to adopt the inverse dimension of what they're divided by (e.g., [IU]/mL should have
-            // dimension L^-3, the inverse of volume). This ensures proper dimensional analysis and
-            // commensurability checks when working with arbitrary units in complex expressions.
-            let is_arbitrary_numerator = extract_symbol_str(num.as_ref())
-                .and_then(find_unit)
-                .is_some_and(|unit| unit.special == crate::types::SpecialKind::Arbitrary);
-
-            let mut dim_vec = if is_arbitrary_numerator {
-                // For arbitrary units in numerator, use negated dimension of denominator
-                // This ensures arbitrary units correctly adopt the inverse dimensions of what they're divided by
-                [0i8; 7]
-            } else {
-                // Normal case: subtract denominator dimension from numerator dimension
-                n.dim.0
-            };
+            // Arbitrary units such as [IU] are dimensionless, so [IU]/mL has the
+            // dimension of 1/mL through the ordinary subtraction
+            let mut dim_vec = n.dim.0;
             add_scaled_dim(&mut dim_vec, &d.dim, -1)?;
 
             Ok(EvalResult {

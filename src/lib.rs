@@ -1380,6 +1380,15 @@ pub struct AdvancedConversionResult {
 /// let result = convert_with_context(1.0, "km", "m", &context).unwrap();
 /// println!("Converted: {} {}", result.value, result.unit);
 /// ```
+///
+/// # Errors
+///
+/// A converted value that is infinite or NaN (a target unit that is zero such as `"0"`, a
+/// value out of range or that is not a number) is a `PrecisionOverflow`.
+///
+/// Units with an offset (temperatures) are converted through the base unit:
+/// `convert_with_context(0.0, "Cel", "[degF]", ..)` is 32, and the result satisfies
+/// `value == input * factor + offset`.
 #[allow(clippy::result_large_err)]
 pub fn convert_with_context(
     value: f64,
@@ -1387,23 +1396,21 @@ pub fn convert_with_context(
     to: &str,
     context: &AdvancedConversionContext,
 ) -> Result<AdvancedConversionResult, UcumError> {
-    // For now, delegate to the existing conversion logic
-    // This can be enhanced with the precision and rounding logic
-    let from_analysis = analyse(from)?;
-    let to_analysis = analyse(to)?;
+    let from_eval = evaluate_owned(&parse_expression(from)?)?;
+    let to_eval = evaluate_owned(&parse_expression(to)?)?;
 
     // Check dimension compatibility
-    if from_analysis.dimension != to_analysis.dimension {
+    if from_eval.dim != to_eval.dim {
         return Err(UcumError::conversion_error(
-            "source units",
-            "target units",
+            from,
+            to,
             "Cannot convert between units with different dimensions",
         ));
     }
 
     // Calculate conversion
-    let factor = from_analysis.factor / to_analysis.factor;
-    let offset = from_analysis.offset - to_analysis.offset;
+    let operands = || format!("{value:?} {from} to {to}");
+    let (factor, offset) = conversion_terms(&from_eval, &to_eval, operands)?;
     let converted_value = value * factor + offset;
 
     // Apply precision rounding (simplified implementation)
@@ -1431,13 +1438,47 @@ pub fn convert_with_context(
     };
 
     Ok(AdvancedConversionResult {
-        value: final_value,
+        // A target unit such as "0" has a factor of zero
+        value: check_number(final_value, true, "conversion", operands)?,
         unit: to.to_string(),
         factor,
         offset,
         precision_info,
-        used_special_units: from_analysis.has_offset || to_analysis.has_offset,
+        used_special_units: !from_eval.offset.is_zero() || !to_eval.offset.is_zero(),
     })
+}
+
+/// The `factor` and `offset` that convert a value from one unit to another of the same
+/// dimension, as `value * factor + offset`. This is `(value * from.factor + from.offset -
+/// to.offset) / to.factor`, the conversion of UCUM through the base units.
+///
+/// Both terms are computed in `Decimal` where they fit. A term that does not fit in a `Decimal` (`Ym` to `ym` is 1e48) or is too small for it is computed in
+/// `f64`. A target unit with a factor of zero (the unit `0`) is a `PrecisionOverflow` of the
+/// conversion described by `operands`.
+pub(crate) fn conversion_terms(
+    from: &EvalResult,
+    to: &EvalResult,
+    operands: impl Fn() -> String,
+) -> Result<(f64, f64), UcumError> {
+    let quotient = |numerator: Number| {
+        let in_decimal = numerator
+            .checked_div(to.factor)
+            .filter(|ratio| !ratio.is_zero() || numerator.is_zero());
+        let ratio = match in_decimal {
+            Some(ratio) => to_f64(ratio),
+            None => to_f64(numerator) / to_f64(to.factor),
+        };
+        if ratio.is_finite() {
+            Ok(ratio)
+        } else {
+            Err(UcumError::precision_overflow("conversion", &operands()))
+        }
+    };
+    let offset_difference = from
+        .offset
+        .checked_sub(to.offset)
+        .ok_or_else(|| UcumError::precision_overflow("conversion", &operands()))?;
+    Ok((quotient(from.factor)?, quotient(offset_difference)?))
 }
 
 // ============================================================================

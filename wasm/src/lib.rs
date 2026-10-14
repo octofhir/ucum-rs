@@ -4,9 +4,9 @@
 //! published to npm as `@octofhir/ucum-wasm` via `wasm-pack`.
 
 use octofhir_ucum::{
-    UcumError, UnitRecord, analyse, evaluate_owned, find_unit, get_canonical_units, is_comparable,
-    parse_expression, precision::to_f64, search_units as core_search_units,
-    validate as core_validate,
+    AdvancedConversionContext, UcumError, UnitRecord, analyse, convert_with_context,
+    evaluate_owned, find_unit, get_canonical_units, is_comparable, parse_expression,
+    search_units as core_search_units, validate as core_validate,
 };
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::to_value;
@@ -269,7 +269,13 @@ pub fn convert(value: f64, from_unit: &str, to_unit: &str) -> Result<f64, JsValu
         return Err(to_value(&js_error)?);
     }
 
-    let canonical = value * to_f64(from_res.factor) + to_f64(from_res.offset);
-    let result = (canonical - to_f64(to_res.offset)) / to_f64(to_res.factor);
-    Ok(result)
+    match convert_with_context(
+        value,
+        from_unit,
+        to_unit,
+        &AdvancedConversionContext::default(),
+    ) {
+        Ok(result) => Ok(result.value),
+        Err(err) => Err(to_value(&convert_error(err))?),
+    }
 }

@@ -5,8 +5,8 @@
 
 use clap::{Parser, Subcommand};
 use octofhir_ucum::{
-    analyse, evaluate_owned, get_canonical_units, is_comparable, parse_expression,
-    precision::to_f64, search_units, validate,
+    AdvancedConversionContext, analyse, convert_with_context, get_canonical_units, is_comparable,
+    search_units, validate,
 };
 
 #[derive(Parser, Debug)]
@@ -41,6 +41,7 @@ pub enum Commands {
     /// Convert a value between two units.
     Convert {
         /// Input value
+        #[arg(allow_negative_numbers = true)]
         value: f64,
         /// Source unit expression
         from: String,
@@ -128,19 +129,9 @@ fn handle_canonical(expr: &str) -> anyhow::Result<()> {
 }
 
 fn handle_convert(value: f64, from: String, to: String) -> anyhow::Result<()> {
-    let from_expr = parse_expression(&from)?;
-    let to_expr = parse_expression(&to)?;
-
-    let from_res = evaluate_owned(&from_expr)?;
-    let to_res = evaluate_owned(&to_expr)?;
-
-    if from_res.dim != to_res.dim {
-        anyhow::bail!("Incompatible dimensions between '{}' and '{}'", from, to);
-    }
-
-    let canonical = value * to_f64(from_res.factor) + to_f64(from_res.offset);
-    let result = (canonical - to_f64(to_res.offset)) / to_f64(to_res.factor);
-    println!("{} {} = {} {}", value, from, result, to);
+    let context = AdvancedConversionContext::default();
+    let result = convert_with_context(value, &from, &to, &context)?;
+    println!("{} {} = {} {}", value, from, result.value, to);
     Ok(())
 }
 

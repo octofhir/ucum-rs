@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ConversionError`.
 - `multiply` and `divide_by` scale each value by its own unit before combining them, so a
   result that fits is not lost to an intermediate overflow or underflow.
+- Conversions return an error instead of an infinite or NaN value: `convert_with_context`,
+  `fhir::convert_quantity`, the `convert` subcommand of the CLI and `convert` in the WASM
+  package (`convert_with_context(5.0, "1", "0", ..)`).
+- `fhir::convert_quantity` and `fhir::are_equivalent` no longer panic when the target unit
+  is zero or when the ratio of the two factors does not fit in a `Decimal` (`Ym` to `ym`).
+- Conversions between units with an offset are right when the target unit has a factor other
+  than 1: `convert_with_context(0.0, "Cel", "[degF]", ..)` is 32, not 17.78. The
+  `offset` field of the result is now divided by the target factor, so that `value == input *
+  factor + offset`.
+- `fhir::convert_quantity` and `fhir::are_equivalent` apply the offsets of temperature units:
+  0 `Cel` is 273.15 `K`, not 0 `K`.
+- The `convert` subcommand of the CLI and `convert` in the WASM package use
+  `convert_with_context`. The CLI accepts a negative value (`convert -40 Cel "[degF]"`).
+- `convert_with_context` names the two units in its error for different dimensions.
 
 ## [0.2.0] - 2025-07-22
 
