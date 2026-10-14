@@ -1,6 +1,7 @@
 //! Generated registry of UCUM prefixes and units.
 //!
-//! At compile time, `build.rs` parses `spec/ucum-essence.xml` and emits a Rust
+//! At compile time, `build.rs` parses `ucum-essence.xml` at the crate root (not the
+//! copy in `spec/`) and emits a Rust
 //! source file containing two `&'static` slices: `PREFIXES` and `UNITS`, plus
 //! helper lookup functions. That generated file is included here so the rest of
 //! the crate can access the data transparently.
