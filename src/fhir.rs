@@ -6,8 +6,7 @@
 
 use crate::prelude::*;
 use crate::{
-    Quantity as UcumQuantity, UcumError, evaluate_owned, parse_expression,
-    precision::{Number, to_f64},
+    Quantity as UcumQuantity, UcumError, conversion_terms, evaluate_owned, parse_expression,
 };
 use thiserror::Error;
 
@@ -213,17 +212,16 @@ pub fn convert_quantity(
         )));
     }
 
-    let factor = factor_ratio(source_eval.factor, target_eval.factor)?;
-    let value = ucum_quantity.value * factor;
-    if !value.is_finite() {
-        return Err(UcumError::precision_overflow(
-            "conversion",
-            &format!(
-                "{:?} {} to {target_unit}",
-                ucum_quantity.value, ucum_quantity.unit
-            ),
+    let operands = || {
+        format!(
+            "{:?} {} to {target_unit}",
+            ucum_quantity.value, ucum_quantity.unit
         )
-        .into());
+    };
+    let (factor, offset) = conversion_terms(&source_eval, &target_eval, operands)?;
+    let value = ucum_quantity.value * factor + offset;
+    if !value.is_finite() {
+        return Err(UcumError::precision_overflow("conversion", &operands()).into());
     }
 
     Ok(FhirQuantity {
@@ -233,24 +231,6 @@ pub fn convert_quantity(
         code: Some(target_unit.to_string()),
         comparator: quantity.comparator.clone(),
     })
-}
-
-/// `from / to` as an `f64`, with an error instead of a panic when `to` is zero (the unit
-/// `0`). A ratio that does not fit in a `Decimal`, or that is too small for it (`Ym` to `ym`
-/// and back), is computed in `f64`.
-fn factor_ratio(from: Number, to: Number) -> Result<f64, FhirError> {
-    let in_decimal = from
-        .checked_div(to)
-        .filter(|ratio| !ratio.is_zero() || from.is_zero());
-    let ratio = match in_decimal {
-        Some(ratio) => to_f64(ratio),
-        None => to_f64(from) / to_f64(to),
-    };
-    if ratio.is_finite() {
-        Ok(ratio)
-    } else {
-        Err(UcumError::precision_overflow("division", &format!("{from} / {to}")).into())
-    }
 }
 
 pub fn are_equivalent(a: &FhirQuantity, b: &FhirQuantity) -> Result<bool, FhirError> {
@@ -266,10 +246,13 @@ pub fn are_equivalent(a: &FhirQuantity, b: &FhirQuantity) -> Result<bool, FhirEr
         )));
     }
 
-    let factor = factor_ratio(b_eval.factor, a_eval.factor)?;
+    // `b` expressed in the unit of `a`
+    let operands = || format!("{} to {}", b_ucum.unit, a_ucum.unit);
+    let (factor, offset) = conversion_terms(&b_eval, &a_eval, operands)?;
+    let b_value = b_ucum.value * factor + offset;
     const EPSILON: f64 = 1e-6;
-    let diff = (a_ucum.value - b_ucum.value * factor).abs();
-    let max = a_ucum.value.abs().max((b_ucum.value * factor).abs());
+    let diff = (a_ucum.value - b_value).abs();
+    let max = a_ucum.value.abs().max(b_value.abs());
 
     if max < EPSILON {
         Ok(diff < EPSILON)
