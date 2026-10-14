@@ -13,6 +13,9 @@ fn main() {
     // --- Parse XML ---
     let xml_data = fs::read_to_string(&xml_path).expect("read ucum-essence.xml");
     let mut prefixes: Vec<(String, f64, i8, String)> = Vec::new();
+    // The `value` attribute of each prefix as written ("1e-3"), read exactly by `Resolver`
+    let mut prefix_values: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     let mut reader = quick_xml::Reader::from_str(&xml_data);
     loop {
@@ -23,6 +26,7 @@ fn main() {
                     let mut code: Option<String> = None;
                     let mut value: Option<f64> = None;
                     let mut name: Option<String> = None;
+                    let mut value_text: Option<String> = None;
 
                     for attr in e.attributes().filter_map(|a| a.ok()) {
                         if attr.key.as_ref() == b"Code" {
@@ -38,11 +42,9 @@ fn main() {
                                     .filter_map(|a| a.ok())
                                     .find(|a| a.key.as_ref() == b"value")
                                 {
-                                    value = Some(
-                                        String::from_utf8_lossy(&v_attr.value)
-                                            .parse::<f64>()
-                                            .unwrap(),
-                                    );
+                                    let text = String::from_utf8_lossy(&v_attr.value);
+                                    value = Some(text.parse::<f64>().unwrap());
+                                    value_text = Some(text.to_string());
                                 }
                             }
                             Ok(Event::Start(ref ne)) if ne.name().as_ref() == b"name" => {
@@ -59,6 +61,9 @@ fn main() {
                     if let (Some(c), Some(v), Some(n)) = (code, value, name) {
                         // Exponent is log10 of value
                         let exp = v.abs().log10() as i8; // rough, assumes powers of 10
+                        if let Some(text) = value_text {
+                            prefix_values.insert(c.clone(), text);
+                        }
                         prefixes.push((c, v, exp, n));
                     }
                 }
@@ -202,7 +207,7 @@ fn main() {
                             .attributes()
                             .filter_map(|a| a.ok())
                             .any(|a| a.key.as_ref() == b"isMetric" && a.value.as_ref() == b"yes");
-                        let mut xml_value = 1.0f64;
+                        let mut xml_value = String::from("1");
                         let mut has_function = false;
                         // Need to capture <value> child to get a factor (may combine Unit attr) and maybe offset
                         // Also capture <property> child to get unit classification and <name> for display name
@@ -234,8 +239,8 @@ fn main() {
                                             unit_ref_for_dim = Some(u.to_string());
                                         }
                                         if let Some(v) = val_num {
-                                            xml_value = v.parse::<f64>().unwrap_or(1.0);
-                                            f *= xml_value;
+                                            f *= v.parse::<f64>().unwrap_or(1.0);
+                                            xml_value = v.to_string();
                                         }
                                         factor = Some(f);
                                         if let Some(o_attr) =
@@ -290,7 +295,7 @@ fn main() {
                         definitions.insert(
                             code.clone(),
                             Definition {
-                                value: xml_value,
+                                value: xml_value.clone(),
                                 unit: unit_ref_for_dim.clone(),
                                 has_function,
                             },
@@ -936,7 +941,11 @@ fn main() {
         definitions: &definitions,
         prefixes: prefixes
             .iter()
-            .map(|p| (p.0.clone(), decimal(p.1)))
+            .map(|p| {
+                let factor = Factor::parse(&prefix_values[&p.0])
+                    .unwrap_or_else(|| panic!("value of the prefix {}", p.0));
+                (p.0.clone(), factor)
+            })
             .collect(),
         metric_codes: &metric_codes,
         cache: std::collections::HashMap::new(),
@@ -1048,49 +1057,87 @@ fn parse_factor(text: &str) -> f64 {
 
 /// A unit definition from `<value Unit="..." value="...">`.
 struct Definition {
-    value: f64,
+    /// The `value` attribute as written ("6.62607015e-34"), so that it is read exactly
+    value: String,
     unit: Option<String>,
     /// Defined through a special function such as "cel(1 K)" or "2lg(1 mV)"
     has_function: bool,
 }
 
-/// A factor kept as `mantissa × 10^exp`, so that decimal prefixes and powers of ten
-/// stay exact ("L" is 10^-3, not 0.1³ = 0.0010000000000000002).
+/// A factor kept as `mantissa × 10^exp` with a decimal mantissa in [1, 10), so that the
+/// definitions are evaluated in decimal ("[oz_tr]" is 31.1034768 g, not the
+/// 31.103476800000003 of `f64` arithmetic) and only the result is rounded to an `f64`.
 #[derive(Clone, Copy)]
 struct Factor {
-    mantissa: f64,
+    mantissa: rust_decimal::Decimal,
     exp: i32,
 }
 
 impl Factor {
     const ONE: Self = Self {
-        mantissa: 1.0,
+        mantissa: rust_decimal::Decimal::ONE,
         exp: 0,
     };
+
+    /// A decimal number as written in the XML ("2.54", "6.62607015e-34", "1e24"). Digits
+    /// beyond the 28 of a `Decimal` are rounded ("[pi]" has 64). Zero keeps a zero
+    /// mantissa, outside [1, 10).
+    fn parse(text: &str) -> Option<Self> {
+        let (mantissa, exp) = match text.trim().split_once(['e', 'E']) {
+            Some((mantissa, exp)) => (mantissa, exp.parse().ok()?),
+            None => (text.trim(), 0),
+        };
+        let mantissa = rust_decimal::Decimal::from_str_exact(mantissa)
+            .or_else(|_| mantissa.parse::<rust_decimal::Decimal>())
+            .ok()?;
+        Some(Self { mantissa, exp }.normalized())
+    }
+
+    fn normalized(mut self) -> Self {
+        use rust_decimal::Decimal;
+        if self.mantissa.is_zero() {
+            return self;
+        }
+        while self.mantissa.abs() >= Decimal::TEN {
+            self.mantissa /= Decimal::TEN;
+            self.exp += 1;
+        }
+        while self.mantissa.abs() < Decimal::ONE {
+            self.mantissa *= Decimal::TEN;
+            self.exp -= 1;
+        }
+        self
+    }
 
     fn mul(self, other: Self) -> Self {
         Self {
             mantissa: self.mantissa * other.mantissa,
             exp: self.exp + other.exp,
         }
+        .normalized()
     }
 
     fn div(self, other: Self) -> Self {
         Self {
-            mantissa: self.mantissa / other.mantissa,
+            mantissa: self
+                .mantissa
+                .checked_div(other.mantissa)
+                .expect("division by zero in a unit definition"),
             exp: self.exp - other.exp,
         }
+        .normalized()
     }
 
     fn powi(self, n: i32) -> Self {
-        Self {
-            mantissa: self.mantissa.powi(n),
-            exp: self.exp * n,
+        let mut result = Self::ONE;
+        for _ in 0..n.unsigned_abs() {
+            result = result.mul(self);
         }
+        if n < 0 { Self::ONE.div(result) } else { result }
     }
 
     fn to_f64(self) -> f64 {
-        // Parsing the decimal rounds once; 10f64.powi is inexact beyond 10^22
+        // Parsing the decimal rounds once, to the nearest f64
         format!("{}e{}", self.mantissa, self.exp)
             .parse()
             .expect("finite factor")
@@ -1133,10 +1180,13 @@ impl Resolver<'_> {
         if definition.has_function {
             return None;
         }
-        let value = definition.value;
+        // A value that does not parse is a bug to fix here, not a reason to keep the
+        // heuristic factor
+        let value = Factor::parse(&definition.value)
+            .unwrap_or_else(|| panic!("value {:?} of {code}", definition.value));
         let term = definition.unit.clone()?;
         let (factor, dim) = self.term(&term)?;
-        Some((factor.mul(decimal(value)), dim))
+        Some((factor.mul(value), dim))
     }
 
     /// A unit atom, possibly with a prefix ("kg", "m[Hg]", "mm[Hg]").
@@ -1167,14 +1217,20 @@ impl Resolver<'_> {
     /// One factor of a term: an integer, a power of ten, or an atom with an exponent.
     fn component(&mut self, text: &str) -> Option<(Factor, [i8; 7])> {
         if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
-            return Some((decimal(text.parse().ok()?), [0; 7]));
+            return Some((Factor::parse(text)?, [0; 7]));
         }
         if let Some(exp) = text
             .strip_prefix("10*")
             .or_else(|| text.strip_prefix("10^"))
         {
             let exp = exp.parse().ok()?;
-            return Some((Factor { mantissa: 1.0, exp }, [0; 7]));
+            return Some((
+                Factor {
+                    mantissa: rust_decimal::Decimal::ONE,
+                    exp,
+                },
+                [0; 7],
+            ));
         }
         let last = text.bytes().rposition(|b| !b.is_ascii_digit())?;
         let (symbol, exp) = if last + 1 < text.len() {
@@ -1225,26 +1281,6 @@ impl Resolver<'_> {
             divide = rest.as_bytes()[end] == b'/';
             rest = &rest[end + 1..];
         }
-    }
-}
-
-/// A plain number as a `Factor`, pulling out its power of ten when it is one
-/// (0.001 -> 10^-3, 2.54 stays 2.54).
-fn decimal(value: f64) -> Factor {
-    if value > 0.0 {
-        let exp = value.log10().round() as i32;
-        let exact = if exp >= 0 {
-            10f64.powi(exp)
-        } else {
-            1.0 / 10f64.powi(-exp)
-        };
-        if value == exact {
-            return Factor { mantissa: 1.0, exp };
-        }
-    }
-    Factor {
-        mantissa: value,
-        exp: 0,
     }
 }
 

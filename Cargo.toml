@@ -67,6 +67,7 @@ serde_json = "1"
 
 [build-dependencies]
 quick-xml = "0.41"
+rust_decimal = "1.36"
 serde = "1"
 serde_derive = "1"
 
