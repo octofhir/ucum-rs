@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `convert` subcommand of the CLI and `convert` in the WASM package use
   `convert_with_context`. The CLI accepts a negative value (`convert -40 Cel "[degF]"`).
 - `convert_with_context` names the two units in its error for different dimensions.
+- Conversions between units with a decimal factor are exact: `1 mg` is `0.001 g`, not
+  `0.0010000000000000002 g`, and `1 [lb_av]` is `453.59237 g`. `precision::from_f64` gives
+  the shortest decimal of the `f64` (`0.001`) instead of its binary expansion, and
+  `precision::to_f64` the nearest `f64`. The registry evaluates unit definitions in decimal at
+  build time, so 28 factors (`[lb_av]`, `[oz_tr]`, `[yd_br]`, ...) lose their `f64` rounding
+  error.
 
 ## [0.2.0] - 2025-07-22
 

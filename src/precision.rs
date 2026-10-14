@@ -38,11 +38,24 @@ impl NumericOps for Decimal {
     fn one() -> Self {
         Decimal::ONE
     }
+    /// The decimal number an `f64` stands for: the shortest decimal that reads back as the
+    /// same `f64` (`0.001`, not `0.0010000000000000000208...`), so that the decimal
+    /// factors of the registry stay exact and no digit of the `f64` is lost.
+    ///
+    /// A value whose shortest decimal needs more than 28 decimals keeps the closest
+    /// `Decimal` with 28 decimals; a value out of range or not finite is 0.
     fn from_f64(val: f64) -> Self {
-        Decimal::from_f64_retain(val).unwrap_or(Decimal::ZERO)
+        // `{:e}` writes the shortest decimal; the lossy parse rounds what does not fit in
+        // 28 decimals and fails on what is out of range or not finite
+        Decimal::from_scientific_lossy(&format!("{val:e}")).unwrap_or(Decimal::ZERO)
     }
+    /// The `f64` nearest to the decimal (`0.001` is the `f64` written `0.001`).
     fn to_f64(self) -> f64 {
-        self.try_into().unwrap_or(0.0)
+        self.to_string()
+            .parse()
+            .ok()
+            .or_else(|| self.try_into().ok())
+            .unwrap_or(0.0)
     }
     fn add(self, other: Self) -> Self {
         self + other
@@ -131,7 +144,8 @@ pub fn to_f64(num: Number) -> f64 {
     <Number as NumericOps>::to_f64(num)
 }
 
-/// Convert f64 to Number
+/// Convert f64 to Number: the shortest decimal that reads back as the same `f64` (`0.1` is
+/// `0.1`). A value that is not finite or out of the `Decimal` range is 0.
 pub fn from_f64(val: f64) -> Number {
     <Number as NumericOps>::from_f64(val)
 }
