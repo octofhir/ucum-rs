@@ -154,9 +154,22 @@ impl EvalResult {
         let (pref_factor, unit) =
             lookup_unit(code).ok_or_else(|| UcumError::unit_not_found(code))?;
         match unit.special {
-            // The prefix of a logarithmic unit scales its argument, see
+            // The factor of a level is its size in bels, so that a conversion between
+            // levels is the ratio of their factors: `dB` is 0.1, and `Np` is lg e (a ratio
+            // of e is 0.434 B). `<number>.<level>` is the ratio itself, see
             // `special_function_value`
-            SpecialKind::Log10 | SpecialKind::Ln | SpecialKind::TanTimes100 => Ok(Self {
+            SpecialKind::Log10 | SpecialKind::Ln => {
+                let base = match unit.special {
+                    SpecialKind::Ln => to_number(core::f64::consts::LOG10_E)?,
+                    _ => Number::one(),
+                };
+                Ok(Self {
+                    factor: checked_mul(to_number(pref_factor)?, base)?,
+                    dim: unit.dim,
+                    offset: Number::zero(),
+                })
+            }
+            SpecialKind::TanTimes100 => Ok(Self {
                 factor: to_number(unit.factor)?,
                 dim: unit.dim,
                 offset: Number::zero(),

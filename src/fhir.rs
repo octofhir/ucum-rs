@@ -6,7 +6,8 @@
 
 use crate::prelude::*;
 use crate::{
-    Quantity as UcumQuantity, UcumError, conversion_terms, evaluate_owned, parse_expression,
+    Quantity as UcumQuantity, UcumError, check_same_scale, conversion_terms, evaluate_owned,
+    parse_expression,
 };
 use thiserror::Error;
 
@@ -211,6 +212,12 @@ pub fn convert_quantity(
             ucum_quantity.unit, target_unit
         )));
     }
+    check_same_scale(
+        &ucum_quantity.unit,
+        &target_expr,
+        &ucum_quantity.unit.to_string(),
+        target_unit,
+    )?;
 
     let operands = || {
         format!(
@@ -245,6 +252,12 @@ pub fn are_equivalent(a: &FhirQuantity, b: &FhirQuantity) -> Result<bool, FhirEr
             a_ucum.unit, b_ucum.unit
         )));
     }
+    check_same_scale(
+        &b_ucum.unit,
+        &a_ucum.unit,
+        &b_ucum.unit.to_string(),
+        &a_ucum.unit.to_string(),
+    )?;
 
     // `b` expressed in the unit of `a`
     let operands = || format!("{} to {}", b_ucum.unit, a_ucum.unit);
