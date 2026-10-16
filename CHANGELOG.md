@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   size in bels (`analyse("dB").factor` is 0.1, `Np` is lg e). A conversion between a level
   (`B`, `Np`) or a prism diopter and a unit on another scale (`dB` to `1`) is a
   `ConversionError` instead of a 1:1 result.
+- Levels with a reference (`B[SPL]`, `B[V]`, `B[mV]`, `B[uV]`, `B[10.nV]`, `B[W]`, `B[kW]`)
+  have the dimension of their reference instead of being dimensionless, and convert between
+  references: `1 B[V]` is `7 B[mV]` (was `1 B[mV]`). They no longer convert 1:1 to a level of
+  another quantity (`B[SPL]` to `B[V]`), to `B` or to `1`, nor 1:100 to `%`, and
+  `is_comparable("B[V]", "mV")` is true (UCUM §21.3). They take no part in a term
+  (`B[mV].m`, `m/dB[SPL]`, `B[V]2` and `2.B[V]` are a `SpecialUnitError`), nor in
+  `multiply`, `divide_by`, `unit_multiply` or `unit_divide`, and `get_canonical_units`
+  returns a `SpecialUnitError` for them. `analyse("B[V]").offset` is the level of 1 V in the
+  base units, in bels (6), and `has_offset` is true for every level with a reference.
 
 ## [0.2.0] - 2025-07-22
 

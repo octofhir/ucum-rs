@@ -157,7 +157,8 @@ impl EvalResult {
             // The factor of a level is its size in bels, so that a conversion between
             // levels is the ratio of their factors: `dB` is 0.1, and `Np` is lg e (a ratio
             // of e is 0.434 B). `<number>.<level>` is the ratio itself, see
-            // `special_function_value`
+            // `special_function_value`. A level with a reference (`B[V]`) has the
+            // dimension of that reference and, as offset, its level in the base units
             SpecialKind::Log10 | SpecialKind::Ln => {
                 let base = match unit.special {
                     SpecialKind::Ln => to_number(core::f64::consts::LOG10_E)?,
@@ -166,7 +167,7 @@ impl EvalResult {
                 Ok(Self {
                     factor: checked_mul(to_number(pref_factor)?, base)?,
                     dim: unit.dim,
-                    offset: Number::zero(),
+                    offset: from_f64(unit.offset),
                 })
             }
             SpecialKind::TanTimes100 => Ok(Self {
@@ -203,6 +204,9 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
         UnitExpr::Symbol(sym) => EvalResult::from_unit(sym),
         UnitExpr::SymbolOwned(sym) => EvalResult::from_unit(sym),
         UnitExpr::Product(factors) => {
+            if !matches!(factors.as_slice(), [factor] if factor.exponent == 1) {
+                reject_referenced_level(expr)?;
+            }
             // A number times a logarithmic or prism diopter unit ("20.dB", "2.Np",
             // "100.[p'diop]"): the number is the argument of the unit's function
             if let [a, b] = factors.as_slice()
@@ -238,6 +242,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
             })
         }
         UnitExpr::Quotient(num, den) => {
+            reject_referenced_level(expr)?;
             let n = evaluate(num)?;
             let d = evaluate(den)?;
 
@@ -260,8 +265,9 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 offset: Number::zero(),
             })
         }
-        UnitExpr::Power(expr, exp) => {
-            let base = evaluate(expr)?;
+        UnitExpr::Power(base_expr, exp) => {
+            reject_referenced_level(expr)?;
+            let base = evaluate(base_expr)?;
             if base.offset != Number::zero() {
                 return Err(UcumError::conversion_error(
                     "offset units",
@@ -277,6 +283,41 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 offset: Number::zero(),
             })
         }
+    }
+}
+
+/// Whether a unit code is a level with a reference (`B[V]`, `dB[SPL]`): the logarithm of
+/// a dimensioned quantity, with the dimension of that quantity and its level in bels as
+/// offset.
+pub(crate) fn is_referenced_level(code: &str) -> bool {
+    lookup_unit(code).is_some_and(|(_, unit)| {
+        matches!(unit.special, SpecialKind::Log10 | SpecialKind::Ln)
+            && unit.dim != EvalResult::ZERO_DIM
+    })
+}
+
+/// A level with a reference takes no part in a product, a quotient or a power (UCUM
+/// §22.1), nor is it scaled by a number: `2.B[V]` is not a ratio like `2.B`. The check
+/// does not rely on the offset, which is 0 for `B[mV]`.
+#[allow(clippy::result_large_err)]
+fn reject_referenced_level(expr: &UnitExpr) -> Result<(), UcumError> {
+    match expr {
+        UnitExpr::Symbol(_) | UnitExpr::SymbolOwned(_) => match extract_symbol_str(expr) {
+            Some(code) if is_referenced_level(code) => Err(UcumError::special_unit_error(
+                code,
+                "a level with a reference cannot be part of a product, a quotient or a power",
+            )),
+            _ => Ok(()),
+        },
+        UnitExpr::Numeric(_) => Ok(()),
+        UnitExpr::Product(factors) => factors
+            .iter()
+            .try_for_each(|f| reject_referenced_level(&f.expr)),
+        UnitExpr::Quotient(num, den) => {
+            reject_referenced_level(num)?;
+            reject_referenced_level(den)
+        }
+        UnitExpr::Power(base, _) => reject_referenced_level(base),
     }
 }
 
