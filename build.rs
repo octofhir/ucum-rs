@@ -960,20 +960,24 @@ fn main() {
         }
     }
 
-    // Levels: "lg(1 1)" (`B`), "ln(1 1)" (`Np`), "lg(1 W)", "2lg(2 10*-5.Pa)". A level is
-    // commensurable with the unit of its reference (UCUM §21.3), so it takes the dimension
-    // of that unit. Its factor is its size in bels, set by the evaluator, and its offset
-    // is the level of its reference in the base units, in bels: 6 for `B[V]` since 1 V is
-    // 1000 g.m2.s-3.A-1 and a voltage level is twice the logarithm (`lgTimes2`), 0 for
-    // `B[mV]`. A conversion between two levels of the same quantity is then linear.
+    // Levels: "lg(1 1)" (`B`), "ln(1 1)" (`Np`), "ld(1 1)" (`bit_s`), "lg(1 W)",
+    // "2lg(2 10*-5.Pa)", "pH(1 mol/l)". A level is commensurable with the unit of its
+    // reference (UCUM §21.3), so it takes the dimension of that unit. Its factor is its
+    // size in bels: lg e for `Np`, lg 2 for `bit_s`, -1 for `[pH]` (minus the logarithm).
+    // Its offset is the level of its reference in the base units, in bels: 6 for `B[V]`
+    // since 1 V is 1000 g.m2.s-3.A-1 and a voltage level is twice the logarithm
+    // (`lgTimes2`), 0 for `B[mV]`. A conversion between two levels of the same quantity is
+    // then linear.
     for unit in units.iter_mut() {
         let Some(function) = definitions.get(&unit.0).and_then(|d| d.function.as_ref()) else {
             continue;
         };
-        let (special, times) = match function.name.as_str() {
-            "lg" => ("SpecialKind::Log10", 1.0),
-            "lgTimes2" => ("SpecialKind::Log10", 2.0),
-            "ln" => ("SpecialKind::Ln", 1.0),
+        let (special, size, times) = match function.name.as_str() {
+            "lg" => ("SpecialKind::Log10", 1.0, 1.0),
+            "lgTimes2" => ("SpecialKind::Log10", 1.0, 2.0),
+            "ln" => ("SpecialKind::Ln", std::f64::consts::LOG10_E, 1.0),
+            "ld" => ("SpecialKind::Log2", std::f64::consts::LOG10_2, 1.0),
+            "pH" => ("SpecialKind::Log10", -1.0, 1.0),
             _ => continue,
         };
         let (factor, dim) = resolver
@@ -982,7 +986,7 @@ fn main() {
         let value = Factor::parse(&function.value)
             .unwrap_or_else(|| panic!("value {:?} of {}", function.value, unit.0));
         unit.1 = dim;
-        unit.2 = 1.0;
+        unit.2 = size;
         unit.3 = times * factor.mul(value).to_f64().log10();
         unit.4 = special.into();
     }

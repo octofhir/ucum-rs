@@ -106,6 +106,8 @@ pub enum SpecialKind {
     /// Arbitrary unit (e.g., `[IU]`, `[arb'U]`).
     /// These units are not commensurable with any other unit.
     Arbitrary,
+    /// Base-2 logarithmic unit (`bit_s`).
+    Log2,
 }
 
 impl SpecialKind {
@@ -115,6 +117,7 @@ impl SpecialKind {
         match self {
             SpecialKind::Log10 => 10.0,              // 10^(x) for B, 10^(x/10) for dB
             SpecialKind::Ln => core::f64::consts::E, // e^(x)
+            SpecialKind::Log2 => 2.0,                // 2^(x) for bit_s
             _ => 1.0, // For None, LinearOffset, TanTimes100, Arbitrary
         }
     }
