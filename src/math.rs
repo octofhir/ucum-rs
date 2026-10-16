@@ -22,7 +22,6 @@ macro_rules! float_fn {
 }
 
 float_fn!(powf(x, n) => std: x.powf(n), libm: libm::pow(x, n));
-float_fn!(exp(x) => std: x.exp(), libm: libm::exp(x));
 float_fn!(ln(x) => std: x.ln(), libm: libm::log(x));
 float_fn!(log(x, base) => std: x.log(base), libm: libm::log(x) / libm::log(base));
 float_fn!(log10(x) => std: x.log10(), libm: libm::log10(x));

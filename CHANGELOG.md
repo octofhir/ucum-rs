@@ -50,6 +50,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `multiply`, `divide_by`, `unit_multiply` or `unit_divide`, and `get_canonical_units`
   returns a `SpecialUnitError` for them. `analyse("B[V]").offset` is the level of 1 V in the
   base units, in bels (6), and `has_offset` is true for every level with a reference.
+- `bit_s` is a level of base 2 (`ld(1 1)`) instead of a dimensionless unit: `1 bit_s` is
+  `lg 2 = 0.301 B` (was `1 B`), `8.bit_s` is the ratio 256 (was 8), and it no longer converts
+  1:1 to `bit` or `1`. `[pH]` is a level of a concentration (`pH(1 mol/l)`, a size of -1 B)
+  like `B[V]`: `is_comparable("[pH]", "mol/l")` is true, and it no longer converts 1:1 to
+  `1`, `B` or 1:100 to `%`. `SpecialKind` has a new `Log2` variant (a breaking change for an
+  exhaustive `match`), and the registry factor of every level is its size in bels (`Np` is
+  lg e, was 1).
+- `multiply` and `divide_by` reject a level (`B`, `dB`, `Np`, `bit_s`) or a prism diopter
+  with a `ConversionError` (UCUM §22.1), as `unit_multiply` and `unit_divide` do: they used
+  to multiply by its size (`multiply(1, "B", 2, "m")` was `2 m`). `get_canonical_units`
+  returns a `SpecialUnitError` for them, as for the levels with a reference, instead of a
+  factor that treats them as linear units.
 
 ## [0.2.0] - 2025-07-22
 

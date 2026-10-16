@@ -154,28 +154,18 @@ impl EvalResult {
         let (pref_factor, unit) =
             lookup_unit(code).ok_or_else(|| UcumError::unit_not_found(code))?;
         match unit.special {
-            // The factor of a level is its size in bels, so that a conversion between
-            // levels is the ratio of their factors: `dB` is 0.1, and `Np` is lg e (a ratio
-            // of e is 0.434 B). `<number>.<level>` is the ratio itself, see
-            // `special_function_value`. A level with a reference (`B[V]`) has the
-            // dimension of that reference and, as offset, its level in the base units
-            SpecialKind::Log10 | SpecialKind::Ln => {
-                let base = match unit.special {
-                    SpecialKind::Ln => to_number(core::f64::consts::LOG10_E)?,
-                    _ => Number::one(),
-                };
-                Ok(Self {
-                    factor: checked_mul(to_number(pref_factor)?, base)?,
-                    dim: unit.dim,
-                    offset: from_f64(unit.offset),
-                })
-            }
             SpecialKind::TanTimes100 => Ok(Self {
                 factor: to_number(unit.factor)?,
                 dim: unit.dim,
                 offset: Number::zero(),
             }),
-            SpecialKind::None | SpecialKind::LinearOffset | SpecialKind::Arbitrary => Ok(Self {
+            // The factor of a level is its size in bels, from the registry, so that a
+            // conversion between levels is the ratio of their factors: `dB` is 0.1, `Np` is
+            // lg e (a ratio of e is 0.434 B), `bit_s` is lg 2 and `[pH]` is -1.
+            // `<number>.<level>` is the ratio itself, see `special_function_value`. A level
+            // with a reference (`B[V]`, `[pH]`) has the dimension of that reference and, as
+            // offset, its level in the base units
+            _ => Ok(Self {
                 factor: checked_mul(to_number(pref_factor)?, to_number(unit.factor)?)?,
                 dim: unit.dim,
                 offset: from_f64(unit.offset),
@@ -212,10 +202,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
             if let [a, b] = factors.as_slice()
                 && let Some((v, code)) = numeric_and_symbol(a, b).or(numeric_and_symbol(b, a))
                 && let Some((pref_factor, unit)) = lookup_unit(code)
-                && matches!(
-                    unit.special,
-                    SpecialKind::Log10 | SpecialKind::Ln | SpecialKind::TanTimes100
-                )
+                && (LEVEL_KINDS.contains(&unit.special) || unit.special == SpecialKind::TanTimes100)
             {
                 return special_function_value(v, code, to_number(pref_factor)?, unit.special);
             }
@@ -286,13 +273,16 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
     }
 }
 
-/// Whether a unit code is a level with a reference (`B[V]`, `dB[SPL]`): the logarithm of
-/// a dimensioned quantity, with the dimension of that quantity and its level in bels as
-/// offset.
+/// The kinds of levels, units on a logarithmic scale (`B`, `Np`, `bit_s`, `[pH]`).
+pub(crate) const LEVEL_KINDS: &[SpecialKind] =
+    &[SpecialKind::Log10, SpecialKind::Ln, SpecialKind::Log2];
+
+/// Whether a unit code is a level with a reference (`B[V]`, `dB[SPL]`, `[pH]`): the
+/// logarithm of a dimensioned quantity, with the dimension of that quantity and its level in
+/// bels as offset.
 pub(crate) fn is_referenced_level(code: &str) -> bool {
     lookup_unit(code).is_some_and(|(_, unit)| {
-        matches!(unit.special, SpecialKind::Log10 | SpecialKind::Ln)
-            && unit.dim != EvalResult::ZERO_DIM
+        LEVEL_KINDS.contains(&unit.special) && unit.dim != EvalResult::ZERO_DIM
     })
 }
 
@@ -358,10 +348,9 @@ fn special_function_value(
 ) -> Result<EvalResult, UcumError> {
     let arg = value * to_f64(pref_factor);
     let ratio = match special {
-        SpecialKind::Log10 => math::powf(10.0, arg),
-        SpecialKind::Ln => math::exp(arg),
         // 100 [p'diop] is a deflection of tan(1 rad)
         SpecialKind::TanTimes100 => math::tan(arg / 100.0),
+        kind if LEVEL_KINDS.contains(&kind) => math::powf(kind.ratio(), arg),
         _ => return Err(UcumError::special_unit_error(code, "not a function unit")),
     };
     Ok(EvalResult {

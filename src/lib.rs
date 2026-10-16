@@ -347,14 +347,20 @@ pub fn is_comparable(unit1: &str, unit2: &str) -> Result<bool, UcumError> {
 /// println!("Canonical: {} (factor: {})", canonical.unit, canonical.factor);
 /// // Output: Canonical: m (factor: 1000)
 /// ```
+///
+/// # Errors
+///
+/// A level (`B`, `dB[SPL]`, `bit_s`, `[pH]`) or a prism diopter is a `SpecialUnitError`: no
+/// factor and offset turn a logarithm or a tangent into a linear canonical value.
 #[allow(clippy::result_large_err)]
 pub fn get_canonical_units(expression: &str) -> Result<CanonicalUnit, UcumError> {
     let analysis = analyse(expression)?;
     // The canonical value is `value * factor + offset`, which cannot express a logarithm
-    if has_referenced_level(&analysis.parsed_ast) {
+    // or a tangent
+    if has_function_unit(&analysis.parsed_ast) {
         return Err(UcumError::special_unit_error(
             expression,
-            "a level with a reference has no linear canonical unit",
+            "a level or a prism diopter has no linear canonical unit",
         ));
     }
 
@@ -438,7 +444,9 @@ fn build_canonical_unit_string(dim: &Dimension) -> String {
 /// # Errors
 ///
 /// A result that is not a number or does not fit in an `f64` (a value out of range or too
-/// small, an operand that is infinite or NaN) is a `PrecisionOverflow`.
+/// small, an operand that is infinite or NaN) is a `PrecisionOverflow`. A unit with an
+/// offset (`Cel`) or on a logarithmic or tangent scale (`B`, `bit_s`, `[p'diop]`) takes no
+/// part in the product (UCUM §22.1) and is a `ConversionError`.
 #[allow(clippy::result_large_err)]
 pub fn multiply(
     value1: f64,
@@ -449,14 +457,7 @@ pub fn multiply(
     let analysis1 = analyse(unit1)?;
     let analysis2 = analyse(unit2)?;
 
-    // Check for offset units (not allowed in multiplication)
-    if analysis1.has_offset || analysis2.has_offset {
-        return Err(UcumError::conversion_error(
-            "offset units",
-            "multiplication",
-            "offset units cannot participate in multiplication",
-        ));
-    }
+    check_arithmetic_operands(&analysis1, &analysis2, "multiplication")?;
 
     // Calculate result. Each value is scaled by its own unit first, so that an intermediate
     // product of the values alone cannot overflow or underflow when the result fits
@@ -493,7 +494,9 @@ pub fn multiply(
 ///
 /// A result that is not a number or does not fit in an `f64` (a division by zero, by the
 /// value or by a unit such as `"0"`, a value out of range or too small, an operand that is
-/// infinite or NaN) is a `PrecisionOverflow`.
+/// infinite or NaN) is a `PrecisionOverflow`. A unit with an offset (`Cel`) or on a
+/// logarithmic or tangent scale (`B`, `bit_s`, `[p'diop]`) takes no part in the quotient
+/// (UCUM §22.1) and is a `ConversionError`.
 #[allow(clippy::result_large_err)]
 pub fn divide_by(
     dividend_value: f64,
@@ -504,14 +507,7 @@ pub fn divide_by(
     let analysis1 = analyse(dividend_unit)?;
     let analysis2 = analyse(divisor_unit)?;
 
-    // Check for offset units (not allowed in division)
-    if analysis1.has_offset || analysis2.has_offset {
-        return Err(UcumError::conversion_error(
-            "offset units",
-            "division",
-            "offset units cannot participate in division",
-        ));
-    }
+    check_arithmetic_operands(&analysis1, &analysis2, "division")?;
 
     // Calculate result. Each value is scaled by its own unit first, so that an intermediate
     // quotient of the values alone cannot overflow or underflow when the result fits. A
@@ -1045,10 +1041,10 @@ fn operand_text(unit: &str) -> &str {
 }
 
 /// Whether an expression uses a unit on a logarithmic or tangent scale (`B`, `dB`, `Np`,
-/// `[p'diop]`, ...).
+/// `bit_s`, `[pH]`, `[p'diop]`, ...).
 fn has_function_unit(expr: &OwnedUnitExpr) -> bool {
-    use crate::types::SpecialKind::{Ln, Log10, TanTimes100};
-    uses_special_unit(expr, &[Log10, Ln, TanTimes100])
+    uses_special_unit(expr, evaluator::LEVEL_KINDS)
+        || uses_special_unit(expr, &[crate::types::SpecialKind::TanTimes100])
 }
 
 /// Whether an expression uses a unit of one of these special kinds.
@@ -1058,7 +1054,7 @@ fn uses_special_unit(expr: &OwnedUnitExpr, kinds: &[crate::types::SpecialKind]) 
     })
 }
 
-/// Whether an expression uses a level with a reference (`B[V]`, `dB[SPL]`).
+/// Whether an expression uses a level with a reference (`B[V]`, `dB[SPL]`, `[pH]`).
 fn has_referenced_level(expr: &OwnedUnitExpr) -> bool {
     uses_unit(expr, &evaluator::is_referenced_level)
 }
@@ -1076,22 +1072,24 @@ fn uses_unit(expr: &OwnedUnitExpr, matches: &dyn Fn(&str) -> bool) -> bool {
     }
 }
 
-/// A level (`B`, `dB`, `Np`) converts linearly to another level, and a prism diopter to a
-/// prism diopter, but not to a unit on another scale: `1 dB` is a ratio of 10^0.1, not 1.
-/// Reject those conversions instead of applying the ratio of the factors.
+/// A level (`B`, `dB`, `Np`, `bit_s`) converts linearly to another level, and a prism
+/// diopter to a prism diopter, but not to a unit on another scale: `1 dB` is a ratio of
+/// 10^0.1, not 1. Reject those conversions instead of applying the ratio of the factors.
 pub(crate) fn check_same_scale(
     from: &OwnedUnitExpr,
     to: &OwnedUnitExpr,
     from_text: &str,
     to_text: &str,
 ) -> Result<(), UcumError> {
-    use crate::types::SpecialKind::{Ln, Log10, TanTimes100};
-    for kinds in [&[Log10, Ln][..], &[TanTimes100]] {
+    for kinds in [
+        evaluator::LEVEL_KINDS,
+        &[crate::types::SpecialKind::TanTimes100],
+    ] {
         if uses_special_unit(from, kinds) != uses_special_unit(to, kinds) {
             return Err(UcumError::conversion_error(
                 from_text,
                 to_text,
-                "Levels (B, Np) and prism diopters only convert to units on the same scale",
+                "Levels (B, Np, bit_s, [pH]) and prism diopters only convert to units on the same scale",
             ));
         }
     }
