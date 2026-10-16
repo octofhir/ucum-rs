@@ -208,7 +208,7 @@ fn main() {
                             .filter_map(|a| a.ok())
                             .any(|a| a.key.as_ref() == b"isMetric" && a.value.as_ref() == b"yes");
                         let mut xml_value = String::from("1");
-                        let mut has_function = false;
+                        let mut function: Option<Function> = None;
                         // Need to capture <value> child to get a factor (may combine Unit attr) and maybe offset
                         // Also capture <property> child to get unit classification and <name> for display name
                         let mut factor: Option<f64> = None;
@@ -251,7 +251,20 @@ fn main() {
                                                 .unwrap_or(0.0);
                                         }
                                     } else if ve.name().as_ref() == b"function" {
-                                        has_function = true;
+                                        let attr = |key: &[u8]| {
+                                            ve.attributes()
+                                                .filter_map(|a| a.ok())
+                                                .find(|a| a.key.as_ref() == key)
+                                                .map(|a| {
+                                                    String::from_utf8_lossy(&a.value).to_string()
+                                                })
+                                                .unwrap_or_default()
+                                        };
+                                        function = Some(Function {
+                                            name: attr(b"name"),
+                                            value: attr(b"value"),
+                                            unit: attr(b"Unit"),
+                                        });
                                     } else if ve.name().as_ref() == b"property" {
                                         in_property_tag = true;
                                     } else if ve.name().as_ref() == b"name" {
@@ -297,7 +310,7 @@ fn main() {
                             Definition {
                                 value: xml_value.clone(),
                                 unit: unit_ref_for_dim.clone(),
-                                has_function,
+                                function,
                             },
                         );
                         // Special handling for Celsius, Fahrenheit, Rankine, Réaumur, Liter, and Imperial units
@@ -369,16 +382,6 @@ fn main() {
                         // Only treat units as arbitrary if explicitly marked with isArbitrary="yes"
                         else if is_arbitrary {
                             special = "SpecialKind::Arbitrary".into();
-                        } else {
-                            match code.as_str() {
-                                "B" | "Bel" | "dB" | "dB[SPL]" | "dB[lin]" => {
-                                    special = "SpecialKind::Log10".into();
-                                }
-                                "Np" => {
-                                    special = "SpecialKind::Ln".into();
-                                }
-                                _ => {}
-                            }
                         }
                         units.push((
                             code,
@@ -957,6 +960,33 @@ fn main() {
         }
     }
 
+    // Levels: "lg(1 1)" (`B`), "ln(1 1)" (`Np`), "lg(1 W)", "2lg(2 10*-5.Pa)". A level is
+    // commensurable with the unit of its reference (UCUM §21.3), so it takes the dimension
+    // of that unit. Its factor is its size in bels, set by the evaluator, and its offset
+    // is the level of its reference in the base units, in bels: 6 for `B[V]` since 1 V is
+    // 1000 g.m2.s-3.A-1 and a voltage level is twice the logarithm (`lgTimes2`), 0 for
+    // `B[mV]`. A conversion between two levels of the same quantity is then linear.
+    for unit in units.iter_mut() {
+        let Some(function) = definitions.get(&unit.0).and_then(|d| d.function.as_ref()) else {
+            continue;
+        };
+        let (special, times) = match function.name.as_str() {
+            "lg" => ("SpecialKind::Log10", 1.0),
+            "lgTimes2" => ("SpecialKind::Log10", 2.0),
+            "ln" => ("SpecialKind::Ln", 1.0),
+            _ => continue,
+        };
+        let (factor, dim) = resolver
+            .term(&function.unit)
+            .unwrap_or_else(|| panic!("reference {:?} of {}", function.unit, unit.0));
+        let value = Factor::parse(&function.value)
+            .unwrap_or_else(|| panic!("value {:?} of {}", function.value, unit.0));
+        unit.1 = dim;
+        unit.2 = 1.0;
+        unit.3 = times * factor.mul(value).to_f64().log10();
+        unit.4 = special.into();
+    }
+
     // Units array
     out.push_str("use crate::types::SpecialKind;\n");
     out.push_str("#[allow(clippy::approx_constant)] // Constants come from UCUM specification\n");
@@ -1061,7 +1091,14 @@ struct Definition {
     value: String,
     unit: Option<String>,
     /// Defined through a special function such as "cel(1 K)" or "2lg(1 mV)"
-    has_function: bool,
+    function: Option<Function>,
+}
+
+/// The `<function name="lgTimes2" value="1" Unit="mV"/>` of a special unit.
+struct Function {
+    name: String,
+    value: String,
+    unit: String,
 }
 
 /// A factor kept as `mantissa × 10^exp` with a decimal mantissa in [1, 10), so that the
@@ -1177,7 +1214,7 @@ impl Resolver<'_> {
             return Some((Factor::ONE, *dim));
         }
         let definition = self.definitions.get(code)?;
-        if definition.has_function {
+        if definition.function.is_some() {
             return None;
         }
         // A value that does not parse is a bug to fix here, not a reason to keep the

@@ -166,6 +166,7 @@ pub fn validate(expression: &str) -> Result<(), UcumError> {
 pub fn analyse(expression: &str) -> Result<UnitAnalysis, UcumError> {
     let parsed = parse_expression(expression)?;
     let result = crate::evaluator::evaluate_owned(&parsed)?;
+    let has_offset = result.offset != Number::zero() || has_referenced_level(&parsed);
 
     Ok(UnitAnalysis {
         expression: expression.to_string(),
@@ -174,7 +175,7 @@ pub fn analyse(expression: &str) -> Result<UnitAnalysis, UcumError> {
         factor: to_f64(result.factor),
         offset: to_f64(result.offset),
         is_dimensionless: result.dim == Dimension([0; 7]),
-        has_offset: result.offset != Number::zero(),
+        has_offset,
     })
 }
 
@@ -189,11 +190,14 @@ pub struct UnitAnalysis {
     pub dimension: Dimension,
     /// Conversion factor to base units
     pub factor: f64,
-    /// Offset for temperature units
+    /// Offset to the base units: the offset of a temperature unit, or for a level with a
+    /// reference (`B[V]`), the level of that reference in the base units, in bels
     pub offset: f64,
     /// Whether the unit is dimensionless
     pub is_dimensionless: bool,
-    /// Whether the unit has a temperature offset
+    /// Whether the unit converts with an offset: a temperature unit, or a level with a
+    /// reference, even when that offset is 0 (`B[mV]`). Such a unit takes no part in
+    /// arithmetic
     pub has_offset: bool,
 }
 
@@ -305,9 +309,12 @@ pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, Uc
     Ok(is_valid)
 }
 
-/// Check if two units are commensurable (can be converted between each other).
+/// Check if two units are commensurable.
 ///
-/// Two units are commensurable if they have the same dimension vector.
+/// Two units are commensurable if they have the same dimension vector. A special unit is
+/// commensurable with the unit of its definition (UCUM §21.3): `B[V]` with `mV`, `Cel`
+/// with `K`. That does not make every pair convertible: `convert_with_context` rejects a
+/// level converted to a unit on another scale.
 ///
 /// # Examples
 ///
@@ -343,6 +350,13 @@ pub fn is_comparable(unit1: &str, unit2: &str) -> Result<bool, UcumError> {
 #[allow(clippy::result_large_err)]
 pub fn get_canonical_units(expression: &str) -> Result<CanonicalUnit, UcumError> {
     let analysis = analyse(expression)?;
+    // The canonical value is `value * factor + offset`, which cannot express a logarithm
+    if has_referenced_level(&analysis.parsed_ast) {
+        return Err(UcumError::special_unit_error(
+            expression,
+            "a level with a reference has no linear canonical unit",
+        ));
+    }
 
     // Build canonical unit string from dimension vector
     let canonical_unit = build_canonical_unit_string(&analysis.dimension);
@@ -1039,18 +1053,26 @@ fn has_function_unit(expr: &OwnedUnitExpr) -> bool {
 
 /// Whether an expression uses a unit of one of these special kinds.
 fn uses_special_unit(expr: &OwnedUnitExpr, kinds: &[crate::types::SpecialKind]) -> bool {
+    uses_unit(expr, &|code| {
+        evaluator::lookup_unit(code).is_some_and(|(_, unit)| kinds.contains(&unit.special))
+    })
+}
+
+/// Whether an expression uses a level with a reference (`B[V]`, `dB[SPL]`).
+fn has_referenced_level(expr: &OwnedUnitExpr) -> bool {
+    uses_unit(expr, &evaluator::is_referenced_level)
+}
+
+/// Whether an expression uses a unit code that matches `matches`.
+fn uses_unit(expr: &OwnedUnitExpr, matches: &dyn Fn(&str) -> bool) -> bool {
     match expr {
-        OwnedUnitExpr::Symbol(code) => {
-            evaluator::lookup_unit(code).is_some_and(|(_, unit)| kinds.contains(&unit.special))
-        }
+        OwnedUnitExpr::Symbol(code) => matches(code),
         OwnedUnitExpr::Numeric(_) => false,
-        OwnedUnitExpr::Product(factors) => {
-            factors.iter().any(|f| uses_special_unit(&f.expr, kinds))
-        }
+        OwnedUnitExpr::Product(factors) => factors.iter().any(|f| uses_unit(&f.expr, matches)),
         OwnedUnitExpr::Quotient(numerator, denominator) => {
-            uses_special_unit(numerator, kinds) || uses_special_unit(denominator, kinds)
+            uses_unit(numerator, matches) || uses_unit(denominator, matches)
         }
-        OwnedUnitExpr::Power(base, _) => uses_special_unit(base, kinds),
+        OwnedUnitExpr::Power(base, _) => uses_unit(base, matches),
     }
 }
 
@@ -1477,7 +1499,10 @@ pub fn convert_with_context(
         factor,
         offset,
         precision_info,
-        used_special_units: !from_eval.offset.is_zero() || !to_eval.offset.is_zero(),
+        used_special_units: !from_eval.offset.is_zero()
+            || !to_eval.offset.is_zero()
+            || has_referenced_level(&from_expr)
+            || has_referenced_level(&to_expr),
     })
 }
 
