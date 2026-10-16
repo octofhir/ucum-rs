@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `precision::to_f64` the nearest `f64`. The registry evaluates unit definitions in decimal at
   build time, so 28 factors (`[lb_av]`, `[oz_tr]`, `[yd_br]`, ...) lose their `f64` rounding
   error.
+- Conversions between levels apply the prefix and the base of the logarithm: `1 dB` is
+  `0.1 B` (was `1 B`), `1 B` is `ln 10 = 2.303 Np` (was `1 Np`). The factor of a level is its
+  size in bels (`analyse("dB").factor` is 0.1, `Np` is lg e). A conversion between a level
+  (`B`, `Np`) or a prism diopter and a unit on another scale (`dB` to `1`) is a
+  `ConversionError` instead of a 1:1 result.
 
 ## [0.2.0] - 2025-07-22
 

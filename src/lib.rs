@@ -1034,16 +1034,46 @@ fn operand_text(unit: &str) -> &str {
 /// `[p'diop]`, ...).
 fn has_function_unit(expr: &OwnedUnitExpr) -> bool {
     use crate::types::SpecialKind::{Ln, Log10, TanTimes100};
+    uses_special_unit(expr, &[Log10, Ln, TanTimes100])
+}
+
+/// Whether an expression uses a unit of one of these special kinds.
+fn uses_special_unit(expr: &OwnedUnitExpr, kinds: &[crate::types::SpecialKind]) -> bool {
     match expr {
-        OwnedUnitExpr::Symbol(code) => evaluator::lookup_unit(code)
-            .is_some_and(|(_, unit)| matches!(unit.special, Log10 | Ln | TanTimes100)),
-        OwnedUnitExpr::Numeric(_) => false,
-        OwnedUnitExpr::Product(factors) => factors.iter().any(|f| has_function_unit(&f.expr)),
-        OwnedUnitExpr::Quotient(numerator, denominator) => {
-            has_function_unit(numerator) || has_function_unit(denominator)
+        OwnedUnitExpr::Symbol(code) => {
+            evaluator::lookup_unit(code).is_some_and(|(_, unit)| kinds.contains(&unit.special))
         }
-        OwnedUnitExpr::Power(base, _) => has_function_unit(base),
+        OwnedUnitExpr::Numeric(_) => false,
+        OwnedUnitExpr::Product(factors) => {
+            factors.iter().any(|f| uses_special_unit(&f.expr, kinds))
+        }
+        OwnedUnitExpr::Quotient(numerator, denominator) => {
+            uses_special_unit(numerator, kinds) || uses_special_unit(denominator, kinds)
+        }
+        OwnedUnitExpr::Power(base, _) => uses_special_unit(base, kinds),
     }
+}
+
+/// A level (`B`, `dB`, `Np`) converts linearly to another level, and a prism diopter to a
+/// prism diopter, but not to a unit on another scale: `1 dB` is a ratio of 10^0.1, not 1.
+/// Reject those conversions instead of applying the ratio of the factors.
+pub(crate) fn check_same_scale(
+    from: &OwnedUnitExpr,
+    to: &OwnedUnitExpr,
+    from_text: &str,
+    to_text: &str,
+) -> Result<(), UcumError> {
+    use crate::types::SpecialKind::{Ln, Log10, TanTimes100};
+    for kinds in [&[Log10, Ln][..], &[TanTimes100]] {
+        if uses_special_unit(from, kinds) != uses_special_unit(to, kinds) {
+            return Err(UcumError::conversion_error(
+                from_text,
+                to_text,
+                "Levels (B, Np) and prism diopters only convert to units on the same scale",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Special units cannot take part in algebraic operations (UCUM §22.1): reject operands
@@ -1396,8 +1426,10 @@ pub fn convert_with_context(
     to: &str,
     context: &AdvancedConversionContext,
 ) -> Result<AdvancedConversionResult, UcumError> {
-    let from_eval = evaluate_owned(&parse_expression(from)?)?;
-    let to_eval = evaluate_owned(&parse_expression(to)?)?;
+    let from_expr = parse_expression(from)?;
+    let to_expr = parse_expression(to)?;
+    let from_eval = evaluate_owned(&from_expr)?;
+    let to_eval = evaluate_owned(&to_expr)?;
 
     // Check dimension compatibility
     if from_eval.dim != to_eval.dim {
@@ -1407,6 +1439,7 @@ pub fn convert_with_context(
             "Cannot convert between units with different dimensions",
         ));
     }
+    check_same_scale(&from_expr, &to_expr, from, to)?;
 
     // Calculate conversion
     let operands = || format!("{value:?} {from} to {to}");

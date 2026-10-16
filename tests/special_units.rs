@@ -183,14 +183,12 @@ fn test_special_unit_combinations() {
         result.factor, result.dim.0, result.offset
     );
 
-    // 10 dB/m should have a factor of 10 (from dB) and dimension of m^-1
-    println!(
-        "Checking factor: {} (expected ~10.0)",
-        to_f64(result.factor)
-    );
+    // 10 dB/m is 1 B/m: the factor of a level is its size in bels (dB is 0.1), and the
+    // dimension is m^-1
+    println!("Checking factor: {} (expected ~1.0)", to_f64(result.factor));
     assert!(
-        (result.factor.sub(from_f64(10.0))).abs() < from_f64(1e-6),
-        "Expected factor ~10.0, got {}",
+        (result.factor.sub(from_f64(1.0))).abs() < from_f64(1e-6),
+        "Expected factor ~1.0, got {}",
         to_f64(result.factor)
     );
 
