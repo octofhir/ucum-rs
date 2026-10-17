@@ -3,68 +3,17 @@
 use crate::prelude::*;
 use crate::types::Dimension;
 
-/// Source location information for parser errors
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Span {
-    /// Start position in the source string
-    pub start: usize,
-    /// End position in the source string
-    pub end: usize,
-    /// The original source string for context
-    pub source: String,
-}
-
-impl Span {
-    /// Create a new span
-    pub fn new(start: usize, end: usize, source: String) -> Self {
-        Self { start, end, source }
-    }
-
-    /// Get the text content of this span
-    pub fn text(&self) -> &str {
-        &self.source[self.start..self.end.min(self.source.len())]
-    }
-
-    /// Get a visual representation of the error location
-    pub fn display_error(&self, message: &str) -> String {
-        let line_start = self.source[..self.start]
-            .rfind('\n')
-            .map(|pos| pos + 1)
-            .unwrap_or(0);
-        let line_end = self.source[self.start..]
-            .find('\n')
-            .map(|pos| self.start + pos)
-            .unwrap_or(self.source.len());
-        let line = &self.source[line_start..line_end];
-        let column = self.start - line_start;
-
-        format!(
-            "{}\n{}\n{}^{}",
-            message,
-            line,
-            " ".repeat(column),
-            if self.end > self.start + 1 {
-                "~".repeat(self.end - self.start - 1)
-            } else {
-                String::new()
-            }
-        )
-    }
-}
-
 /// Specific error kinds with detailed context
 #[derive(Debug, Clone)]
 pub enum ErrorKind {
-    /// Parsing error with expected and found tokens
-    ParseError { expected: String, found: String },
     /// Dimension mismatch with specific dimensions
     DimensionMismatch {
         expected: Dimension,
         found: Dimension,
         operation: String,
     },
-    /// Unit not found with similar suggestions
-    UnitNotFound { unit: String, similar: Vec<String> },
+    /// Unit not found
+    UnitNotFound { unit: String },
     /// Conversion error with detailed reason
     ConversionError {
         from: String,
@@ -76,14 +25,7 @@ pub enum ErrorKind {
     /// Invalid expression structure
     InvalidExpression { reason: String },
     /// Invalid property for unit validation
-    InvalidProperty {
-        property: String,
-        available: Vec<String>,
-    },
-    /// Multiple slashes in expression
-    MultipleSlash,
-    /// Invalid percent placement
-    InvalidPercentPlacement { position: usize },
+    InvalidProperty { property: String },
     /// Special unit handling error
     SpecialUnitError { unit: String, reason: String },
 }
@@ -95,8 +37,6 @@ pub struct UcumError {
     pub kind: ErrorKind,
     /// Primary error message
     pub message: String,
-    /// Source location information (for parsing errors)
-    pub span: Option<Span>,
     /// Suggested corrections or alternatives
     pub suggestions: Vec<String>,
     /// Additional context information
@@ -109,16 +49,9 @@ impl UcumError {
         Self {
             kind,
             message,
-            span: None,
             suggestions: Vec::new(),
             context: Vec::new(),
         }
-    }
-
-    /// Add source location information
-    pub fn with_span(mut self, span: Span) -> Self {
-        self.span = Some(span);
-        self
     }
 
     /// Add a suggestion for fixing the error
@@ -139,17 +72,6 @@ impl UcumError {
         self
     }
 
-    /// Create a parse error
-    pub fn parse_error(expected: &str, found: &str) -> Self {
-        Self::new(
-            ErrorKind::ParseError {
-                expected: expected.to_string(),
-                found: found.to_string(),
-            },
-            format!("Expected '{expected}', but found '{found}'"),
-        )
-    }
-
     /// Create a dimension mismatch error
     pub fn dimension_mismatch(expected: Dimension, found: Dimension, operation: &str) -> Self {
         Self::new(
@@ -167,7 +89,6 @@ impl UcumError {
         Self::new(
             ErrorKind::UnitNotFound {
                 unit: unit.to_string(),
-                similar: Vec::new(),
             },
             format!("Unknown unit: '{unit}'"),
         )
@@ -211,25 +132,8 @@ impl UcumError {
         Self::new(
             ErrorKind::InvalidProperty {
                 property: property.to_string(),
-                available: Vec::new(),
             },
             format!("Invalid property: '{property}'"),
-        )
-    }
-
-    /// Create a multiple slash error
-    pub fn multiple_slash() -> Self {
-        Self::new(
-            ErrorKind::MultipleSlash,
-            "Multiple slashes not allowed in expression".to_string(),
-        )
-    }
-
-    /// Create an invalid percent placement error
-    pub fn invalid_percent_placement(position: usize) -> Self {
-        Self::new(
-            ErrorKind::InvalidPercentPlacement { position },
-            format!("Invalid percent placement at position {position}"),
         )
     }
 
@@ -249,11 +153,6 @@ impl core::fmt::Display for UcumError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Display the primary error message
         write!(f, "{}", self.message)?;
-
-        // Add span information if available
-        if let Some(ref span) = self.span {
-            write!(f, "\n{}", span.display_error(&self.message))?;
-        }
 
         // Add suggestions if available
         if !self.suggestions.is_empty() {

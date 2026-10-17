@@ -57,32 +57,11 @@ fn milligram_unit_test() {
 }
 
 #[test]
-fn special_units_lookup() {
-    println!("Testing special units lookup:");
-
-    let test_units = ["[pi]", "[in_i]", "[mu_0]", "[ly]"];
-
-    for unit in &test_units {
-        match find_unit(unit) {
-            Some(u) => println!("  {} -> Found: factor={}, dim={:?}", unit, u.factor, u.dim),
-            None => println!("  {unit} -> NOT FOUND"),
-        }
+fn bracketed_units_lookup() {
+    for code in ["[pi]", "[in_i]", "[mu_0]", "[ly]"] {
+        let unit = find_unit(code).unwrap_or_else(|| panic!("{code}"));
+        assert_eq!(unit.code, code);
     }
-
-    // Test specific units that should exist
-    let pi_unit = find_unit("[pi]");
-    if let Some(pi) = pi_unit {
-        println!(
-            "  [pi] details: factor={}, dim={:?}, code={}",
-            pi.factor, pi.dim, pi.code
-        );
-    }
-
-    let in_i_unit = find_unit("[in_i]");
-    if let Some(in_i) = in_i_unit {
-        println!(
-            "  [in_i] details: factor={}, dim={:?}, code={}",
-            in_i.factor, in_i.dim, in_i.code
-        );
-    }
+    assert_eq!(find_unit("[pi]").unwrap().factor, core::f64::consts::PI);
+    assert!((find_unit("[in_i]").unwrap().factor - 0.0254).abs() < 1e-15);
 }

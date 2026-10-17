@@ -21,7 +21,6 @@ use crate::{
     ast::*,
     error::UcumError,
     find_unit,
-    performance::find_prefix_optimized,
     precision::{Number, NumericOps, from_f64, to_f64},
     registry::is_metric,
     types::{Dimension, SpecialKind, UnitRecord},
@@ -322,7 +321,7 @@ pub(crate) fn lookup_unit(code: &str) -> Option<(f64, &'static UnitRecord)> {
     // Prefixes have one ("k") or two ("da", "Ki") characters; the longest one that
     // leaves a metric unit wins (UCUM §4.4)
     (1..=2).rev().find_map(|len| {
-        let prefix = code.get(..len).and_then(find_prefix_optimized)?;
+        let prefix = code.get(..len).and_then(crate::find_prefix)?;
         let rest = &code[len..];
         let unit = find_unit(rest).filter(|u| u.code == rest && is_metric(rest))?;
         Some((prefix.factor, unit))

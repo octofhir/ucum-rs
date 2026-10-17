@@ -39,7 +39,7 @@ test-core:
 
 # Run official UCUM conformance tests
 test-official:
-    cargo test official_tests
+    cargo test --test official_tests_grouped
 
 # Run benchmarks
 bench:
@@ -57,33 +57,9 @@ bench-compare baseline:
 bench-open:
     open target/criterion/report/index.html
 
-# Run parser performance comparison (optimized is now default)
-bench-parser:
-    @echo "🚀 Running UCUM Parser Performance Comparison"
-    @echo "============================================="
-    @echo "📊 Building with optimized parser (now default)..."
-    cargo build --release
-    @echo ""
-    @echo "🔥 Running main benchmarks..."
-    cargo bench benchmarks
-    @echo ""
-    @echo "💾 Running memory benchmarks..."
-    cargo bench memory_bench
-    @echo ""
-    @echo "🎯 Performance Summary:"
-    @echo "- Check target/criterion/report/index.html for detailed results"
-    @echo "- Compare 'default' vs 'optimized_direct' results in parsing_comparison group"
-    @echo "- Memory allocation patterns tested in memory_bench"
-    @echo ""
-    @echo "✅ Benchmark run complete!"
-
-# Test all functionality including optimized parser
+# Test all functionality
 test-all:
     cargo test --all-features
-
-# Build release version (now includes optimized parser by default)
-build-release-optimized:
-    cargo build --release
 
 # Format all code
 fmt:

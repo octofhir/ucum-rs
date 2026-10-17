@@ -17,33 +17,21 @@ mod ast;
 mod display;
 mod error;
 mod evaluator;
-mod expr;
 mod math;
 mod parser;
-pub mod performance;
 pub mod precision;
 mod prelude;
 mod registry;
-pub mod special_units;
 pub mod suggestions;
 mod types;
 
 pub use crate::ast::{OwnedUnitExpr, OwnedUnitFactor, UnitExpr, UnitFactor};
 pub use crate::display::{generate_display_name, generate_display_name_owned};
-pub use crate::error::{ErrorKind, Span, UcumError};
+pub use crate::error::{ErrorKind, UcumError};
 pub use crate::evaluator::{EvalResult, evaluate, evaluate_owned};
-pub use crate::expr::parse_expression;
-pub use crate::performance::{
-    CacheStats, EvaluationCache, clear_global_cache, find_longest_prefix_with_trie,
-    find_prefix_optimized, find_prefixes_with_trie, find_unit_optimized, get_cache_sizes,
-    get_cache_stats, with_global_cache,
-};
-pub use crate::special_units::{
-    ArbitraryHandler, ConversionContext, LogarithmicHandler, SpecialUnitHandler,
-    SpecialUnitRegistry, TemperatureHandler,
-};
+pub use crate::parser::parse_expression;
 pub use crate::suggestions::SuggestionEngine;
-pub use crate::types::{BaseUnit, DerivedUnit, Dimension, Prefix, Quantity, UnitRecord};
+pub use crate::types::{Dimension, Prefix, Quantity, UnitRecord};
 
 // Extended Functionality - functions are defined below and automatically exported
 
@@ -53,9 +41,6 @@ use hashbrown::HashSet;
 
 // Import precision utilities for internal use
 use crate::precision::{Number, NumericOps, to_f64};
-
-// Re-export for convenience
-pub use crate::evaluator::evaluate as eval;
 
 /// Shared suggestion engine used to enrich validation errors.
 static SUGGESTION_ENGINE: spin::LazyLock<SuggestionEngine> =
@@ -1395,12 +1380,8 @@ pub fn get_common_display(code: &str) -> String {
 pub struct AdvancedConversionContext {
     /// Precision configuration for the conversion
     pub precision: DecimalPrecision,
-    /// Rounding mode to use
+    /// How the last kept digit is rounded when `precision` is not `Default`
     pub rounding: RoundingMode,
-    /// Temperature scale preference
-    pub temperature_scale: TemperatureScale,
-    /// Whether to use special unit handlers
-    pub use_special_units: bool,
 }
 
 /// Decimal precision configuration.
@@ -1417,7 +1398,7 @@ pub enum DecimalPrecision {
 /// Rounding mode for conversions.
 #[derive(Debug, Clone)]
 pub enum RoundingMode {
-    /// Round to nearest (default)
+    /// Round to nearest, halves away from zero (default)
     Nearest,
     /// Round up (ceiling)
     Up,
@@ -1427,24 +1408,11 @@ pub enum RoundingMode {
     Truncate,
 }
 
-/// Temperature scale preference.
-#[derive(Debug, Clone)]
-pub enum TemperatureScale {
-    /// Use Kelvin as base (default)
-    Kelvin,
-    /// Use Celsius as base
-    Celsius,
-    /// Use Fahrenheit as base
-    Fahrenheit,
-}
-
 impl Default for AdvancedConversionContext {
     fn default() -> Self {
         Self {
             precision: DecimalPrecision::Default,
             rounding: RoundingMode::Nearest,
-            temperature_scale: TemperatureScale::Kelvin,
-            use_special_units: true,
         }
     }
 }
@@ -1526,12 +1494,17 @@ pub fn convert_with_context(
     let (factor, offset) = conversion_terms(&from_eval, &to_eval, operands)?;
     let converted_value = value * factor + offset;
 
-    // Apply precision rounding (simplified implementation)
+    let round = |x: f64| match context.rounding {
+        RoundingMode::Nearest => math::round(x),
+        RoundingMode::Up => math::ceil(x),
+        RoundingMode::Down => math::floor(x),
+        RoundingMode::Truncate => math::trunc(x),
+    };
     let final_value = match context.precision {
         DecimalPrecision::Default => converted_value,
         DecimalPrecision::Fixed(places) => {
             let multiplier = math::powi(10.0, places as i32);
-            math::round(converted_value * multiplier) / multiplier
+            round(converted_value * multiplier) / multiplier
         }
         DecimalPrecision::Significant(sig_figs) => {
             if converted_value == 0.0 {
@@ -1539,7 +1512,7 @@ pub fn convert_with_context(
             } else {
                 let magnitude = math::floor(math::log10(converted_value.abs()));
                 let factor = math::powi(10.0, (sig_figs as i32 - 1) - magnitude as i32);
-                math::round(converted_value * factor) / factor
+                round(converted_value * factor) / factor
             }
         }
     };
@@ -1713,351 +1686,6 @@ fn build_optimized_unit_string(dim: &Dimension, canonical: &CanonicalUnit) -> St
 
     // Fall back to canonical form
     canonical.unit.clone()
-}
-
-// Unused helper functions removed to avoid warnings
-
-// ============================================================================
-// Extended Functionality - Measurement Context Support
-// ============================================================================
-
-/// Domain-specific context for measurements.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Domain {
-    /// Medical and healthcare applications
-    Medical,
-    /// Engineering and technical applications
-    Engineering,
-    /// Physics and scientific research
-    Physics,
-    /// Chemistry and laboratory applications
-    Chemistry,
-    /// General purpose usage
-    General,
-}
-
-/// Precision requirements for different domains.
-#[derive(Debug, Clone)]
-pub struct PrecisionRequirements {
-    /// Minimum number of significant figures
-    pub min_significant_figures: u32,
-    /// Maximum acceptable relative error
-    pub max_relative_error: f64,
-    /// Whether exact conversions are required
-    pub require_exact: bool,
-}
-
-/// Measurement context providing domain-specific preferences and requirements.
-#[derive(Debug, Clone)]
-pub struct MeasurementContext {
-    /// Application domain
-    pub domain: Domain,
-    /// Precision requirements for this context
-    pub precision_requirements: PrecisionRequirements,
-    /// Preferred units for this domain
-    pub preferred_units: Vec<String>,
-    /// Units to avoid in this domain
-    pub avoided_units: Vec<String>,
-}
-
-impl Default for MeasurementContext {
-    fn default() -> Self {
-        Self {
-            domain: Domain::General,
-            precision_requirements: PrecisionRequirements {
-                min_significant_figures: 3,
-                max_relative_error: 1e-6,
-                require_exact: false,
-            },
-            preferred_units: Vec::new(),
-            avoided_units: Vec::new(),
-        }
-    }
-}
-
-impl MeasurementContext {
-    /// Create a medical measurement context with appropriate defaults.
-    ///
-    /// Medical contexts prioritize safety and precision, with preferences for
-    /// units commonly used in healthcare settings.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use octofhir_ucum::MeasurementContext;
-    ///
-    /// let medical_context = MeasurementContext::medical();
-    /// ```
-    pub fn medical() -> Self {
-        Self {
-            domain: Domain::Medical,
-            precision_requirements: PrecisionRequirements {
-                min_significant_figures: 4,
-                max_relative_error: 1e-8,
-                require_exact: true,
-            },
-            preferred_units: vec![
-                // Dosage units
-                "mg".to_string(),
-                "ug".to_string(),
-                "g".to_string(),
-                // Volume units
-                "mL".to_string(),
-                "L".to_string(),
-                // Concentration units
-                "mg/mL".to_string(),
-                "ug/mL".to_string(),
-                // Temperature (Celsius preferred in medical)
-                "Cel".to_string(),
-            ],
-            avoided_units: vec![
-                // Avoid ambiguous units
-                "[IU]".to_string(), // International units can be ambiguous
-            ],
-        }
-    }
-
-    /// Create an engineering measurement context with appropriate defaults.
-    ///
-    /// Engineering contexts focus on standard SI units and derived units
-    /// commonly used in technical applications.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use octofhir_ucum::MeasurementContext;
-    ///
-    /// let engineering_context = MeasurementContext::engineering();
-    /// ```
-    pub fn engineering() -> Self {
-        Self {
-            domain: Domain::Engineering,
-            precision_requirements: PrecisionRequirements {
-                min_significant_figures: 3,
-                max_relative_error: 1e-6,
-                require_exact: false,
-            },
-            preferred_units: vec![
-                // Standard SI units
-                "m".to_string(),
-                "kg".to_string(),
-                "s".to_string(),
-                // Common derived units
-                "N".to_string(),
-                "Pa".to_string(),
-                "J".to_string(),
-                "W".to_string(),
-                // Pressure units
-                "kPa".to_string(),
-                "MPa".to_string(),
-                // Temperature (Kelvin for engineering)
-                "K".to_string(),
-            ],
-            avoided_units: vec![
-                // Avoid non-SI units where possible
-                "[psi]".to_string(),
-                "[in_i]".to_string(),
-                "[ft_i]".to_string(),
-            ],
-        }
-    }
-
-    /// Create a physics measurement context with appropriate defaults.
-    ///
-    /// Physics contexts prioritize fundamental SI units and exact relationships,
-    /// with high precision requirements for research applications.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use octofhir_ucum::MeasurementContext;
-    ///
-    /// let physics_context = MeasurementContext::physics();
-    /// ```
-    pub fn physics() -> Self {
-        Self {
-            domain: Domain::Physics,
-            precision_requirements: PrecisionRequirements {
-                min_significant_figures: 6,
-                max_relative_error: 1e-12,
-                require_exact: true,
-            },
-            preferred_units: vec![
-                // Fundamental SI units
-                "m".to_string(),
-                "kg".to_string(),
-                "s".to_string(),
-                "A".to_string(),
-                "K".to_string(),
-                "mol".to_string(),
-                "cd".to_string(),
-                // Common physics units
-                "eV".to_string(),
-                "c".to_string(), // Speed of light
-                "h".to_string(), // Planck constant (if available)
-            ],
-            avoided_units: vec![
-                // Avoid non-fundamental units where possible
-                "[cal]".to_string(),
-                "[Btu]".to_string(),
-            ],
-        }
-    }
-
-    /// Create a chemistry measurement context with appropriate defaults.
-    ///
-    /// Chemistry contexts focus on molar quantities, concentrations, and units
-    /// commonly used in laboratory settings.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use octofhir_ucum::MeasurementContext;
-    ///
-    /// let chemistry_context = MeasurementContext::chemistry();
-    /// ```
-    pub fn chemistry() -> Self {
-        Self {
-            domain: Domain::Chemistry,
-            precision_requirements: PrecisionRequirements {
-                min_significant_figures: 4,
-                max_relative_error: 1e-9,
-                require_exact: false,
-            },
-            preferred_units: vec![
-                // Molar units
-                "mol".to_string(),
-                "mmol".to_string(),
-                "umol".to_string(),
-                // Concentration units
-                "mol/L".to_string(),
-                "mmol/L".to_string(),
-                // Mass units for chemicals
-                "g".to_string(),
-                "mg".to_string(),
-                "kg".to_string(),
-                // Volume units
-                "L".to_string(),
-                "mL".to_string(),
-                "uL".to_string(),
-                // Temperature (Celsius for chemistry)
-                "Cel".to_string(),
-            ],
-            avoided_units: vec![
-                // Avoid non-molar concentration units where possible
-                "g/L".to_string(), // Prefer molar concentrations
-            ],
-        }
-    }
-
-    /// Check if a unit is preferred in this measurement context.
-    ///
-    /// # Arguments
-    /// * `unit` - The unit to check
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use octofhir_ucum::MeasurementContext;
-    ///
-    /// let medical_context = MeasurementContext::medical();
-    /// assert!(medical_context.is_preferred_unit("mg"));
-    /// assert!(!medical_context.is_preferred_unit("[psi]"));
-    /// ```
-    pub fn is_preferred_unit(&self, unit: &str) -> bool {
-        self.preferred_units.contains(&unit.to_string())
-    }
-
-    /// Check if a unit should be avoided in this measurement context.
-    ///
-    /// # Arguments
-    /// * `unit` - The unit to check
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use octofhir_ucum::MeasurementContext;
-    ///
-    /// let engineering_context = MeasurementContext::engineering();
-    /// assert!(engineering_context.is_avoided_unit("[psi]"));
-    /// assert!(!engineering_context.is_avoided_unit("Pa"));
-    /// ```
-    pub fn is_avoided_unit(&self, unit: &str) -> bool {
-        self.avoided_units.contains(&unit.to_string())
-    }
-
-    /// Get suggested alternative units for the given unit in this context.
-    ///
-    /// Returns a list of preferred units that are dimensionally compatible
-    /// with the input unit, ordered by preference for this domain.
-    ///
-    /// # Arguments
-    /// * `unit` - The unit to find alternatives for
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use octofhir_ucum::MeasurementContext;
-    ///
-    /// let medical_context = MeasurementContext::medical();
-    /// let alternatives = medical_context.suggest_alternatives("g").unwrap();
-    /// // May suggest ["mg", "ug"] for medical dosing
-    /// ```
-    #[allow(clippy::result_large_err)]
-    pub fn suggest_alternatives(&self, unit: &str) -> Result<Vec<String>, UcumError> {
-        // Analyze the input unit to get its dimension
-        let analysis = analyse(unit)?;
-        let mut suggestions = Vec::new();
-
-        // Check preferred units for dimensional compatibility
-        for preferred in &self.preferred_units {
-            if let Ok(pref_analysis) = analyse(preferred)
-                && pref_analysis.dimension == analysis.dimension
-            {
-                suggestions.push(preferred.clone());
-            }
-        }
-
-        // If no preferred units match, suggest some common alternatives
-        if suggestions.is_empty() {
-            match self.domain {
-                Domain::Medical => {
-                    // Suggest medical-appropriate units based on dimension
-                    if analysis.dimension == Dimension([1, 0, 0, 0, 0, 0, 0]) {
-                        // Mass
-                        suggestions = vec!["mg".to_string(), "g".to_string(), "ug".to_string()];
-                    } else if analysis.dimension == Dimension([0, 3, 0, 0, 0, 0, 0]) {
-                        // Volume
-                        suggestions = vec!["mL".to_string(), "L".to_string()];
-                    }
-                }
-                Domain::Engineering => {
-                    // Suggest engineering-appropriate SI units
-                    if analysis.dimension == Dimension([1, -1, -2, 0, 0, 0, 0]) {
-                        // Pressure
-                        suggestions = vec!["Pa".to_string(), "kPa".to_string(), "MPa".to_string()];
-                    }
-                }
-                Domain::Physics => {
-                    // Suggest fundamental SI units
-                    suggestions.push(canonicalize_expression(unit)?);
-                }
-                Domain::Chemistry => {
-                    // Suggest chemistry-appropriate units
-                    if analysis.dimension == Dimension([0, 0, 0, 0, 0, 1, 0]) {
-                        // Amount
-                        suggestions = vec!["mol".to_string(), "mmol".to_string()];
-                    }
-                }
-                Domain::General => {
-                    // Suggest common SI units
-                    suggestions.push(canonicalize_expression(unit)?);
-                }
-            }
-        }
-
-        Ok(suggestions)
-    }
 }
 
 // Feature-gated modules

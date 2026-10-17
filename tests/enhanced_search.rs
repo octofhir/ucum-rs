@@ -52,8 +52,8 @@ fn test_fuzzy_search() {
 
 #[test]
 fn test_concept_kind_filtering() {
-    // Test filtering for base units only
-    let _base_units = search_units_filtered("m", &[ConceptKind::BaseUnit], false);
+    let base_units = search_units_filtered("m", &[ConceptKind::BaseUnit], false);
+    assert!(base_units.iter().any(|unit| unit.code == "m"));
 
     // Test filtering for arbitrary units only
     let arbitrary_units = search_units_filtered("IU", &[ConceptKind::ArbitraryUnit], false);
@@ -92,12 +92,8 @@ fn test_invalid_regex() {
 
 #[test]
 fn test_empty_search() {
-    // Test empty search query
-    let _results = search_units("");
-    // Should return all units or empty results, depending on implementation
-    // This tests that it doesn't crash
-
+    // An empty query must not panic, whatever it returns
+    let _ = search_units("");
     #[cfg(feature = "std")]
-    let _fuzzy_results = search_units_fuzzy("", 30);
-    // Should handle empty query gracefully
+    let _ = search_units_fuzzy("", 30);
 }

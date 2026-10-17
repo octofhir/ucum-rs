@@ -1,29 +1,15 @@
-//! UCUM expression parser with performance optimizations.
-//!
-//! This module implements high-performance parsing techniques including:
-//! - Zero-copy parsing with minimal allocations
-//! - SIMD-accelerated character validation
-//! - Perfect hash lookups for common patterns
-//! - Single-pass state machine parsing
-//! - Small vector optimizations for AST nodes
+//! UCUM expression parser: a single-pass tokenizer and a recursive-descent parser
+//! that builds a borrowing `UnitExpr`, returned as an `OwnedUnitExpr`.
 
 use crate::ast::{OwnedUnitExpr, UnitExpr, UnitFactor};
 use crate::error::UcumError;
 use crate::math;
 use crate::prelude::*;
-use phf::phf_map;
 use smallvec::SmallVec;
 
 // ============================================================================
 // Compile-time lookup tables
 // ============================================================================
-
-/// Perfect hash for time units
-static TIME_UNITS: phf::Map<&'static str, ()> = phf_map! {
-    "h" => (), "hr" => (), "min" => (), "s" => (),
-    "ms" => (), "us" => (), "ns" => (), "d" => (),
-    "wk" => (), "mo" => (), "a" => (),
-};
 
 /// ASCII character classification lookup table
 static CHAR_CLASS: [CharClass; 256] = {
@@ -79,44 +65,6 @@ enum CharClass {
 }
 
 // ============================================================================
-// Compact string for small allocations
-// ============================================================================
-
-/// A string type optimized for small strings (up to 23 bytes inline)
-#[derive(Clone, Debug, PartialEq)]
-#[allow(dead_code)] // Future optimization, not currently used
-pub enum CompactString {
-    Inline { bytes: [u8; 23], len: u8 },
-    Heap(String),
-}
-
-#[allow(dead_code)] // Future optimization, not currently used
-impl CompactString {
-    fn new(s: &str) -> Self {
-        let bytes = s.as_bytes();
-        if bytes.len() <= 23 {
-            let mut inline_bytes = [0u8; 23];
-            inline_bytes[..bytes.len()].copy_from_slice(bytes);
-            CompactString::Inline {
-                bytes: inline_bytes,
-                len: bytes.len() as u8,
-            }
-        } else {
-            CompactString::Heap(s.to_string())
-        }
-    }
-
-    fn as_str(&self) -> &str {
-        match self {
-            CompactString::Inline { bytes, len } => unsafe {
-                core::str::from_utf8_unchecked(&bytes[..*len as usize])
-            },
-            CompactString::Heap(s) => s.as_str(),
-        }
-    }
-}
-
-// ============================================================================
 // Fast character validation
 // ============================================================================
 
@@ -126,35 +74,15 @@ impl CompactString {
 /// This includes letters, digits, brackets, and some special symbols.
 #[inline(always)]
 fn is_symbol_char_fast(ch: u8) -> bool {
-    if ch < 128 {
-        matches!(
-            CHAR_CLASS[ch as usize],
-            CharClass::Letter
-                | CharClass::Digit
-                | CharClass::Symbol
-                | CharClass::OpenBracket
-                | CharClass::CloseBracket
-                | CharClass::Sign
-        )
-    } else {
-        false
-    }
-}
-
-// ============================================================================
-// Parser state machine
-// ============================================================================
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // Future state machine optimization, not fully implemented
-enum ParserState {
-    Initial,
-    InSymbol,
-    InNumber,
-    InExponent,
-    InAnnotation,
-    AfterSymbol,
-    AfterOperator,
+    matches!(
+        CHAR_CLASS[ch as usize],
+        CharClass::Letter
+            | CharClass::Digit
+            | CharClass::Symbol
+            | CharClass::OpenBracket
+            | CharClass::CloseBracket
+            | CharClass::Sign
+    )
 }
 
 /// Token types produced by the tokenizer.
@@ -179,8 +107,6 @@ struct Tokenizer<'a> {
     input: &'a str,
     bytes: &'a [u8],
     pos: usize,
-    #[allow(dead_code)] // Future state machine optimization
-    state: ParserState,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -190,7 +116,6 @@ impl<'a> Tokenizer<'a> {
             input,
             bytes: input.as_bytes(),
             pos: 0,
-            state: ParserState::Initial,
         }
     }
 
@@ -486,25 +411,7 @@ impl<'a> OptimizedParser<'a> {
         let is_symbol = matches!(token, Token::Symbol(_));
 
         let base_expr = match token {
-            Token::Symbol(s) => {
-                // Check for invalid patterns
-                if TIME_UNITS.contains_key(s) {
-                    // Check if preceded by digits without decimal
-                    let pos = self.tokenizer.pos - s.len();
-                    if pos > 0 {
-                        let before = &self.tokenizer.input[..pos];
-                        if before.chars().last().is_some_and(|c| c.is_ascii_digit())
-                            && !before.contains('.')
-                        {
-                            return Err(UcumError::invalid_expression(
-                                "Time units must be preceded by decimal point",
-                            ));
-                        }
-                    }
-                }
-
-                self.normalize_symbol(s)
-            }
+            Token::Symbol(s) => self.normalize_symbol(s),
             Token::Number(n) => UnitExpr::Numeric(n),
             Token::TenPower(exp) => UnitExpr::Numeric(math::powi(10.0, exp)),
             Token::OpenParen => {
@@ -639,10 +546,6 @@ impl<'a> OptimizedParser<'a> {
     #[allow(clippy::result_large_err)]
     pub fn parse_expression(&mut self) -> Result<UnitExpr<'a>, UcumError> {
         self.tokenizer.skip_whitespace();
-        if self.tokenizer.pos == self.tokenizer.input.len() {
-            // The unity is written "1"
-            return Err(UcumError::invalid_expression("Empty expression"));
-        }
         self.parse_term()
     }
 
@@ -718,9 +621,9 @@ impl<'a> OptimizedParser<'a> {
 // Public API
 // ============================================================================
 
-/// Parse a UCUM expression using the optimized parser
+/// Parse a UCUM expression string into an `OwnedUnitExpr` AST.
 #[allow(clippy::result_large_err)]
-pub fn parse_expression_optimized(input: &str) -> Result<OwnedUnitExpr, UcumError> {
+pub fn parse_expression(input: &str) -> Result<OwnedUnitExpr, UcumError> {
     let input = input.trim();
 
     // The unity, as in an empty canonical unit; `validate` rejects it as a term
@@ -762,7 +665,7 @@ mod tests {
         let token = tokenizer.next_token();
         println!("Tokenized µg as: {:?}", token);
 
-        let result = parse_expression_optimized("µg").unwrap();
+        let result = parse_expression("µg").unwrap();
         println!("Parsed µg as: {:?}", result);
         match result {
             OwnedUnitExpr::Symbol(s) => assert_eq!(s, "ug"),
@@ -772,7 +675,7 @@ mod tests {
 
     #[test]
     fn test_complex_expression() {
-        let result = parse_expression_optimized("kg.m/s2").unwrap();
+        let result = parse_expression("kg.m/s2").unwrap();
         match result {
             OwnedUnitExpr::Quotient(num, den) => {
                 // The numerator should be kg.m as a product

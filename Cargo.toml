@@ -13,7 +13,6 @@ homepage = "https://github.com/octofhir/ucum-rs"
 include = [
     "ucum-essence.xml",
     "src",
-    "examples",
     "benches",
     "README.md",
     "build.rs",
@@ -34,7 +33,7 @@ required-features = ["cli"]
 default = ["std"]
 # `std` enables regex/fuzzy unit search and uses the platform float math.
 # Without it the crate is `no_std` + `alloc` and float math goes through `libm`.
-std = ["dep:regex", "dep:fuzzy-matcher", "rust_decimal/std", "phf/std", "serde?/std"]
+std = ["dep:regex", "dep:fuzzy-matcher", "rust_decimal/std", "serde?/std"]
 serde = ["dep:serde"]
 cli = ["std", "dep:clap", "dep:anyhow", "dep:human-panic"]
 fhir = ["std", "serde", "dep:thiserror"]
@@ -43,10 +42,8 @@ fhir = ["std", "serde", "dep:thiserror"]
 # Core dependencies (all `no_std` + `alloc` compatible)
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
 rust_decimal = { version = "1.36", default-features = false }
-phf = { version = "0.14", default-features = false, features = ["macros"] }
 smallvec = "1.13"
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
-foldhash = { version = "0.2", default-features = false }
 spin = { version = "0.12", default-features = false, features = ["lazy"] }
 libm = "0.2"
 
@@ -63,20 +60,13 @@ human-panic = { version = "2.0.3", optional = true }
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 quick-xml = "0.41"
-serde_json = "1"
 
 [build-dependencies]
 quick-xml = "0.41"
 rust_decimal = "1.36"
-serde = "1"
-serde_derive = "1"
 
 [[bench]]
 name = "benchmarks"
-harness = false
-
-[[bench]]
-name = "memory_bench"
 harness = false
 
 [profile.release]

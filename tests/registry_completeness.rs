@@ -165,25 +165,3 @@ fn test_specific_units_exist() {
         }
     }
 }
-
-#[test]
-fn test_registry_statistics() {
-    let all_units = get_all_units();
-
-    println!("Registry Statistics:");
-    println!("  Total units: {}", all_units.len());
-
-    // Count by property
-    let mut property_counts = std::collections::HashMap::new();
-    for unit in all_units {
-        *property_counts.entry(&unit.property).or_insert(0) += 1;
-    }
-
-    println!("  Units by property:");
-    let mut properties: Vec<_> = property_counts.into_iter().collect();
-    properties.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-
-    for (property, count) in properties {
-        println!("    {property}: {count}");
-    }
-}

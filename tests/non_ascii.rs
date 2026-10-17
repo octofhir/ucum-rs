@@ -1,8 +1,7 @@
 //! Non-ASCII input must be rejected with an error (or `None`), never a panic.
 
 use octofhir_ucum::{
-    ErrorKind, UnitExpr, evaluate, find_unit, find_unit_optimized, get_common_display,
-    get_defined_forms, validate,
+    ErrorKind, UnitExpr, evaluate, find_unit, get_common_display, get_defined_forms, validate,
 };
 
 /// Multi-byte characters at the start, in the middle and at the end of a code.
@@ -12,10 +11,6 @@ const NON_ASCII_CODES: &[&str] = &["é", "éa", "aé", "mé", "kéé", "€", "{
 fn find_unit_returns_none_for_non_ascii_codes() {
     for code in NON_ASCII_CODES {
         assert!(find_unit(code).is_none(), "find_unit({code:?})");
-        assert!(
-            find_unit_optimized(code).is_none(),
-            "find_unit_optimized({code:?})"
-        );
     }
 }
 

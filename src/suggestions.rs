@@ -1,13 +1,11 @@
-//! Suggestion engine for error corrections and unit alternatives (Phase 5).
+//! Suggestion engine for error corrections and unit alternatives.
 
 use crate::prelude::*;
 use crate::{UnitRecord, get_all_units};
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashSet;
 
 /// Suggestion engine for providing error corrections and alternatives
 pub struct SuggestionEngine {
-    /// Pre-computed unit similarity map for fast lookups
-    unit_similarity: HashMap<String, Vec<String>>,
     /// All available units for fuzzy matching
     all_units: Vec<&'static UnitRecord>,
 }
@@ -15,54 +13,9 @@ pub struct SuggestionEngine {
 impl SuggestionEngine {
     /// Create a new suggestion engine
     pub fn new() -> Self {
-        let all_units: Vec<_> = get_all_units().iter().collect();
-        let unit_similarity = Self::build_similarity_map(&all_units);
-
         Self {
-            unit_similarity,
-            all_units,
+            all_units: get_all_units().iter().collect(),
         }
-    }
-
-    /// Build a similarity map for fast unit lookups
-    fn build_similarity_map(units: &[&'static UnitRecord]) -> HashMap<String, Vec<String>> {
-        let mut similarity_map = HashMap::new();
-
-        for unit in units {
-            let mut similar = Vec::new();
-
-            // Find units with similar codes
-            for other in units {
-                if unit.code != other.code {
-                    let similarity = Self::string_similarity(unit.code, other.code);
-                    if similarity > 0.6 {
-                        // 60% similarity threshold
-                        similar.push(other.code.to_string());
-                    }
-                }
-            }
-
-            // Find units with similar display names
-            for other in units {
-                if unit.code != other.code {
-                    let similarity = Self::string_similarity(unit.display_name, other.display_name);
-                    if similarity > 0.7 {
-                        // 70% similarity threshold for display names
-                        similar.push(other.code.to_string());
-                    }
-                }
-            }
-
-            // Sort by similarity and remove duplicates
-            similar.sort();
-            similar.dedup();
-
-            if !similar.is_empty() {
-                similarity_map.insert(unit.code.to_string(), similar);
-            }
-        }
-
-        similarity_map
     }
 
     /// Calculate string similarity using Levenshtein distance
@@ -77,13 +30,6 @@ impl SuggestionEngine {
 
         let len1 = s1.chars().count();
         let len2 = s2.chars().count();
-
-        if len1 == 0 {
-            return len2 as f64;
-        }
-        if len2 == 0 {
-            return len1 as f64;
-        }
 
         let mut matrix = vec![vec![0usize; len2 + 1]; len1 + 1];
 
@@ -296,39 +242,6 @@ impl SuggestionEngine {
                 }
             }
         }
-    }
-
-    /// Get similar units based on pre-computed similarity map
-    pub fn get_similar_units(&self, unit: &str) -> Vec<String> {
-        self.unit_similarity.get(unit).cloned().unwrap_or_default()
-    }
-
-    /// Suggest corrections for dimension mismatches
-    pub fn suggest_dimension_fixes(
-        &self,
-        expected_property: &str,
-        found_unit: &str,
-    ) -> Vec<String> {
-        let mut suggestions = Vec::new();
-
-        // Find units with the expected property
-        for unit in &self.all_units {
-            if unit.property.to_lowercase() == expected_property.to_lowercase() {
-                let similarity = Self::string_similarity(unit.code, found_unit);
-                if similarity > 0.3 {
-                    suggestions.push(format!(
-                        "Use '{}' ({}) for {}",
-                        unit.code, unit.display_name, expected_property
-                    ));
-                }
-            }
-        }
-
-        // Sort by relevance and limit
-        suggestions.sort();
-        suggestions.truncate(5);
-
-        suggestions
     }
 }
 

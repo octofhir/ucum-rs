@@ -40,26 +40,6 @@ impl fmt::Display for Dimension {
     }
 }
 
-/// Base unit record (e.g. metre, second, kelvin).
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct BaseUnit {
-    pub code: &'static str,
-    pub dim: Dimension,
-    pub factor: f64,
-    pub offset: f64,
-}
-
-/// Derived or custom unit that resolves to a base vector plus factor/offset.
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DerivedUnit {
-    pub code: &'static str,
-    pub dim: Dimension,
-    pub factor: f64,
-    pub offset: f64,
-}
-
 /// Numerical quantity paired with a unit expression.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
