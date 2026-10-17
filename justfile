@@ -39,7 +39,7 @@ test-core:
 
 # Run official UCUM conformance tests
 test-official:
-    cargo test --test official_tests_grouped
+    cargo test --test official
 
 # Run benchmarks
 bench:

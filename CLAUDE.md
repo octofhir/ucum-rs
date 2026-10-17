@@ -31,7 +31,7 @@ cargo test --all -- --nocapture
 
 # Run specific test suite
 cargo test
-cargo test official_tests  # Official UCUM conformance tests
+cargo test --test official  # Official UCUM conformance tests
 
 # Run benchmarks
 cargo bench

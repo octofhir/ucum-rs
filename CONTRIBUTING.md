@@ -52,7 +52,7 @@ cargo test --all
 cargo test --all -- --nocapture
 
 # Run specific test suites
-cargo test official_tests  # Official UCUM conformance tests
+cargo test --test official  # Official UCUM conformance tests
 cargo test test_micro_normalization  # UTF-8 handling tests
 
 # Run benchmarks
