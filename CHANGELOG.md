@@ -69,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `100tan(1 rad)`): they convert 1:1, and `%[slope]` no longer converts 1:1 to `%` or `1`.
   The build fails on a special function it does not know; `[m/s2/Hz^(1/2)]` (`sqrt`) is
   still a dimensionless unit of factor 1, since its dimension has a half exponent.
+- `[m/s2/Hz^(1/2)]` (`sqrt(1 m2/s4/Hz)`, of dimension L.T-3/2) is isolated by a new
+  `SpecialKind::Sqrt`, since the dimension vector cannot hold its half exponents (#15). It is
+  still a valid code, but converts and compares only to an expression with the same power of
+  it: it no longer converts to `1` (was 1) or `%` (was 100), `is_comparable` with `1` is
+  false, and `analyse` no longer reports it dimensionless. `unit_multiply`, `multiply` and the
+  other arithmetic reject it, `get_canonical_units` and `validate_in_property` return a
+  `SpecialUnitError`.
 
 ## [0.2.0] - 2025-07-22
 

@@ -1004,7 +1004,14 @@ fn main() {
             "Cel" | "degF" | "degRe" => continue,
             // `[m/s2/Hz^(1/2)]` is "sqrt(1 m2/s4/Hz)", of dimension L.T-3/2: a dimension
             // vector of integers cannot hold it, so it stays a dimensionless unit of factor 1
-            "sqrt" => continue,
+            // (1 m2/s4/Hz is 1 m2.s-3) whose kind keeps it apart from every other unit
+            "sqrt" => {
+                unit.1 = [0; 7];
+                unit.2 = 1.0;
+                unit.3 = 0.0;
+                unit.4 = "SpecialKind::Sqrt".into();
+                continue;
+            }
             other => panic!("unknown special function {other:?} of {}", unit.0),
         };
         let (factor, dim) = resolver

@@ -108,6 +108,12 @@ pub enum SpecialKind {
     Arbitrary,
     /// Base-2 logarithmic unit (`bit_s`).
     Log2,
+    /// Square root of a unit: `[m/s2/Hz^(1/2)]` is `sqrt(1 m2/s4/Hz)` (UCUM §45), of
+    /// dimension L.T-3/2. A `Dimension` of integers cannot hold a half exponent, so the unit
+    /// keeps a dimensionless record of factor 1 and is isolated instead: it converts and
+    /// compares only to an expression with the same power of it, and takes no part in unit
+    /// arithmetic.
+    Sqrt,
 }
 
 impl SpecialKind {
@@ -120,7 +126,7 @@ impl SpecialKind {
             SpecialKind::Log10 => 10.0,              // 10^(x) for B, 10^(x/10) for dB
             SpecialKind::Ln => core::f64::consts::E, // e^(x)
             SpecialKind::Log2 => 2.0,                // 2^(x) for bit_s
-            _ => 1.0, // For None, LinearOffset, TanTimes100, Arbitrary
+            _ => 1.0, // For None, LinearOffset, TanTimes100, Arbitrary, Sqrt
         }
     }
 

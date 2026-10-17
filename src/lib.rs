@@ -167,6 +167,8 @@ pub fn analyse(expression: &str) -> Result<UnitAnalysis, UcumError> {
     let parsed = parse_expression(expression)?;
     let result = crate::evaluator::evaluate_owned(&parsed)?;
     let has_offset = result.offset != Number::zero() || has_referenced_level(&parsed);
+    // `[m/s2/Hz^(1/2)]` has a dimensionless record, but not a dimensionless dimension
+    let is_dimensionless = result.dim == Dimension([0; 7]) && sqrt_power(&parsed) == 0;
 
     Ok(UnitAnalysis {
         expression: expression.to_string(),
@@ -174,7 +176,7 @@ pub fn analyse(expression: &str) -> Result<UnitAnalysis, UcumError> {
         dimension: result.dim,
         factor: to_f64(result.factor),
         offset: to_f64(result.offset),
-        is_dimensionless: result.dim == Dimension([0; 7]),
+        is_dimensionless,
         has_offset,
     })
 }
@@ -218,6 +220,12 @@ pub struct UnitAnalysis {
 #[allow(clippy::result_large_err)]
 pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, UcumError> {
     let analysis = analyse(expression)?;
+    if sqrt_power(&analysis.parsed_ast) != 0 {
+        return Err(UcumError::special_unit_error(
+            expression,
+            "[m/s2/Hz^(1/2)] has a dimension with half exponents (L.T-3/2), which no property has",
+        ));
+    }
 
     // Define expected dimensions for common properties
     let expected_dimension = match property.to_lowercase().as_str() {
@@ -316,6 +324,9 @@ pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, Uc
 /// with `K`. That does not make every pair convertible: `convert_with_context` rejects a
 /// level converted to a unit on another scale.
 ///
+/// `[m/s2/Hz^(1/2)]` is of dimension L.T-3/2, with half exponents, so it is commensurable
+/// only with an expression that has the same power of it and the same other dimensions.
+///
 /// # Examples
 ///
 /// ```
@@ -330,7 +341,8 @@ pub fn is_comparable(unit1: &str, unit2: &str) -> Result<bool, UcumError> {
     let analysis1 = analyse(unit1)?;
     let analysis2 = analyse(unit2)?;
 
-    Ok(analysis1.dimension == analysis2.dimension)
+    Ok(analysis1.dimension == analysis2.dimension
+        && sqrt_power(&analysis1.parsed_ast) == sqrt_power(&analysis2.parsed_ast))
 }
 
 /// Get the canonical units for a given UCUM expression.
@@ -351,7 +363,8 @@ pub fn is_comparable(unit1: &str, unit2: &str) -> Result<bool, UcumError> {
 /// # Errors
 ///
 /// A level (`B`, `dB[SPL]`, `bit_s`, `[pH]`) or a prism diopter is a `SpecialUnitError`: no
-/// factor and offset turn a logarithm or a tangent into a linear canonical value.
+/// factor and offset turn a logarithm or a tangent into a linear canonical value. So is
+/// `[m/s2/Hz^(1/2)]`, whose canonical unit `m.s-3/2` has a half exponent.
 #[allow(clippy::result_large_err)]
 pub fn get_canonical_units(expression: &str) -> Result<CanonicalUnit, UcumError> {
     let analysis = analyse(expression)?;
@@ -361,6 +374,12 @@ pub fn get_canonical_units(expression: &str) -> Result<CanonicalUnit, UcumError>
         return Err(UcumError::special_unit_error(
             expression,
             "a level or a prism diopter has no linear canonical unit",
+        ));
+    }
+    if sqrt_power(&analysis.parsed_ast) != 0 {
+        return Err(UcumError::special_unit_error(
+            expression,
+            "the canonical unit of [m/s2/Hz^(1/2)] has a half exponent (m.s-3/2)",
         ));
     }
 
@@ -1059,6 +1078,27 @@ fn has_referenced_level(expr: &OwnedUnitExpr) -> bool {
     uses_unit(expr, &evaluator::is_referenced_level)
 }
 
+/// The power of `[m/s2/Hz^(1/2)]` in an expression: 1 for the unit, 2 for
+/// `[m/s2/Hz^(1/2)]2`, -1 after a solidus. It stands for the half exponents of L.T-3/2 that
+/// the dimension vector cannot hold, so two expressions are commensurable only when they
+/// have the same power of it.
+fn sqrt_power(expr: &OwnedUnitExpr) -> i32 {
+    match expr {
+        OwnedUnitExpr::Symbol(code) => i32::from(
+            evaluator::lookup_unit(code)
+                .is_some_and(|(_, unit)| unit.special == crate::types::SpecialKind::Sqrt),
+        ),
+        OwnedUnitExpr::Numeric(_) => 0,
+        OwnedUnitExpr::Product(factors) => factors.iter().fold(0, |power, f| {
+            power.saturating_add(sqrt_power(&f.expr).saturating_mul(f.exponent))
+        }),
+        OwnedUnitExpr::Quotient(numerator, denominator) => {
+            sqrt_power(numerator).saturating_sub(sqrt_power(denominator))
+        }
+        OwnedUnitExpr::Power(base, exp) => sqrt_power(base).saturating_mul(*exp),
+    }
+}
+
 /// Whether an expression uses a unit code that matches `matches`.
 fn uses_unit(expr: &OwnedUnitExpr, matches: &dyn Fn(&str) -> bool) -> bool {
     match expr {
@@ -1075,6 +1115,8 @@ fn uses_unit(expr: &OwnedUnitExpr, matches: &dyn Fn(&str) -> bool) -> bool {
 /// A level (`B`, `dB`, `Np`, `bit_s`) converts linearly to another level, and a prism
 /// diopter to a prism diopter, but not to a unit on another scale: `1 dB` is a ratio of
 /// 10^0.1, not 1. Reject those conversions instead of applying the ratio of the factors.
+/// `[m/s2/Hz^(1/2)]` converts only to an expression with the same power of it, since the
+/// half exponents of its dimension are not in the dimension vector.
 pub(crate) fn check_same_scale(
     from: &OwnedUnitExpr,
     to: &OwnedUnitExpr,
@@ -1093,11 +1135,19 @@ pub(crate) fn check_same_scale(
             ));
         }
     }
+    if sqrt_power(from) != sqrt_power(to) {
+        return Err(UcumError::conversion_error(
+            from_text,
+            to_text,
+            "[m/s2/Hz^(1/2)] has a dimension with half exponents (L.T-3/2) and only converts to the same power of itself",
+        ));
+    }
     Ok(())
 }
 
 /// Special units cannot take part in algebraic operations (UCUM §22.1): reject operands
-/// with an offset (temperature) or on a logarithmic or tangent scale.
+/// with an offset (temperature) or on a logarithmic or tangent scale, and `[m/s2/Hz^(1/2)]`,
+/// whose half exponents the dimension of the result cannot hold.
 #[allow(clippy::result_large_err)]
 fn check_arithmetic_operands(
     left: &UnitAnalysis,
@@ -1116,6 +1166,16 @@ fn check_arithmetic_operands(
             "special units",
             operation,
             &format!("Logarithmic and tangent units cannot be used in {operation}"),
+        ));
+    }
+    // The dimension of the result would lose the half exponents of L.T-3/2
+    if sqrt_power(&left.parsed_ast) != 0 || sqrt_power(&right.parsed_ast) != 0 {
+        return Err(UcumError::conversion_error(
+            "special units",
+            operation,
+            &format!(
+                "[m/s2/Hz^(1/2)] has a dimension with half exponents and cannot be used in {operation}"
+            ),
         ));
     }
     Ok(())
