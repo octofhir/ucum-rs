@@ -203,6 +203,23 @@ pnpm install
 npm run dev  # http://localhost:6000
 ```
 
+## Performance
+
+Measured with `cargo bench` (criterion) on an Apple M1, Rust 1.99, release profile:
+
+| Operation | Time |
+|---|---|
+| Parse a simple unit (`m`, `mg`) | ~62 ns |
+| Parse a medical unit (`mg/dL`) | ~170 ns |
+| Validate a valid expression | ~0.7 µs |
+| Validate an invalid expression, with suggestions | ~38 µs |
+| Analyse an expression | ~0.8 µs |
+| Convert between proper units (`km` to `m`) | ~1.3 µs |
+| Convert a temperature (`Cel` to `[degF]`) | ~2.6 µs |
+
+Exact decimal arithmetic keeps results exact without making the library slower: on the same
+expressions 0.7.0 validates, analyses and converts about 2.3 times faster than 0.6.1.
+
 ## Documentation
 
 - [API Documentation](https://docs.rs/octofhir-ucum)

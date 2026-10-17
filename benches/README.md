@@ -32,10 +32,8 @@ cargo bench -- --baseline master
 Benchmark results are saved in HTML format in `target/criterion/`.
 Open `target/criterion/report/index.html` in a browser to view detailed performance graphs and statistics.
 
-## Performance Targets
+## Reference Results
 
-Current performance targets (on modern hardware):
-- Simple parsing: < 1 µs
-- Complex parsing: < 5 µs
-- Evaluation: < 1 µs
-- API operations: < 10 µs
+On an Apple M1 (Rust 1.99): parsing a simple unit ~62 ns, `mg/dL` ~170 ns, `validate()`
+~0.7 µs (~38 µs for an invalid expression, which computes suggestions), `analyse()`
+~0.8 µs, a linear conversion ~1.3 µs, a temperature conversion ~2.6 µs.

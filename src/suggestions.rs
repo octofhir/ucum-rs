@@ -8,78 +8,66 @@ use hashbrown::HashSet;
 pub(crate) struct SuggestionEngine {
     /// All available units for fuzzy matching
     all_units: Vec<&'static UnitRecord>,
+    /// Their names in lower case, in the same order
+    names_lower: Vec<String>,
 }
 
 impl SuggestionEngine {
     /// Create a new suggestion engine
     pub fn new() -> Self {
+        let all_units: Vec<&'static UnitRecord> = get_all_units().iter().collect();
+        let names_lower = all_units
+            .iter()
+            .map(|u| u.display_name.to_lowercase())
+            .collect();
         Self {
-            all_units: get_all_units().iter().collect(),
+            all_units,
+            names_lower,
         }
     }
 
-    /// Calculate string similarity using Levenshtein distance
+    /// Similarity of two strings, 1 minus their Levenshtein distance over the length of the
+    /// longer one.
     pub fn string_similarity(s1: &str, s2: &str) -> f64 {
         if s1.is_empty() && s2.is_empty() {
             return 1.0;
         }
-
         if s1.is_empty() || s2.is_empty() {
             return 0.0;
         }
-
-        let len1 = s1.chars().count();
         let len2 = s2.chars().count();
-
-        let mut matrix = vec![vec![0usize; len2 + 1]; len1 + 1];
-
-        // Initialize first row and column
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..=len1 {
-            matrix[i][0] = i;
-        }
-        for (j, cell) in matrix[0].iter_mut().enumerate() {
-            *cell = j;
-        }
-
-        let s1_chars: Vec<char> = s1.chars().collect();
-        let s2_chars: Vec<char> = s2.chars().collect();
-
-        // Fill the matrix
-        for i in 1..=len1 {
-            for j in 1..=len2 {
-                let cost = if s1_chars[i - 1] == s2_chars[j - 1] {
-                    0
-                } else {
-                    1
-                };
-                matrix[i][j] = (matrix[i - 1][j] + 1)
-                    .min(matrix[i][j - 1] + 1)
-                    .min(matrix[i - 1][j - 1] + cost);
+        // One row of the distance matrix: distances from a prefix of s1 to each prefix of s2
+        let mut row: Vec<usize> = (0..=len2).collect();
+        let mut len1 = 0;
+        for (i, c1) in s1.chars().enumerate() {
+            len1 += 1;
+            let mut diagonal = row[0];
+            row[0] = i + 1;
+            for (j, c2) in s2.chars().enumerate() {
+                let substitution = diagonal + usize::from(c1 != c2);
+                diagonal = row[j + 1];
+                row[j + 1] = substitution.min(row[j] + 1).min(row[j + 1] + 1);
             }
         }
-
-        let distance = matrix[len1][len2];
-        let max_len = len1.max(len2);
-
-        1.0 - (distance as f64 / max_len as f64)
+        1.0 - (row[len2] as f64 / len1.max(len2) as f64)
     }
 
     /// Suggest corrections for an invalid unit
     pub fn suggest_corrections(&self, invalid_unit: &str) -> Vec<String> {
         let mut suggestions = Vec::new();
 
+        let invalid_lower = invalid_unit.to_lowercase();
+
         // First, check for exact case-insensitive matches
         for unit in &self.all_units {
-            if unit.code.to_lowercase() == invalid_unit.to_lowercase() && unit.code != invalid_unit
-            {
+            if unit.code.eq_ignore_ascii_case(invalid_unit) && unit.code != invalid_unit {
                 suggestions.push(format!("Did you mean '{}'? (case mismatch)", unit.code));
             }
         }
 
         // Check for common typos and similar units
         let mut scored_suggestions = Vec::new();
-        for unit in &self.all_units {
+        for (unit, name_lower) in self.all_units.iter().zip(&self.names_lower) {
             let similarity = Self::string_similarity(unit.code, invalid_unit);
             if similarity > 0.5 {
                 // 50% similarity threshold
@@ -91,10 +79,7 @@ impl SuggestionEngine {
             }
 
             // Also check display names
-            let display_similarity = Self::string_similarity(
-                &unit.display_name.to_lowercase(),
-                &invalid_unit.to_lowercase(),
-            );
+            let display_similarity = Self::string_similarity(name_lower, &invalid_lower);
             if display_similarity > 0.6 {
                 // 60% similarity for display names
                 scored_suggestions.push((
