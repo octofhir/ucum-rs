@@ -112,7 +112,9 @@ pub enum SpecialKind {
 
 impl SpecialKind {
     /// Returns the conversion ratio for this special unit type.
-    /// For logarithmic units, this returns the base of the logarithm.
+    /// For logarithmic units, this returns the base of the logarithm of the kind. The size
+    /// of a level in bels is the `factor` of its `UnitRecord`: `[hp'_C]` is a `Log10` level
+    /// of size -2, a dilution of 100^-n.
     pub fn ratio(&self) -> f64 {
         match self {
             SpecialKind::Log10 => 10.0,              // 10^(x) for B, 10^(x/10) for dB

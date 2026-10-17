@@ -375,12 +375,8 @@ fn main() {
                             .map(|a| String::from_utf8_lossy(&a.value).to_string())
                             .is_some_and(|v| v == "yes");
 
-                        // Special handling for [p'diop] unit
-                        if code == "[p'diop]" {
-                            special = "SpecialKind::TanTimes100".into();
-                        }
                         // Only treat units as arbitrary if explicitly marked with isArbitrary="yes"
-                        else if is_arbitrary {
+                        if is_arbitrary {
                             special = "SpecialKind::Arbitrary".into();
                         }
                         units.push((
@@ -960,29 +956,60 @@ fn main() {
         }
     }
 
+    // Special units defined through a function. Every function of the XML is handled here
+    // or above, so that a new one fails the build instead of leaving a linear unit.
+    //
     // Levels: "lg(1 1)" (`B`), "ln(1 1)" (`Np`), "ld(1 1)" (`bit_s`), "lg(1 W)",
-    // "2lg(2 10*-5.Pa)", "pH(1 mol/l)". A level is commensurable with the unit of its
-    // reference (UCUM §21.3), so it takes the dimension of that unit. Its factor is its
-    // size in bels: lg e for `Np`, lg 2 for `bit_s`, -1 for `[pH]` (minus the logarithm).
-    // Its offset is the level of its reference in the base units, in bels: 6 for `B[V]`
-    // since 1 V is 1000 g.m2.s-3.A-1 and a voltage level is twice the logarithm
-    // (`lgTimes2`), 0 for `B[mV]`. A conversion between two levels of the same quantity is
-    // then linear.
+    // "2lg(2 10*-5.Pa)", "pH(1 mol/l)", "hpX(1 1)". A level is commensurable with the unit
+    // of its reference (UCUM §21.3), so it takes the dimension of that unit. Its factor is
+    // its size in bels: lg e for `Np`, lg 2 for `bit_s`, -1 for `[pH]` (minus the
+    // logarithm), and for the homeopathic potencies (UCUM §44) minus the logarithm of their
+    // basis: -1 for `[hp'_X]`, -2 for `[hp'_C]` (a dilution of 100^-n), -3 for `[hp'_M]`,
+    // -lg 50000 for `[hp'_Q]`. Its offset is the level of its reference in the base units,
+    // in bels: 6 for `B[V]` since 1 V is 1000 g.m2.s-3.A-1 and a voltage level is twice the
+    // logarithm (`lgTimes2`), 0 for `B[mV]`. A conversion between two levels of the same
+    // quantity is then linear.
     for unit in units.iter_mut() {
         let Some(function) = definitions.get(&unit.0).and_then(|d| d.function.as_ref()) else {
             continue;
         };
-        let (special, size, times) = match function.name.as_str() {
-            "lg" => ("SpecialKind::Log10", 1.0, 1.0),
-            "lgTimes2" => ("SpecialKind::Log10", 1.0, 2.0),
-            "ln" => ("SpecialKind::Ln", std::f64::consts::LOG10_E, 1.0),
-            "ld" => ("SpecialKind::Log2", std::f64::consts::LOG10_2, 1.0),
-            "pH" => ("SpecialKind::Log10", -1.0, 1.0),
-            _ => continue,
+        let reference = function.unit.as_str();
+        let (special, size, times, reference) = match function.name.as_str() {
+            "lg" => ("SpecialKind::Log10", 1.0, 1.0, reference),
+            "lgTimes2" => ("SpecialKind::Log10", 1.0, 2.0, reference),
+            "ln" => ("SpecialKind::Ln", std::f64::consts::LOG10_E, 1.0, reference),
+            "ld" => (
+                "SpecialKind::Log2",
+                std::f64::consts::LOG10_2,
+                1.0,
+                reference,
+            ),
+            "pH" => ("SpecialKind::Log10", -1.0, 1.0, reference),
+            name @ ("hpX" | "hpC" | "hpM" | "hpQ") => {
+                let basis: f64 = match name {
+                    "hpX" => 10.0,
+                    "hpC" => 100.0,
+                    "hpM" => 1000.0,
+                    _ => 50000.0,
+                };
+                ("SpecialKind::Log10", -basis.log10(), 1.0, reference)
+            }
+            // 100 times the tangent of a plane angle in radians (UCUM §44): `[p'diop]` is
+            // "tanTimes100(1 rad)" and `%[slope]` "100tan(1 rad)", whose <function> element
+            // says `deg` against its own `Unit` attribute and §44. A degree reference would
+            // make 100 %[slope] an angle of 0.785 deg instead of 45 deg. Both share the
+            // dimensionless scale of `TanTimes100`, factor 1 and offset 0
+            "tanTimes100" | "100tan" => ("SpecialKind::TanTimes100", 1.0, 1.0, "rad"),
+            // Temperatures: an offset, set by the pass that reads the units
+            "Cel" | "degF" | "degRe" => continue,
+            // `[m/s2/Hz^(1/2)]` is "sqrt(1 m2/s4/Hz)", of dimension L.T-3/2: a dimension
+            // vector of integers cannot hold it, so it stays a dimensionless unit of factor 1
+            "sqrt" => continue,
+            other => panic!("unknown special function {other:?} of {}", unit.0),
         };
         let (factor, dim) = resolver
-            .term(&function.unit)
-            .unwrap_or_else(|| panic!("reference {:?} of {}", function.unit, unit.0));
+            .term(reference)
+            .unwrap_or_else(|| panic!("reference {reference:?} of {}", unit.0));
         let value = Factor::parse(&function.value)
             .unwrap_or_else(|| panic!("value {:?} of {}", function.value, unit.0));
         unit.1 = dim;

@@ -1089,7 +1089,7 @@ pub(crate) fn check_same_scale(
             return Err(UcumError::conversion_error(
                 from_text,
                 to_text,
-                "Levels (B, Np, bit_s, [pH]) and prism diopters only convert to units on the same scale",
+                "Levels (B, Np, bit_s, [pH], [hp'_X], ...) and tangent units ([p'diop], %[slope]) only convert to units on the same scale",
             ));
         }
     }

@@ -204,7 +204,7 @@ fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
                 && let Some((pref_factor, unit)) = lookup_unit(code)
                 && (LEVEL_KINDS.contains(&unit.special) || unit.special == SpecialKind::TanTimes100)
             {
-                return special_function_value(v, code, to_number(pref_factor)?, unit.special);
+                return special_function_value(v, code, to_number(pref_factor)?, unit);
             }
 
             let mut factor_acc = Number::one();
@@ -338,19 +338,22 @@ fn numeric_and_symbol<'e>(a: &'e UnitFactor, b: &'e UnitFactor) -> Option<(f64, 
 }
 
 /// The ratio a logarithmic or prism diopter unit stands for, e.g. 20 dB -> 10^2.
-/// The prefix scales the argument: 1 dB is 0.1 B.
+/// The prefix scales the argument: 1 dB is 0.1 B. A decimal level is 10 to the power of its
+/// value in bels, through its size in the registry (3 [hp'_C] is 10^-6); `Np` and `bit_s`
+/// are powers of their own base, which keeps 2^3 exact.
 #[allow(clippy::result_large_err)]
 fn special_function_value(
     value: f64,
     code: &str,
     pref_factor: Number,
-    special: SpecialKind,
+    unit: &UnitRecord,
 ) -> Result<EvalResult, UcumError> {
     let arg = value * to_f64(pref_factor);
-    let ratio = match special {
+    let ratio = match unit.special {
         // 100 [p'diop] is a deflection of tan(1 rad)
         SpecialKind::TanTimes100 => math::tan(arg / 100.0),
-        kind if LEVEL_KINDS.contains(&kind) => math::powf(kind.ratio(), arg),
+        SpecialKind::Log10 => math::powf(10.0, arg * unit.factor),
+        SpecialKind::Ln | SpecialKind::Log2 => math::powf(unit.special.ratio(), arg),
         _ => return Err(UcumError::special_unit_error(code, "not a function unit")),
     };
     Ok(EvalResult {
