@@ -164,3 +164,12 @@ fn units_frequently_used_in_practice_exist() {
         assert!(find_unit(code).is_some(), "{code}");
     }
 }
+
+#[test]
+fn the_copy_of_the_tables_in_spec_is_the_one_the_registry_is_built_from() {
+    assert_eq!(
+        include_str!("../spec/ucum-essence.xml"),
+        include_str!("../ucum-essence.xml"),
+        "spec/ucum-essence.xml and ucum-essence.xml differ"
+    );
+}

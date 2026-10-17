@@ -311,9 +311,9 @@ pub fn evaluate_with_case(expr: &UnitExpr, case: Case) -> Result<EvalResult, Ucu
 
 /// A measurement mapping `value × factor + offset` from one term to another.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Linear {
-    pub factor: Number,
-    pub offset: Number,
+pub(crate) struct Linear {
+    pub(crate) factor: Number,
+    pub(crate) offset: Number,
 }
 
 /// The magnitude a term is measured against: the factor of a proper term, the corresponding
@@ -364,7 +364,7 @@ fn log10(n: Number) -> f64 {
 /// The linear mapping between two commensurable terms, when there is one: between proper
 /// units and temperatures, between logarithmic units (`dB` to `Np`, `B[V]` to `B[mV]`),
 /// between tangent units or between square roots of the same unit.
-pub fn linear_conversion(from: &EvalResult, to: &EvalResult) -> Option<Linear> {
+pub(crate) fn linear_conversion(from: &EvalResult, to: &EvalResult) -> Option<Linear> {
     if let (Some(a), Some(b)) = (affine(from), affine(to)) {
         let offset = affine_value(Number::ZERO, a, b)?;
         return Some(Linear {
@@ -413,7 +413,11 @@ pub fn linear_conversion(from: &EvalResult, to: &EvalResult) -> Option<Linear> {
 /// Convert a measurement `value` from one commensurable term to another (UCUM §21.2,
 /// §22.4): exactly through decimal arithmetic when the mapping is linear, through the
 /// functions of the special units otherwise.
-pub fn convert_value(value: f64, from: &EvalResult, to: &EvalResult) -> Result<f64, UcumError> {
+pub(crate) fn convert_value(
+    value: f64,
+    from: &EvalResult,
+    to: &EvalResult,
+) -> Result<f64, UcumError> {
     let operands = || format!("{value:?}");
     // A function can map an infinite value to a finite one: 10^-∞ is 0
     if !value.is_finite() {
