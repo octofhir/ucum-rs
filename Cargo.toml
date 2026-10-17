@@ -1,6 +1,6 @@
 [package]
 name = "octofhir-ucum"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2024"
 authors = ["OctoFHIR Team <funyloony@gmail.com>"]
 license = "Apache-2.0"
@@ -11,11 +11,13 @@ description = "UCUM (Unified Code for Units of Measure) library for FHIRPath qua
 documentation = "https://docs.rs/octofhir-ucum"
 homepage = "https://github.com/octofhir/ucum-rs"
 include = [
-    "ucum-essence.xml",
-    "src",
-    "benches",
-    "README.md",
-    "build.rs",
+    "/ucum-essence.xml",
+    "/src",
+    "/benches",
+    "/build.rs",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE.md",
 ]
 
 [workspace]

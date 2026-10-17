@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-17
+
 The library now follows the UCUM specification (version 2.2) as a requirement: see the
 "Specification conformance" section of the README. Most of the changes below are breaking.
 
@@ -87,6 +89,18 @@ The library now follows the UCUM specification (version 2.2) as a requirement: s
 - The WASM `multiply_units` and `divide_units` are implemented (they returned "not yet
   implemented"); the duplicate `analyze_unit`, `search_units_text`, `units_comparable` and
   `evaluate_expression` are removed.
+
+### Performance
+
+- Validation, analysis and conversion are about 2.3 times faster than in 0.6.1.
+- Validating an invalid expression, which computes suggestions, takes ~38 µs instead of
+  ~280 µs: the edit distance uses one row instead of a matrix and no allocation per unit.
+
+### Packaging
+
+- The crate package holds 25 files: the `include` patterns of `Cargo.toml` matched every
+  `src` directory and `README.md` of the repository, `playground/node_modules` included.
+- Pushing a `v*` tag runs the release workflow.
 
 ### Removed
 
@@ -327,6 +341,8 @@ This represents the first major release of UCUM-RS, providing a complete, produc
 This release represents a major quality improvement, eliminating all warnings and test failures while enhancing the user experience and API consistency.
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-10-17
 
 ### Planned
 - Enhanced search algorithms with trie-based optimization
