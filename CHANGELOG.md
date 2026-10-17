@@ -62,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to multiply by its size (`multiply(1, "B", 2, "m")` was `2 m`). `get_canonical_units`
   returns a `SpecialUnitError` for them, as for the levels with a reference, instead of a
   factor that treats them as linear units.
+- The retired homeopathic potencies (`[hp'_X]`, `[hp'_C]`, `[hp'_M]`, `[hp'_Q]`) are levels
+  of a dilution instead of dimensionless units: `1 [hp'_C]` is `2 [hp'_X]` (was 1),
+  `3.[hp'_C]` is the dilution 1e-6 (was 3), and they no longer convert 1:1 to `1`, `%` or
+  the arbitrary `[hp_X]`... units. `%[slope]` is on the scale of `[p'diop]` (both are
+  `100tan(1 rad)`): they convert 1:1, and `%[slope]` no longer converts 1:1 to `%` or `1`.
+  The build fails on a special function it does not know; `[m/s2/Hz^(1/2)]` (`sqrt`) is
+  still a dimensionless unit of factor 1, since its dimension has a half exponent.
 
 ## [0.2.0] - 2025-07-22
 
