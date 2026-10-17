@@ -1,11 +1,13 @@
-//! A conversion must report a result that is not a number (infinite or NaN) instead of
-//! returning it as a success, and must not panic on a factor ratio that does not fit in a
-//! `Decimal`.
+//! A conversion reports a result that is not a number (infinite or NaN) instead of returning
+//! it as a success, and does not panic on factors of any magnitude.
 
 mod common;
 
 use common::assert_overflow;
-use octofhir_ucum::{AdvancedConversionContext, DecimalPrecision, convert_with_context};
+use octofhir_ucum::{
+    AdvancedConversionContext, DecimalPrecision, ErrorKind, RoundingMode, convert,
+    convert_with_context,
+};
 
 fn context(precision: DecimalPrecision) -> AdvancedConversionContext {
     AdvancedConversionContext {
@@ -15,27 +17,26 @@ fn context(precision: DecimalPrecision) -> AdvancedConversionContext {
 }
 
 #[test]
-fn conversion_to_a_zero_unit_is_an_error() {
-    let default = context(DecimalPrecision::Default);
-    // This used to be an infinite value
-    assert_overflow(convert_with_context(5.0, "1", "0", &default), "to zero");
-    // 0 * inf used to be NaN
-    assert_overflow(
-        convert_with_context(0.0, "1", "0", &default),
-        "zero to zero",
-    );
-    assert_overflow(convert_with_context(5.0, "0", "0", &default), "0/0");
+fn a_zero_unit_is_not_ucum() {
+    // A number is a positive integer (UCUM §8.1), so no unit has a factor of zero
+    for (from, to) in [("1", "0"), ("0", "1"), ("0.m", "m"), ("m", "m/0")] {
+        let err = convert(5.0, from, to).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::InvalidExpression { .. }),
+            "{from} to {to}: {:?}",
+            err.kind
+        );
+    }
 }
 
 #[test]
 fn converted_value_out_of_range_is_an_error() {
-    let default = context(DecimalPrecision::Default);
-    assert_overflow(
-        convert_with_context(1e300, "km", "nm", &default),
-        "out of range",
-    );
+    assert_overflow(convert(1e300, "km", "nm"), "out of range");
+    assert_overflow(convert(1e300, "Ym", "ym"), "out of range");
     for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert_overflow(convert_with_context(value, "km", "m", &default), "operand");
+        assert_overflow(convert(value, "km", "m"), "operand");
+        assert_overflow(convert(value, "Cel", "K"), "operand of a temperature");
+        assert_overflow(convert(value, "dB", "B"), "operand of a level");
     }
 }
 
@@ -43,7 +44,7 @@ fn converted_value_out_of_range_is_an_error() {
 fn rounding_does_not_hide_a_value_that_is_not_a_number() {
     for precision in [DecimalPrecision::Fixed(2), DecimalPrecision::Significant(3)] {
         assert_overflow(
-            convert_with_context(5.0, "1", "0", &context(precision)),
+            convert_with_context(1e300, "km", "nm", &context(precision)),
             "rounded",
         );
     }
@@ -51,33 +52,57 @@ fn rounding_does_not_hide_a_value_that_is_not_a_number() {
 
 #[test]
 fn error_names_the_conversion() {
-    let default = context(DecimalPrecision::Default);
-    let err = convert_with_context(5.0, "1", "0", &default).unwrap_err();
-    assert!(err.to_string().contains("conversion: 5.0 1 to 0"), "{err}");
+    let err = convert(1e300, "km", "nm").unwrap_err();
+    assert!(err.to_string().contains("1e300"), "{err}");
+}
+
+#[test]
+fn factors_of_any_magnitude_convert() {
+    // The ratio 1e48 does not fit in a `Decimal`
+    assert_eq!(convert(2.0, "Ym", "ym").unwrap(), 2e48);
+    assert_eq!(convert(2e48, "ym", "Ym").unwrap(), 2.0);
+    assert_eq!(convert(1.0, "Ym3", "ym3").unwrap(), 1e144);
 }
 
 #[test]
 fn finite_conversions_still_work() {
     let default = context(DecimalPrecision::Default);
+    assert_eq!(convert(1.0, "km", "m").unwrap(), 1000.0);
+    assert_eq!(convert(0.0, "km", "m").unwrap(), 0.0);
+    assert_eq!(convert(-2.5, "km", "m").unwrap(), -2500.0);
+    let rounded = convert_with_context(1234.5678, "m", "km", &context(DecimalPrecision::Fixed(2)));
+    assert_eq!(rounded.unwrap().value, 1.23);
+    let significant = convert_with_context(
+        1234.5678,
+        "m",
+        "km",
+        &context(DecimalPrecision::Significant(2)),
+    );
+    assert_eq!(significant.unwrap().value, 1.2);
     assert_eq!(
         convert_with_context(1.0, "km", "m", &default)
             .unwrap()
-            .value,
-        1000.0
+            .factor,
+        Some(1000.0)
     );
-    assert_eq!(
-        convert_with_context(0.0, "km", "m", &default)
+}
+
+#[test]
+fn rounding_modes_are_applied() {
+    let round = |rounding| {
+        let context = AdvancedConversionContext {
+            precision: DecimalPrecision::Fixed(0),
+            rounding,
+            ..Default::default()
+        };
+        convert_with_context(-1.6, "m", "m", &context)
             .unwrap()
-            .value,
-        0.0
-    );
-    // A zero source unit is a number
-    assert_eq!(
-        convert_with_context(5.0, "0", "1", &default).unwrap().value,
-        0.0
-    );
-    let rounded = convert_with_context(1234.5678, "m", "km", &context(DecimalPrecision::Fixed(2)));
-    assert_eq!(rounded.unwrap().value, 1.23);
+            .value
+    };
+    assert_eq!(round(RoundingMode::Nearest), -2.0);
+    assert_eq!(round(RoundingMode::Up), -1.0);
+    assert_eq!(round(RoundingMode::Down), -2.0);
+    assert_eq!(round(RoundingMode::Truncate), -1.0);
 }
 
 #[cfg(feature = "fhir")]
@@ -99,23 +124,19 @@ mod fhir {
     }
 
     #[test]
-    fn conversion_to_a_zero_unit_is_an_error() {
-        // These used to panic with "Division by zero"
+    fn a_zero_unit_is_not_ucum() {
         let five = FhirQuantity::with_ucum_code(5.0, "1");
-        assert_overflow(convert_quantity(&five, "0"), "convert_quantity");
+        assert!(convert_quantity(&five, "0").is_err());
         let zero_unit = FhirQuantity::with_ucum_code(5.0, "0");
-        assert_overflow(are_equivalent(&zero_unit, &five), "are_equivalent");
+        assert!(zero_unit.to_ucum_quantity().is_err());
+        assert!(are_equivalent(&zero_unit, &five).is_err());
     }
 
     #[test]
     fn factor_ratio_larger_than_a_decimal_is_converted() {
-        // The ratio 1e48 does not fit in a `Decimal`: these used to panic
         let quantity = FhirQuantity::with_ucum_code(2.0, "Ym");
         let converted = convert_quantity(&quantity, "ym").unwrap();
-        assert!(
-            (converted.value / 2e48 - 1.0).abs() < 1e-12,
-            "{converted:?}"
-        );
+        assert_eq!(converted.value, 2e48);
 
         let same = FhirQuantity::with_ucum_code(2e48, "ym");
         assert!(are_equivalent(&same, &quantity).unwrap());

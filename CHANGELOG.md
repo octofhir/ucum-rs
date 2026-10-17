@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The library now follows the UCUM specification (version 2.2) as a requirement: see the
+"Specification conformance" section of the README. Most of the changes below are breaking.
+
+### Changed
+
+- **Base units (UCUM §28)**: `Dimension` holds the exponents of the seven UCUM base units,
+  meter, second, gram, radian, kelvin, coulomb and candela, in this order
+  (`Dimension::BASE_UNITS`). The radian is a dimension of its own: `Hz` no longer converts
+  to `rad/s` nor `sr` to `rad`, `sr` is `rad2`. The mole is the number 6.02214076·10²³:
+  `mol` converts to `10*23`, and `mol/L` is commensurable with `/L`. Canonical units use
+  `g`, `m`, `s`, `rad`, `K`, `C` and `cd` (`C` is `C`, not `s.A`).
+- **Exact numbers of any magnitude**: factors are a new `Number` type, a decimal mantissa of
+  28 digits with an exponent, instead of a `rust_decimal::Decimal` limited to 1e-28..7.9e28
+  (the `precision` module is removed). `[h]`, `10*29`, `Tm3`, `Ym2`, `uu` and the 91
+  prefixed atoms that failed with a `PrecisionOverflow` are valid; `[m_e]` keeps all its
+  digits (it was 9e-28), so `[m_p]` is 1836.15 `[m_e]` (was 1858.44), and `[k]` is
+  1.380649e-23 `J/K` (was 1.38065e-23). Registry factors are exact `Number`s computed from
+  the XML at build time.
+- **Special units (UCUM §21-23)** are defined by their function, its inverse, their
+  corresponding proper unit and a scale (`SpecialKind` names the function):
+  - they convert to and from their corresponding proper units: 7 `[pH]` is 1e-7 `mol/L`,
+    20 `dB[SPL]` is 2e-4 `Pa`, 0 `B[V]` is 1 `V`, 1 `B` is 10, 100 `[p'diop]` is π/4 `rad`,
+    100 `%[slope]` is 45 `deg`, and `is_comparable` agrees with these conversions;
+  - a prefix or a number scales them (§22.3): `20.dB` is 2 `B` (was the ratio 100), `2.Cel`
+    and `2.B[V]` are valid (were rejected);
+  - they take part in no product, quotient or power (§22.1): `B2`, `/dB`, `dB.dB`,
+    `[p'diop]2` and `Cel/h` are `SpecialUnitError`s (the levels without a reference were
+    accepted and converted to wrong numbers);
+  - temperatures convert exactly: 32 `[degF]` is 0 `Cel`, 100 `Cel` is 212 `[degF]`.
+- **Arbitrary units (UCUM §24-25)** are commensurable with no other unit: `[IU]` no longer
+  converts to `1` (was 1) or `%` (was 100) or `[arb'U]` (was 1), and `is_comparable` and
+  `fhir::are_equivalent` agree. A term converts to a term with the same arbitrary units:
+  `[IU]/mL` to `[IU]/L`, `k[IU]` to `[IU]`; `[IU]` is `[iU]` as the tables define it.
+  Canonical units, `multiply` and `divide_by` keep the arbitrary atoms (`[IU]/mL` is
+  `m-3.[iU]`).
+- **Strict syntax (UCUM §1-15)**: white space, characters outside ASCII 33-126 (including
+  `µ`), the factor `0`, `^` as an exponent operator (`m^2`), several annotations
+  (`m{a}{b}`), an empty or nested annotation, a leading solidus inside parentheses (`(/m)`)
+  and the empty string are errors in every function, not only in `validate`. A backslash in
+  an annotation is a character like any other (`{a\}` is valid).
+- **One syntax tree**: `UnitExpr` (formerly `OwnedUnitExpr`) owns its symbols; the borrowing
+  `UnitExpr<'a>`, `UnitFactor` and `OwnedUnitFactor` are gone. Products are lists of
+  terms, `10*3` is the atom `10*` to the power 3, numbers are exact `Number`s, annotations
+  are kept for display (`Annotation`, `Annotated`) and a leading solidus is `Reciprocal`.
+  `evaluate` takes this tree (`evaluate_owned` is removed).
+- `EvalResult` has `arbitrary` atoms and an optional `special` term instead of an `offset`.
+  `UnitAnalysis` has `scale`, `arbitrary` and `special` instead of `has_offset`.
+  `AdvancedConversionResult::factor` and `offset` are `Option`s, `None` for a conversion
+  through a non-linear function.
+- **Case insensitive codes (UCUM §3.4)**: `Case::Insensitive` with `validate_with_case`,
+  `evaluate_with_case` and `AdvancedConversionContext::case` reads `PAL`, `MG` (milligram)
+  and `[DEGF]`; the CLI has `--case-insensitive`. `UnitRecord` and `Prefix` have their case
+  insensitive codes, print symbols, class, `is_metric` and `is_base`.
+- `find_unit` returns unit atoms only: it no longer returns the `g` record for `mg` (dropping
+  the prefix) or `[in_i]` for `k[in_i]` (a prefix on a non-metric unit). `lookup_unit`
+  returns the prefix and the atom of a simple unit, following the longest prefix rule of
+  §4.4.
+- `get_defined_forms` returns the unit atoms commensurable with an expression (it returned
+  `Pa` for `a` and `cd` for `d`). `ConceptKind::PrefixedUnit` is removed; `classify_unit` is
+  public and no longer calls every bracketed unit arbitrary.
+- `validate_in_property` takes the properties of the UCUM tables (`electric current`,
+  `plane angle`, `pressure`), checks commensurability with their units and returns
+  `Ok(false)` on a mismatch.
+- `validate_canonical_units` compares units by their semantics (`N` and `kg.m.s-2`, `C` and
+  `A.s` are equal), not by their spelling.
+- `optimize_expression` and `simplify_expression` return equal expressions: they changed the
+  magnitude (`dyn` was `N`, `km.s/s` was `m`). `optimize_expression("g.m2.s-2")` is `mJ`.
+- Display names come from the UCUM tables with their prefixes, and compound denominators
+  are grouped: `kg/(m.s)` is "(kilogram) / ((meter) * (second))". `display_name` gives the
+  display name of a code, "(unity)" for an empty one.
+- `get_model` reports the version and revision date of the bundled tables (2.2,
+  2024-06-17), which are also `UCUM_VERSION` and `UCUM_REVISION_DATE`; `validate_ucum`
+  checks for the UCUM base units.
+- The `[IR]` property keeps its "®"; character references are resolved in every text of the
+  tables.
+- `fhir::FhirQuantity::to_ucum_quantity` validates the code, and `ToFhirQuantity` keeps
+  annotations (`kg{dry}`).
+- The WASM `multiply_units` and `divide_units` are implemented (they returned "not yet
+  implemented"); the duplicate `analyze_unit`, `search_units_text`, `units_comparable` and
+  `evaluate_expression` are removed.
+
+### Removed
+
+- Dead code: the special unit handlers (`special_units`), the evaluation cache and prefix
+  trie (`performance`), `MeasurementContext`, `Span`, `BaseUnit`, `DerivedUnit`, three error
+  kinds that were never built, the `eval` alias, `SuggestionEngine` from the public API,
+  and the `temperature_scale` and `use_special_units` conversion options, which did
+  nothing. `AdvancedConversionContext::rounding` is now applied.
+
 ### Fixed
 
 - `multiply`, `divide_by` and `unit_divide` return a `PrecisionOverflow` error instead of an
@@ -29,53 +118,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   0 `Cel` is 273.15 `K`, not 0 `K`.
 - The `convert` subcommand of the CLI and `convert` in the WASM package use
   `convert_with_context`. The CLI accepts a negative value (`convert -40 Cel "[degF]"`).
-- `convert_with_context` names the two units in its error for different dimensions.
+- `convert_with_context` names the two units in its error for units that are not
+  commensurable.
 - Conversions between units with a decimal factor are exact: `1 mg` is `0.001 g`, not
-  `0.0010000000000000002 g`, and `1 [lb_av]` is `453.59237 g`. `precision::from_f64` gives
-  the shortest decimal of the `f64` (`0.001`) instead of its binary expansion, and
-  `precision::to_f64` the nearest `f64`. The registry evaluates unit definitions in decimal at
-  build time, so 28 factors (`[lb_av]`, `[oz_tr]`, `[yd_br]`, ...) lose their `f64` rounding
-  error.
-- Conversions between levels apply the prefix and the base of the logarithm: `1 dB` is
-  `0.1 B` (was `1 B`), `1 B` is `ln 10 = 2.303 Np` (was `1 Np`). The factor of a level is its
-  size in bels (`analyse("dB").factor` is 0.1, `Np` is lg e). A conversion between a level
-  (`B`, `Np`) or a prism diopter and a unit on another scale (`dB` to `1`) is a
-  `ConversionError` instead of a 1:1 result.
-- Levels with a reference (`B[SPL]`, `B[V]`, `B[mV]`, `B[uV]`, `B[10.nV]`, `B[W]`, `B[kW]`)
-  have the dimension of their reference instead of being dimensionless, and convert between
-  references: `1 B[V]` is `7 B[mV]` (was `1 B[mV]`). They no longer convert 1:1 to a level of
-  another quantity (`B[SPL]` to `B[V]`), to `B` or to `1`, nor 1:100 to `%`, and
-  `is_comparable("B[V]", "mV")` is true (UCUM §21.3). They take no part in a term
-  (`B[mV].m`, `m/dB[SPL]`, `B[V]2` and `2.B[V]` are a `SpecialUnitError`), nor in
-  `multiply`, `divide_by`, `unit_multiply` or `unit_divide`, and `get_canonical_units`
-  returns a `SpecialUnitError` for them. `analyse("B[V]").offset` is the level of 1 V in the
-  base units, in bels (6), and `has_offset` is true for every level with a reference.
-- `bit_s` is a level of base 2 (`ld(1 1)`) instead of a dimensionless unit: `1 bit_s` is
-  `lg 2 = 0.301 B` (was `1 B`), `8.bit_s` is the ratio 256 (was 8), and it no longer converts
-  1:1 to `bit` or `1`. `[pH]` is a level of a concentration (`pH(1 mol/l)`, a size of -1 B)
-  like `B[V]`: `is_comparable("[pH]", "mol/l")` is true, and it no longer converts 1:1 to
-  `1`, `B` or 1:100 to `%`. `SpecialKind` has a new `Log2` variant (a breaking change for an
-  exhaustive `match`), and the registry factor of every level is its size in bels (`Np` is
-  lg e, was 1).
-- `multiply` and `divide_by` reject a level (`B`, `dB`, `Np`, `bit_s`) or a prism diopter
-  with a `ConversionError` (UCUM §22.1), as `unit_multiply` and `unit_divide` do: they used
-  to multiply by its size (`multiply(1, "B", 2, "m")` was `2 m`). `get_canonical_units`
-  returns a `SpecialUnitError` for them, as for the levels with a reference, instead of a
-  factor that treats them as linear units.
-- The retired homeopathic potencies (`[hp'_X]`, `[hp'_C]`, `[hp'_M]`, `[hp'_Q]`) are levels
-  of a dilution instead of dimensionless units: `1 [hp'_C]` is `2 [hp'_X]` (was 1),
-  `3.[hp'_C]` is the dilution 1e-6 (was 3), and they no longer convert 1:1 to `1`, `%` or
-  the arbitrary `[hp_X]`... units. `%[slope]` is on the scale of `[p'diop]` (both are
-  `100tan(1 rad)`): they convert 1:1, and `%[slope]` no longer converts 1:1 to `%` or `1`.
-  The build fails on a special function it does not know; `[m/s2/Hz^(1/2)]` (`sqrt`) is
-  still a dimensionless unit of factor 1, since its dimension has a half exponent.
-- `[m/s2/Hz^(1/2)]` (`sqrt(1 m2/s4/Hz)`, of dimension L.T-3/2) is isolated by a new
-  `SpecialKind::Sqrt`, since the dimension vector cannot hold its half exponents (#15). It is
-  still a valid code, but converts and compares only to an expression with the same power of
-  it: it no longer converts to `1` (was 1) or `%` (was 100), `is_comparable` with `1` is
-  false, and `analyse` no longer reports it dimensionless. `unit_multiply`, `multiply` and the
-  other arithmetic reject it, `get_canonical_units` and `validate_in_property` return a
-  `SpecialUnitError`.
+  `0.0010000000000000002 g`, and `1 [lb_av]` is `453.59237 g`. An `f64` input is read from
+  its shortest decimal representation, and the result is rounded once.
+- Levels convert with their prefix, the base of their logarithm and their reference: `1 dB`
+  is `0.1 B` (was `1 B`), `1 B` is `ln 10 = 2.303 Np` (was `1 Np`), `1 B[V]` is `7 B[mV]`
+  (was `1 B[mV]`), `1 bit_s` is `lg 2 B` and `1 [hp'_C]` is `2 [hp'_X]` (were 1). Levels with
+  a reference (`B[V]`, `B[SPL]`, `[pH]`) have the dimension of their reference, and none of
+  them converts 1:1 to `1` or 1:100 to `%`. `%[slope]` is on the scale of `[p'diop]`.
+- `multiply` and `divide_by` reject special units (UCUM §22.1): `multiply(1, "B", 2, "m")`
+  was `2 m`.
+- `[m/s2/Hz^(1/2)]` (`sqrt(1 m2/s4/Hz)`) is a special unit of the function `sqrt` (#15):
+  3 `[m/s2/Hz^(1/2)]` is 9 `m2/s4/Hz`, and it no longer converts to `1` or `%`.
 
 ## [0.2.0] - 2025-07-22
 

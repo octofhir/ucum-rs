@@ -275,32 +275,32 @@ export default function UnitInfoTab() {
       );
     }
 
-    if (info.has_offset !== undefined) {
+    if (info.expression !== undefined) {
       rows.push(
-        <Table.Tr key="has_offset">
+        <Table.Tr key="special">
           <Table.Td fw={500} c={isDark ? 'gray.3' : 'gray.7'}>Special Unit</Table.Td>
           <Table.Td>
             <Badge 
-              color={info.has_offset ? 'orange' : 'gray'} 
+              color={info.special ? 'orange' : 'gray'} 
               variant="light"
               style={{
                 backgroundColor: isDark 
-                  ? info.has_offset 
+                  ? info.special 
                     ? theme.colors.orange[9] 
                     : theme.colors.gray[8]
-                  : info.has_offset 
+                  : info.special 
                     ? theme.colors.orange[0] 
                     : theme.colors.gray[1],
                 color: isDark 
-                  ? info.has_offset 
+                  ? info.special 
                     ? theme.colors.orange[3] 
                     : theme.colors.gray[4]
-                  : info.has_offset 
+                  : info.special 
                     ? theme.colors.orange[7] 
                     : theme.colors.gray[6],
               }}
             >
-              {info.has_offset ? 'Has Offset' : 'No Offset'}
+              {info.special ? info.special : 'Proper unit'}
             </Badge>
           </Table.Td>
         </Table.Tr>

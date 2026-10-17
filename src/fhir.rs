@@ -5,13 +5,9 @@
 //! It's only available when the "fhir" feature is enabled.
 
 use crate::prelude::*;
-use crate::{
-    Quantity as UcumQuantity, UcumError, check_same_scale, conversion_terms, evaluate_owned,
-    parse_expression,
-};
+use crate::{Quantity as UcumQuantity, UcumError, convert_evaluated, evaluate, parse_expression};
 use thiserror::Error;
 
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Error type for FHIR integration.
@@ -41,8 +37,7 @@ pub enum FhirError {
 /// the unit may be a UCUM code.
 ///
 /// See the [FHIR Quantity](http://hl7.org/fhir/datatypes.html#Quantity) documentation for more details.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FhirQuantity {
     /// The value of the quantity.
     pub value: f64,
@@ -132,7 +127,7 @@ impl FhirQuantity {
     /// Returns an error if:
     /// - The system is not `http://unitsofmeasure.org`
     /// - The code is missing
-    /// - The code is not a valid UCUM code
+    /// - The code is not a valid UCUM code (case sensitive)
     pub fn to_ucum_quantity(&self) -> Result<UcumQuantity, FhirError> {
         // Check if this is a UCUM quantity
         if !self.is_ucum() {
@@ -144,8 +139,8 @@ impl FhirQuantity {
         // Get the UCUM code
         let code = self.code.as_ref().ok_or(FhirError::MissingField("code"))?;
 
-        // Parse the UCUM expression
         let expr = parse_expression(code)?;
+        evaluate(&expr)?;
 
         // Create a UCUM Quantity
         Ok(UcumQuantity {
@@ -165,16 +160,6 @@ pub trait ToFhirQuantity {
     fn to_fhir_quantity(&self) -> Result<FhirQuantity, FhirError>;
 }
 
-/// Trait for converting from a FHIR Quantity.
-pub trait FromFhirQuantity<T> {
-    /// Convert from a FHIR Quantity.
-    ///
-    /// # Returns
-    ///
-    /// A Result containing the converted value, or an error if the conversion fails.
-    fn from_fhir_quantity(quantity: &FhirQuantity) -> Result<T, FhirError>;
-}
-
 impl ToFhirQuantity for UcumQuantity {
     fn to_fhir_quantity(&self) -> Result<FhirQuantity, FhirError> {
         // Convert the UnitExpr to a string
@@ -191,46 +176,30 @@ impl ToFhirQuantity for UcumQuantity {
     }
 }
 
-impl FromFhirQuantity<UcumQuantity> for UcumQuantity {
-    fn from_fhir_quantity(quantity: &FhirQuantity) -> Result<UcumQuantity, FhirError> {
-        quantity.to_ucum_quantity()
-    }
-}
-
+/// Convert a FHIR Quantity with a UCUM code to another UCUM unit, as `crate::convert`
+/// does: special units through their functions, arbitrary units only to the same arbitrary
+/// atoms. The comparator is kept.
+///
+/// ```
+/// use octofhir_ucum::fhir::{FhirQuantity, convert_quantity};
+///
+/// let quantity = FhirQuantity::with_ucum_code(37.0, "Cel");
+/// let converted = convert_quantity(&quantity, "[degF]").unwrap();
+/// assert!((converted.value - 98.6).abs() < 1e-9);
+/// ```
 pub fn convert_quantity(
     quantity: &FhirQuantity,
     target_unit: &str,
 ) -> Result<FhirQuantity, FhirError> {
-    let ucum_quantity = quantity.to_ucum_quantity()?;
+    let source = quantity.to_ucum_quantity()?;
     let target_expr = parse_expression(target_unit)?;
-    let source_eval = evaluate_owned(&ucum_quantity.unit)?;
-    let target_eval = evaluate_owned(&target_expr)?;
-
-    if source_eval.dim != target_eval.dim {
-        return Err(FhirError::InvalidCode(format!(
-            "Units are not commensurable: {} and {}",
-            ucum_quantity.unit, target_unit
-        )));
-    }
-    check_same_scale(
-        &ucum_quantity.unit,
-        &target_expr,
-        &ucum_quantity.unit.to_string(),
+    let (value, _) = convert_evaluated(
+        source.value,
+        &source.unit.to_string(),
+        &evaluate(&source.unit)?,
         target_unit,
+        &evaluate(&target_expr)?,
     )?;
-
-    let operands = || {
-        format!(
-            "{:?} {} to {target_unit}",
-            ucum_quantity.value, ucum_quantity.unit
-        )
-    };
-    let (factor, offset) = conversion_terms(&source_eval, &target_eval, operands)?;
-    let value = ucum_quantity.value * factor + offset;
-    if !value.is_finite() {
-        return Err(UcumError::precision_overflow("conversion", &operands()).into());
-    }
-
     Ok(FhirQuantity {
         value,
         unit: Some(target_unit.to_string()),
@@ -240,33 +209,25 @@ pub fn convert_quantity(
     })
 }
 
+/// Whether two FHIR Quantities are the same measurement: `b` converted to the unit of `a`
+/// equals `a` to a relative tolerance of 1e-6.
+///
+/// # Errors
+///
+/// Units that are not commensurable, or codes that are not UCUM.
 pub fn are_equivalent(a: &FhirQuantity, b: &FhirQuantity) -> Result<bool, FhirError> {
     let a_ucum = a.to_ucum_quantity()?;
     let b_ucum = b.to_ucum_quantity()?;
-    let a_eval = evaluate_owned(&a_ucum.unit)?;
-    let b_eval = evaluate_owned(&b_ucum.unit)?;
-
-    if a_eval.dim != b_eval.dim {
-        return Err(FhirError::InvalidCode(format!(
-            "Units are not commensurable: {} and {}",
-            a_ucum.unit, b_ucum.unit
-        )));
-    }
-    check_same_scale(
-        &b_ucum.unit,
-        &a_ucum.unit,
+    let (b_value, _) = convert_evaluated(
+        b_ucum.value,
         &b_ucum.unit.to_string(),
+        &evaluate(&b_ucum.unit)?,
         &a_ucum.unit.to_string(),
+        &evaluate(&a_ucum.unit)?,
     )?;
-
-    // `b` expressed in the unit of `a`
-    let operands = || format!("{} to {}", b_ucum.unit, a_ucum.unit);
-    let (factor, offset) = conversion_terms(&b_eval, &a_eval, operands)?;
-    let b_value = b_ucum.value * factor + offset;
     const EPSILON: f64 = 1e-6;
     let diff = (a_ucum.value - b_value).abs();
     let max = a_ucum.value.abs().max(b_value.abs());
-
     if max < EPSILON {
         Ok(diff < EPSILON)
     } else {

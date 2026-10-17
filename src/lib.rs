@@ -1,9 +1,7 @@
-//! UCUM Core Library – Rust 2024 Edition
+//! The Unified Code for Units of Measure (UCUM): parsing, validation, comparison and
+//! conversion of unit expressions, following the UCUM specification (version 2.2).
 //!
-//! This crate provides parsing, validation and conversion utilities for the
-//! Unified Code for Units of Measure (UCUM). It is `no_std` + `alloc`
-//! compatible (disable default features) and suitable for both embedded and
-//! server environments.
+//! The crate is `no_std` + `alloc` compatible (disable default features).
 
 #![no_std]
 #![allow(clippy::result_large_err)] // UcumError is necessarily large due to comprehensive error context
@@ -18,59 +16,68 @@ mod display;
 mod error;
 mod evaluator;
 mod math;
+mod number;
 mod parser;
-pub mod precision;
 mod prelude;
 mod registry;
-pub mod suggestions;
+mod suggestions;
 mod types;
 
-pub use crate::ast::{OwnedUnitExpr, OwnedUnitFactor, UnitExpr, UnitFactor};
-pub use crate::display::{generate_display_name, generate_display_name_owned};
-pub use crate::error::{ErrorKind, UcumError};
-pub use crate::evaluator::{EvalResult, evaluate, evaluate_owned};
-pub use crate::parser::parse_expression;
-pub use crate::suggestions::SuggestionEngine;
-pub use crate::types::{Dimension, Prefix, Quantity, UnitRecord};
+#[cfg(feature = "fhir")]
+pub mod fhir;
 
-// Extended Functionality - functions are defined below and automatically exported
+pub use crate::ast::UnitExpr;
+pub use crate::display::generate_display_name;
+pub use crate::error::{ErrorKind, UcumError};
+pub use crate::evaluator::{
+    Case, EvalResult, SpecialTerm, evaluate, evaluate_with_case, lookup_unit,
+};
+pub use crate::number::Number;
+pub use crate::parser::parse_expression;
+pub use crate::registry::{UCUM_REVISION_DATE, UCUM_VERSION};
+pub use crate::types::{Dimension, Prefix, Quantity, SpecialKind, UnitRecord};
 
 use crate::prelude::*;
+use crate::suggestions::SuggestionEngine;
 use alloc::collections::BTreeSet;
 use hashbrown::HashSet;
-
-// Import precision utilities for internal use
-use crate::precision::{Number, NumericOps, to_f64};
 
 /// Shared suggestion engine used to enrich validation errors.
 static SUGGESTION_ENGINE: spin::LazyLock<SuggestionEngine> =
     spin::LazyLock::new(SuggestionEngine::new);
 
-/// Lookup a unit by code using the generated registry.
-pub fn find_unit(code: &str) -> Option<&'static crate::types::UnitRecord> {
-    registry::find_unit(code)
+// ============================================================================
+// Registry
+// ============================================================================
+
+/// The unit atom with this case sensitive code (`m`, `[in_i]`), without a prefix. Use
+/// `lookup_unit` for a simple unit with a prefix (`km`).
+pub fn find_unit(code: &str) -> Option<&'static UnitRecord> {
+    evaluator::find_atom(code, Case::Sensitive)
 }
 
-/// Get all units from the registry.
-pub fn get_all_units() -> &'static [crate::types::UnitRecord] {
+/// The prefix with this case sensitive symbol (`k`, `da`).
+pub fn find_prefix(symbol: &str) -> Option<&'static Prefix> {
+    evaluator::find_prefix(symbol, Case::Sensitive)
+}
+
+/// All unit atoms of the UCUM tables, sorted by code.
+pub fn get_all_units() -> &'static [UnitRecord] {
     registry::UNITS
 }
 
-/// Lookup a prefix by symbol.
-pub fn find_prefix(sym: &str) -> Option<&'static Prefix> {
-    registry::find_prefix(sym)
+/// All prefixes of the UCUM tables, sorted by symbol.
+pub fn get_all_prefixes() -> &'static [Prefix] {
+    registry::PREFIXES
 }
 
 // ============================================================================
-// Core API Enhancement - Validation Methods
+// Validation and analysis
 // ============================================================================
 
-/// Validate a UCUM expression string.
-///
-/// Returns `Ok(())` if the expression is valid, or an error describing why it's invalid.
-/// This performs comprehensive validation including parsing, unit lookup, and dimensional analysis.
-///
-/// # Examples
+/// Validate a UCUM expression with case sensitive symbols: its syntax (UCUM §1-10) and its
+/// semantics (every symbol is a unit, prefixes are on metric units only, special units take
+/// part in no algebra).
 ///
 /// ```
 /// use octofhir_ucum::validate;
@@ -79,466 +86,322 @@ pub fn find_prefix(sym: &str) -> Option<&'static Prefix> {
 /// assert!(validate("kg.m/s2").is_ok());
 /// assert!(validate("invalid_unit").is_err());
 /// ```
-#[allow(clippy::result_large_err)]
 pub fn validate(expression: &str) -> Result<(), UcumError> {
-    // An empty string is not a valid term (the unity is written "1"), although
-    // `parse_expression` reads it as the unity
-    if expression.trim().is_empty() {
-        return Err(UcumError::invalid_expression(
-            "Empty expression: the unity is written \"1\"",
-        ));
-    }
-
-    // Create suggestion engine for enhanced error messages
-    // First, try to parse the expression
-    let parsed = match parse_expression(expression) {
-        Ok(parsed) => parsed,
-        Err(e) => {
-            // Enhance parsing errors with suggestions
-            let enhanced_error = match &e.kind {
-                ErrorKind::InvalidExpression { reason } => UcumError::invalid_expression(reason)
-                    .with_suggestions(SUGGESTION_ENGINE.suggest_corrections(expression))
-                    .with_context(format!("While parsing UCUM expression: '{expression}'")),
-                _ => e,
-            };
-            return Err(enhanced_error);
-        }
-    };
-
-    // Then evaluate it to ensure all units are valid and dimensions are consistent
-    match crate::evaluator::evaluate_owned(&parsed) {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            // Enhance evaluation errors with suggestions
-            let enhanced_error = match &e.kind {
-                ErrorKind::UnitNotFound { unit, .. } => {
-                    let suggestions = SUGGESTION_ENGINE.suggest_corrections(unit);
-                    UcumError::unit_not_found(unit)
-                        .with_suggestions(suggestions)
-                        .with_context(format!("In expression: '{expression}'"))
-                }
-                ErrorKind::DimensionMismatch {
-                    expected,
-                    found,
-                    operation,
-                } => UcumError::dimension_mismatch(*expected, *found, operation)
-                    .with_context(format!("In expression: '{expression}'"))
-                    .with_suggestion(
-                        "Check that all units in the expression have compatible dimensions",
-                    ),
-                _ => e,
-            };
-            Err(enhanced_error)
-        }
-    }
+    validate_with_case(expression, Case::Sensitive)
 }
 
-/// Analyse a UCUM expression and return detailed information about it.
+/// Validate a UCUM expression, with case sensitive or case insensitive symbols (UCUM §3.4).
 ///
-/// Returns comprehensive information about the unit including its canonical form,
-/// dimension vector, factor, and whether it has any special properties.
+/// ```
+/// use octofhir_ucum::{Case, validate_with_case};
 ///
-/// # Examples
+/// assert!(validate_with_case("PAL", Case::Insensitive).is_ok());
+/// assert!(validate_with_case("PAL", Case::Sensitive).is_err());
+/// ```
+pub fn validate_with_case(expression: &str, case: Case) -> Result<(), UcumError> {
+    let parsed = parse_expression(expression).map_err(|e| {
+        let suggestions = SUGGESTION_ENGINE.suggest_corrections(expression);
+        e.with_suggestions(suggestions)
+            .with_context(format!("While parsing UCUM expression: '{expression}'"))
+    })?;
+    evaluate_with_case(&parsed, case).map(|_| ()).map_err(|e| {
+        let suggestions = match (&e.kind, case) {
+            (ErrorKind::UnitNotFound { unit }, Case::Sensitive) => {
+                SUGGESTION_ENGINE.suggest_corrections(unit)
+            }
+            _ => Vec::new(),
+        };
+        e.with_suggestions(suggestions)
+            .with_context(format!("In expression: '{expression}'"))
+    })
+}
+
+/// Parse and evaluate an expression with case sensitive symbols.
+fn eval(expression: &str) -> Result<(UnitExpr, EvalResult), UcumError> {
+    let parsed = parse_expression(expression)?;
+    let result = evaluate(&parsed)?;
+    Ok((parsed, result))
+}
+
+/// Analyse a UCUM expression: its dimension, magnitude, arbitrary atoms and special unit.
 ///
 /// ```
 /// use octofhir_ucum::analyse;
 ///
 /// let analysis = analyse("km/h").unwrap();
-/// println!("Dimension: {:?}", analysis.dimension);
-/// println!("Factor: {}", analysis.factor);
+/// assert_eq!(analysis.dimension.to_string(), "L.T-1");
+/// assert!((analysis.factor - 1000.0 / 3600.0).abs() < 1e-15);
 /// ```
-#[allow(clippy::result_large_err)]
 pub fn analyse(expression: &str) -> Result<UnitAnalysis, UcumError> {
-    let parsed = parse_expression(expression)?;
-    let result = crate::evaluator::evaluate_owned(&parsed)?;
-    let has_offset = result.offset != Number::zero() || has_referenced_level(&parsed);
-    // `[m/s2/Hz^(1/2)]` has a dimensionless record, but not a dimensionless dimension
-    let is_dimensionless = result.dim == Dimension([0; 7]) && sqrt_power(&parsed) == 0;
-
+    let (parsed, result) = eval(expression)?;
+    let (scale, offset) = match result.special {
+        Some(special) => {
+            let offset = special
+                .unit
+                .special
+                .offset()
+                .and_then(|o| o.checked_mul(result.factor))
+                .unwrap_or(Number::ZERO);
+            (special.scale.to_f64(), offset.to_f64())
+        }
+        None => (1.0, 0.0),
+    };
     Ok(UnitAnalysis {
         expression: expression.to_string(),
         parsed_ast: parsed,
         dimension: result.dim,
-        factor: to_f64(result.factor),
-        offset: to_f64(result.offset),
-        is_dimensionless,
-        has_offset,
+        factor: result.factor.to_f64(),
+        scale,
+        offset,
+        is_dimensionless: result.dim.is_dimensionless() && result.arbitrary.is_empty(),
+        arbitrary: result.arbitrary,
+        special: result.special.map(|s| s.unit.special),
     })
 }
 
-/// Detailed analysis result for a UCUM expression.
+/// Detailed analysis of a UCUM expression.
 #[derive(Debug, Clone)]
 pub struct UnitAnalysis {
     /// Original expression string
     pub expression: String,
-    /// Parsed AST representation
-    pub parsed_ast: OwnedUnitExpr,
-    /// Dimension vector
+    /// Parsed expression
+    pub parsed_ast: UnitExpr,
+    /// Dimension; for a special unit, of its corresponding proper unit
     pub dimension: Dimension,
-    /// Conversion factor to base units
+    /// Magnitude in base units; for a special unit, of its corresponding proper unit
     pub factor: f64,
-    /// Offset to the base units: the offset of a temperature unit, or for a level with a
-    /// reference (`B[V]`), the level of that reference in the base units, in bels
+    /// Scale of a special unit (UCUM §22.4): 0.1 for `dB`, 2 for `2.Cel`; 1 otherwise
+    pub scale: f64,
+    /// For a temperature, the proper quantity at 0 in base units: 273.15 for `Cel`, so that
+    /// a value `r` is `factor × scale × r + offset` kelvins; 0 otherwise
     pub offset: f64,
-    /// Whether the unit is dimensionless
+    /// Arbitrary atoms and their exponents (`[IU]/mL` has `[("[iU]", 1)]`)
+    pub arbitrary: Vec<(&'static str, i32)>,
+    /// The kind of the special unit, if the expression is one
+    pub special: Option<SpecialKind>,
+    /// Whether the unit has no dimension and no arbitrary atom
     pub is_dimensionless: bool,
-    /// Whether the unit converts with an offset: a temperature unit, or a level with a
-    /// reference, even when that offset is 0 (`B[mV]`). Such a unit takes no part in
-    /// arithmetic
-    pub has_offset: bool,
 }
 
-/// Validate that a unit expression is appropriate for a given property.
-///
-/// This validates that the unit has the correct dimension for the specified property.
-/// Properties correspond to physical quantities like "length", "mass", "time", etc.
-///
-/// # Examples
-///
-/// ```
-/// use octofhir_ucum::validate_in_property;
-///
-/// assert!(validate_in_property("m", "length").unwrap());
-/// assert!(validate_in_property("kg", "mass").unwrap());
-/// assert!(validate_in_property("kg", "length").is_err());
-/// ```
-#[allow(clippy::result_large_err)]
-pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, UcumError> {
-    let analysis = analyse(expression)?;
-    if sqrt_power(&analysis.parsed_ast) != 0 {
-        return Err(UcumError::special_unit_error(
-            expression,
-            "[m/s2/Hz^(1/2)] has a dimension with half exponents (L.T-3/2), which no property has",
-        ));
-    }
-
-    // Define expected dimensions for common properties
-    let expected_dimension = match property.to_lowercase().as_str() {
-        "length" => Dimension([0, 1, 0, 0, 0, 0, 0]),      // L
-        "mass" => Dimension([1, 0, 0, 0, 0, 0, 0]),        // M
-        "time" => Dimension([0, 0, 1, 0, 0, 0, 0]),        // T
-        "current" => Dimension([0, 0, 0, 1, 0, 0, 0]),     // I
-        "temperature" => Dimension([0, 0, 0, 0, 1, 0, 0]), // Θ
-        "amount" => Dimension([0, 0, 0, 0, 0, 1, 0]),      // N
-        "luminosity" => Dimension([0, 0, 0, 0, 0, 0, 1]),  // J
-        "area" => Dimension([0, 2, 0, 0, 0, 0, 0]),        // L²
-        "volume" => Dimension([0, 3, 0, 0, 0, 0, 0]),      // L³
-        "velocity" => Dimension([0, 1, -1, 0, 0, 0, 0]),   // LT⁻¹
-        "acceleration" => Dimension([0, 1, -2, 0, 0, 0, 0]), // LT⁻²
-        "force" => Dimension([1, 1, -2, 0, 0, 0, 0]),      // MLT⁻²
-        "energy" => Dimension([1, 2, -2, 0, 0, 0, 0]),     // ML²T⁻²
-        "power" => Dimension([1, 2, -3, 0, 0, 0, 0]),      // ML²T⁻³
-        "pressure" => Dimension([1, -1, -2, 0, 0, 0, 0]),  // ML⁻¹T⁻²
-        "frequency" => Dimension([0, 0, -1, 0, 0, 0, 0]),  // T⁻¹
-        "voltage" => Dimension([1, 2, -3, -1, 0, 0, 0]),   // ML²T⁻³I⁻¹
-        "resistance" => Dimension([1, 2, -3, -2, 0, 0, 0]), // ML²T⁻³I⁻²
-        "capacitance" => Dimension([-1, -2, 4, 2, 0, 0, 0]), // M⁻¹L⁻²T⁴I²
-        "inductance" => Dimension([1, 2, -2, -2, 0, 0, 0]), // ML²T⁻²I⁻²
-        "dimensionless" => Dimension([0, 0, 0, 0, 0, 0, 0]), // 1
-        _ => {
-            let available_properties = vec![
-                "length",
-                "mass",
-                "time",
-                "current",
-                "temperature",
-                "amount",
-                "luminosity",
-                "area",
-                "volume",
-                "velocity",
-                "acceleration",
-                "force",
-                "energy",
-                "power",
-                "pressure",
-                "frequency",
-                "voltage",
-                "resistance",
-                "capacitance",
-                "inductance",
-                "dimensionless",
-            ];
-
-            // Find similar properties using string similarity
-            let mut similar_properties = Vec::new();
-            for prop in &available_properties {
-                let similarity =
-                    crate::suggestions::SuggestionEngine::string_similarity(property, prop);
-                if similarity > 0.6 {
-                    similar_properties.push(format!("'{prop}'"));
-                }
-            }
-
-            let error = UcumError::invalid_property(property)
-                .with_suggestions(similar_properties)
-                .with_context(format!(
-                    "Available properties: {}",
-                    available_properties.join(", ")
-                ));
-
-            return Err(error);
-        }
-    };
-
-    let is_valid = analysis.dimension == expected_dimension;
-
-    // If not valid, provide suggestions for units that would be valid for this property
-    if !is_valid {
-        let alternative_units = SUGGESTION_ENGINE.suggest_alternatives(expression, property);
-        let error = UcumError::dimension_mismatch(
-            expected_dimension,
-            analysis.dimension,
-            "property validation",
-        )
-        .with_suggestions(alternative_units)
-        .with_context(format!(
-            "Expression '{}' has dimension {:?} but property '{}' requires dimension {:?}",
-            expression, analysis.dimension, property, expected_dimension
-        ));
-        return Err(error);
-    }
-
-    Ok(is_valid)
-}
-
-/// Check if two units are commensurable.
-///
-/// Two units are commensurable if they have the same dimension vector. A special unit is
-/// commensurable with the unit of its definition (UCUM §21.3): `B[V]` with `mV`, `Cel`
-/// with `K`. That does not make every pair convertible: `convert_with_context` rejects a
-/// level converted to a unit on another scale.
-///
-/// `[m/s2/Hz^(1/2)]` is of dimension L.T-3/2, with half exponents, so it is commensurable
-/// only with an expression that has the same power of it and the same other dimensions.
-///
-/// # Examples
+/// Whether two expressions are commensurable (UCUM §17): the same dimension and the same
+/// arbitrary atoms. A special unit is commensurable with its corresponding proper unit
+/// (§21.3): `Cel` with `K`, `B[V]` with `V`, `[pH]` with `mol/L`. Commensurable units
+/// convert to each other with `convert`.
 ///
 /// ```
 /// use octofhir_ucum::is_comparable;
 ///
 /// assert!(is_comparable("m", "km").unwrap());
-/// assert!(is_comparable("kg", "g").unwrap());
+/// assert!(is_comparable("Cel", "[degF]").unwrap());
 /// assert!(!is_comparable("m", "kg").unwrap());
+/// assert!(!is_comparable("[IU]", "[arb'U]").unwrap());
 /// ```
-#[allow(clippy::result_large_err)]
 pub fn is_comparable(unit1: &str, unit2: &str) -> Result<bool, UcumError> {
-    let analysis1 = analyse(unit1)?;
-    let analysis2 = analyse(unit2)?;
-
-    Ok(analysis1.dimension == analysis2.dimension
-        && sqrt_power(&analysis1.parsed_ast) == sqrt_power(&analysis2.parsed_ast))
+    let (_, a) = eval(unit1)?;
+    let (_, b) = eval(unit2)?;
+    Ok(a.is_commensurable(&b))
 }
 
-/// Get the canonical units for a given UCUM expression.
+/// Validate that a unit expression measures a kind of quantity: that it is commensurable
+/// with a unit of that property in the UCUM tables (`length`, `pressure`, `electric
+/// current`, see `get_properties`). The legacy names `current`, `amount`, `luminosity` and
+/// `dimensionless` are also accepted.
 ///
-/// Returns the canonical (base) unit representation with the conversion factor.
-/// This is useful for normalizing units to their base forms.
+/// ```
+/// use octofhir_ucum::validate_in_property;
 ///
-/// # Examples
+/// assert!(validate_in_property("m", "length").unwrap());
+/// assert!(validate_in_property("[psi]", "pressure").unwrap());
+/// assert!(!validate_in_property("kg", "length").unwrap());
+/// ```
+///
+/// # Errors
+///
+/// An expression that is not valid, or a property that no unit has.
+pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, UcumError> {
+    let (_, result) = eval(expression)?;
+    let property = match property.to_lowercase().as_str() {
+        "current" => "electric current".to_string(),
+        "amount" => "amount of substance".to_string(),
+        "luminosity" => "luminous intensity".to_string(),
+        "dimensionless" => {
+            return Ok(result.dim.is_dimensionless() && result.arbitrary.is_empty());
+        }
+        other => other.to_string(),
+    };
+    let mut known = false;
+    for unit in get_all_units() {
+        if unit.property.to_lowercase() != property {
+            continue;
+        }
+        known = true;
+        let unit_result = evaluate(&UnitExpr::Symbol(unit.code.to_string()))?;
+        if unit_result.is_commensurable(&result) {
+            return Ok(true);
+        }
+    }
+    if known {
+        return Ok(false);
+    }
+    let similar: Vec<String> = get_properties()
+        .into_iter()
+        .filter(|p| SuggestionEngine::string_similarity(&property, p) > 0.6)
+        .map(|p| format!("'{p}'"))
+        .collect();
+    Err(UcumError::invalid_property(&property).with_suggestions(similar))
+}
+
+// ============================================================================
+// Canonical form
+// ============================================================================
+
+/// The canonical unit of an expression: its base units (`g`, `m`, `s`, `rad`, `K`, `C`,
+/// `cd`) and arbitrary atoms, with the factor and offset that convert a value to it.
 ///
 /// ```
 /// use octofhir_ucum::get_canonical_units;
 ///
 /// let canonical = get_canonical_units("km").unwrap();
-/// println!("Canonical: {} (factor: {})", canonical.unit, canonical.factor);
-/// // Output: Canonical: m (factor: 1000)
+/// assert_eq!(canonical.unit, "m");
+/// assert_eq!(canonical.factor, 1000.0);
 /// ```
 ///
 /// # Errors
 ///
-/// A level (`B`, `dB[SPL]`, `bit_s`, `[pH]`) or a prism diopter is a `SpecialUnitError`: no
-/// factor and offset turn a logarithm or a tangent into a linear canonical value. So is
-/// `[m/s2/Hz^(1/2)]`, whose canonical unit `m.s-3/2` has a half exponent.
-#[allow(clippy::result_large_err)]
+/// A special unit on a logarithmic or other non-linear scale (`B`, `[pH]`, `[p'diop]`) is a
+/// `SpecialUnitError`: no factor and offset turn its function into the canonical value.
+/// Temperatures have a canonical unit, `K`, and an offset.
 pub fn get_canonical_units(expression: &str) -> Result<CanonicalUnit, UcumError> {
-    let analysis = analyse(expression)?;
-    // The canonical value is `value * factor + offset`, which cannot express a logarithm
-    // or a tangent
-    if has_function_unit(&analysis.parsed_ast) {
-        return Err(UcumError::special_unit_error(
-            expression,
-            "a level or a prism diopter has no linear canonical unit",
-        ));
-    }
-    if sqrt_power(&analysis.parsed_ast) != 0 {
-        return Err(UcumError::special_unit_error(
-            expression,
-            "the canonical unit of [m/s2/Hz^(1/2)] has a half exponent (m.s-3/2)",
-        ));
-    }
-
-    // Build canonical unit string from dimension vector
-    let canonical_unit = build_canonical_unit_string(&analysis.dimension);
-
+    let (_, result) = eval(expression)?;
+    let (factor, offset) = match result.special {
+        None => (result.factor, Number::ZERO),
+        Some(special) => {
+            let offset = special.unit.special.offset().ok_or_else(|| {
+                UcumError::special_unit_error(
+                    expression,
+                    "a unit on a logarithmic or non-linear scale has no linear canonical unit",
+                )
+            })?;
+            let overflow = || UcumError::precision_overflow("canonical form", expression);
+            (
+                special
+                    .scale
+                    .checked_mul(result.factor)
+                    .ok_or_else(overflow)?,
+                offset.checked_mul(result.factor).ok_or_else(overflow)?,
+            )
+        }
+    };
     Ok(CanonicalUnit {
-        unit: canonical_unit,
-        factor: analysis.factor,
-        offset: analysis.offset,
-        dimension: analysis.dimension,
+        unit: canonical_unit_string(&result.dim, &result.arbitrary),
+        factor: factor.to_f64(),
+        offset: offset.to_f64(),
+        dimension: result.dim,
     })
 }
 
-/// Canonical unit representation
+/// Canonical unit representation: a value `v` in the unit is `v × factor + offset` in the
+/// canonical unit.
 #[derive(Debug, Clone)]
 pub struct CanonicalUnit {
-    /// Canonical unit string (e.g., "g.m.s-2" for force)
+    /// Canonical unit (`g.m.s-2` for the newton)
     pub unit: String,
-    /// Conversion factor from original to canonical
+    /// Magnitude of the unit in the canonical unit
     pub factor: f64,
-    /// Temperature offset if applicable
+    /// Offset of a temperature
     pub offset: f64,
     /// Dimension vector
     pub dimension: Dimension,
 }
 
-/// Result of unit arithmetic operations
-#[derive(Debug, Clone)]
-pub struct UnitArithmeticResult {
-    /// Resulting unit expression string
-    pub expression: String,
-    /// Combined conversion factor
-    pub factor: f64,
-    /// Resulting dimension vector
-    pub dimension: Dimension,
-    /// Offset (should be zero for arithmetic operations)
-    pub offset: f64,
-    /// Whether the result is dimensionless
-    pub is_dimensionless: bool,
-}
+/// Base units in the order of canonical units.
+const CANONICAL_ORDER: [usize; 7] = [2, 0, 1, 3, 4, 5, 6];
 
-/// Build canonical unit string from dimension vector
-fn build_canonical_unit_string(dim: &Dimension) -> String {
-    // UCUM base units: the base unit of mass is the gram, not the kilogram (§28)
-    let base_units = ["g", "m", "s", "A", "K", "mol", "cd"];
-    let mut parts = Vec::new();
-
-    for (i, &exp) in dim.0.iter().enumerate() {
-        if exp != 0 {
-            if exp == 1 {
-                parts.push(base_units[i].to_string());
-            } else {
-                parts.push(format!("{}{}", base_units[i], exp));
-            }
+/// The canonical unit of a dimension and arbitrary atoms: "g.m.s-2", "m-3.[iU]", "1".
+fn canonical_unit_string(dim: &Dimension, arbitrary: &[(&'static str, i32)]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for slot in CANONICAL_ORDER {
+        let exp = dim.0[slot];
+        let code = Dimension::BASE_UNITS[slot];
+        match exp {
+            0 => {}
+            1 => parts.push(code.to_string()),
+            _ => parts.push(format!("{code}{exp}")),
         }
     }
-
+    for &(atom, exp) in arbitrary {
+        parts.push(if exp == 1 {
+            atom.to_string()
+        } else {
+            format!("{atom}{exp}")
+        });
+    }
     if parts.is_empty() {
-        "1".to_string() // dimensionless
+        "1".to_string()
     } else {
         parts.join(".")
     }
 }
 
-// ============================================================================
-// Core API Enhancement - Mathematical Operations
-// ============================================================================
-
-/// Multiply two quantities with units.
-///
-/// # Examples
+/// Validate that `canonical` is the canonical form of `unit`: equal to it, with the same
+/// magnitude (`validate_canonical_units("km", "1000.m")`), or the canonical unit when the
+/// magnitude is 1 (`("N", "kg.m/s2")`).
 ///
 /// ```
-/// use octofhir_ucum::multiply;
+/// use octofhir_ucum::validate_canonical_units;
 ///
-/// let result = multiply(5.0, "m", 2.0, "s").unwrap();
-/// println!("{} {}", result.value, result.unit); // "10 m.s"
+/// assert!(validate_canonical_units("N", "kg.m.s-2").unwrap());
+/// assert!(validate_canonical_units("C", "A.s").unwrap());
+/// assert!(!validate_canonical_units("km", "m").unwrap());
 /// ```
-///
-/// # Errors
-///
-/// A result that is not a number or does not fit in an `f64` (a value out of range or too
-/// small, an operand that is infinite or NaN) is a `PrecisionOverflow`. A unit with an
-/// offset (`Cel`) or on a logarithmic or tangent scale (`B`, `bit_s`, `[p'diop]`) takes no
-/// part in the product (UCUM §22.1) and is a `ConversionError`.
-#[allow(clippy::result_large_err)]
-pub fn multiply(
-    value1: f64,
-    unit1: &str,
-    value2: f64,
-    unit2: &str,
-) -> Result<UnitResult, UcumError> {
-    let analysis1 = analyse(unit1)?;
-    let analysis2 = analyse(unit2)?;
-
-    check_arithmetic_operands(&analysis1, &analysis2, "multiplication")?;
-
-    // Calculate result. Each value is scaled by its own unit first, so that an intermediate
-    // product of the values alone cannot overflow or underflow when the result fits
-    let result_value = (value1 * analysis1.factor) * (value2 * analysis2.factor);
-    let is_zero_expected = [value1, analysis1.factor, value2, analysis2.factor].contains(&0.0);
-
-    // Combine dimensions
-    let mut result_dim = analysis1.dimension.0;
-    crate::evaluator::add_scaled_dim(&mut result_dim, &analysis2.dimension, 1)?;
-
-    let result_unit = build_canonical_unit_string(&Dimension(result_dim));
-
-    Ok(UnitResult {
-        value: check_number(result_value, is_zero_expected, "multiplication", || {
-            format!("{value1:?} {unit1} * {value2:?} {unit2}")
-        })?,
-        unit: result_unit,
-        dimension: Dimension(result_dim),
-    })
+pub fn validate_canonical_units(unit: &str, canonical: &str) -> Result<bool, UcumError> {
+    let (_, a) = eval(unit)?;
+    let (_, b) = eval(canonical)?;
+    Ok(
+        a.special.is_none()
+            && b.special.is_none()
+            && a.is_commensurable(&b)
+            && a.factor == b.factor,
+    )
 }
 
-/// Divide two quantities with units.
-///
-/// # Examples
-///
-/// ```
-/// use octofhir_ucum::divide_by;
-///
-/// let result = divide_by(10.0, "m", 2.0, "s").unwrap();
-/// println!("{} {}", result.value, result.unit); // "5 m.s-1"
-/// ```
-///
-/// # Errors
-///
-/// A result that is not a number or does not fit in an `f64` (a division by zero, by the
-/// value or by a unit such as `"0"`, a value out of range or too small, an operand that is
-/// infinite or NaN) is a `PrecisionOverflow`. A unit with an offset (`Cel`) or on a
-/// logarithmic or tangent scale (`B`, `bit_s`, `[p'diop]`) takes no part in the quotient
-/// (UCUM §22.1) and is a `ConversionError`.
-#[allow(clippy::result_large_err)]
-pub fn divide_by(
-    dividend_value: f64,
-    dividend_unit: &str,
-    divisor_value: f64,
-    divisor_unit: &str,
-) -> Result<UnitResult, UcumError> {
-    let analysis1 = analyse(dividend_unit)?;
-    let analysis2 = analyse(divisor_unit)?;
+/// A positive number written in UCUM, which has positive integers only: "1000", "10*-2",
+/// "254.10*-4", "602214076.10*15".
+fn ucum_number(n: Number) -> String {
+    let (digits, exp) = n.to_integer_and_exponent();
+    if (0..=3).contains(&exp) {
+        format!("{digits}{}", "0".repeat(exp as usize))
+    } else if digits == 1 {
+        format!("10*{exp}")
+    } else {
+        format!("{digits}.10*{exp}")
+    }
+}
 
-    check_arithmetic_operands(&analysis1, &analysis2, "division")?;
+// ============================================================================
+// Quantity and unit arithmetic
+// ============================================================================
 
-    // Calculate result. Each value is scaled by its own unit first, so that an intermediate
-    // quotient of the values alone cannot overflow or underflow when the result fits. A
-    // finite value divided by an infinite one is zero, which would hide the divisor that is
-    // not a number: the other cases show in the result
-    let operands =
-        || format!("{dividend_value:?} {dividend_unit} / {divisor_value:?} {divisor_unit}");
-    let divisor = check_number(divisor_value * analysis2.factor, true, "division", operands)?;
-    let result_value = (dividend_value * analysis1.factor) / divisor;
-    let is_zero_expected = dividend_value == 0.0 || analysis1.factor == 0.0;
-
-    // Combine dimensions (subtract divisor from dividend)
-    let mut result_dim = analysis1.dimension.0;
-    crate::evaluator::add_scaled_dim(&mut result_dim, &analysis2.dimension, -1)?;
-
-    let result_unit = build_canonical_unit_string(&Dimension(result_dim));
-
-    Ok(UnitResult {
-        value: check_number(result_value, is_zero_expected, "division", operands)?,
-        unit: result_unit,
-        dimension: Dimension(result_dim),
-    })
+/// Reject special units, which take part in no arithmetic (UCUM §22.1).
+fn check_arithmetic_operand(
+    expression: &str,
+    result: &EvalResult,
+    operation: &str,
+) -> Result<(), UcumError> {
+    match result.special {
+        Some(special) => Err(UcumError::special_unit_error(
+            expression,
+            &format!(
+                "{} is a special unit, which cannot be used in {operation} (UCUM §22.1)",
+                special.unit.code
+            ),
+        )),
+        None => Ok(()),
+    }
 }
 
 /// A result of quantity or unit arithmetic must be a number: an infinite or NaN value, or a
-/// zero that only comes from a result too small for an `f64`, is reported like the evaluator
-/// reports it (`m/0`), instead of being returned as a success.
+/// zero that only comes from a result too small for an `f64`, is an error.
 fn check_number(
     value: f64,
     is_zero_expected: bool,
@@ -552,19 +415,218 @@ fn check_number(
     }
 }
 
-/// Result of mathematical operations with units
+/// `value × factor` in base units, exactly.
+fn base_value(value: f64, factor: Number) -> Option<Number> {
+    Number::from_f64(value)?.checked_mul(factor)
+}
+
+/// Multiply two quantities. The result is in canonical units.
+///
+/// ```
+/// use octofhir_ucum::multiply;
+///
+/// let result = multiply(5.0, "m", 2.0, "s").unwrap();
+/// assert_eq!(result.value, 10.0);
+/// assert_eq!(result.unit, "m.s");
+/// ```
+///
+/// # Errors
+///
+/// A special unit (`Cel`, `B`, `[pH]`) takes no part in the product (UCUM §22.1) and is a
+/// `SpecialUnitError`. A result that does not fit in an `f64`, or an operand that is
+/// infinite or NaN, is a `PrecisionOverflow`.
+pub fn multiply(
+    value1: f64,
+    unit1: &str,
+    value2: f64,
+    unit2: &str,
+) -> Result<UnitResult, UcumError> {
+    arithmetic(value1, unit1, value2, unit2, 1, "multiplication")
+}
+
+/// Divide two quantities. The result is in canonical units.
+///
+/// ```
+/// use octofhir_ucum::divide_by;
+///
+/// let result = divide_by(10.0, "m", 2.0, "s").unwrap();
+/// assert_eq!(result.value, 5.0);
+/// assert_eq!(result.unit, "m.s-1");
+/// ```
+///
+/// # Errors
+///
+/// As `multiply`; a division by zero, by the value or by a unit such as `"0"`, is a
+/// `PrecisionOverflow`.
+pub fn divide_by(
+    dividend_value: f64,
+    dividend_unit: &str,
+    divisor_value: f64,
+    divisor_unit: &str,
+) -> Result<UnitResult, UcumError> {
+    arithmetic(
+        dividend_value,
+        dividend_unit,
+        divisor_value,
+        divisor_unit,
+        -1,
+        "division",
+    )
+}
+
+fn arithmetic(
+    value1: f64,
+    unit1: &str,
+    value2: f64,
+    unit2: &str,
+    exp: i32,
+    operation: &str,
+) -> Result<UnitResult, UcumError> {
+    let (_, a) = eval(unit1)?;
+    let (_, b) = eval(unit2)?;
+    check_arithmetic_operand(unit1, &a, operation)?;
+    check_arithmetic_operand(unit2, &b, operation)?;
+    let operator = if exp == 1 { '*' } else { '/' };
+    let operands = || format!("{value1:?} {unit1} {operator} {value2:?} {unit2}");
+    let overflow = || UcumError::precision_overflow(operation, &operands());
+    let left = base_value(value1, a.factor).ok_or_else(overflow)?;
+    let right = base_value(value2, b.factor).ok_or_else(overflow)?;
+    let value = if exp == 1 {
+        left.checked_mul(right)
+    } else {
+        left.checked_div(right)
+    }
+    .ok_or_else(overflow)?;
+    let mut dim = a.dim.0;
+    evaluator::add_scaled_dim(&mut dim, &b.dim, exp)?;
+    let arbitrary = evaluator::combine(&a.arbitrary, &b.arbitrary, exp);
+    let dim = Dimension(dim);
+    Ok(UnitResult {
+        value: check_number(value.to_f64(), value.is_zero(), operation, operands)?,
+        unit: canonical_unit_string(&dim, &arbitrary),
+        dimension: dim,
+    })
+}
+
+/// Result of quantity arithmetic.
 #[derive(Debug, Clone)]
 pub struct UnitResult {
-    /// Calculated value
+    /// Value in `unit`
     pub value: f64,
-    /// Resulting unit string
+    /// Canonical unit of the result
     pub unit: String,
-    /// Dimension vector of result
+    /// Dimension of the result
     pub dimension: Dimension,
 }
 
+/// Result of unit arithmetic.
+#[derive(Debug, Clone)]
+pub struct UnitArithmeticResult {
+    /// Resulting unit expression
+    pub expression: String,
+    /// Magnitude of the result in base units
+    pub factor: f64,
+    /// Dimension of the result
+    pub dimension: Dimension,
+    /// Whether the result has no dimension and no arbitrary atom
+    pub is_dimensionless: bool,
+}
+
+/// Multiply two unit expressions.
+///
+/// ```
+/// use octofhir_ucum::unit_multiply;
+///
+/// let result = unit_multiply("m", "s").unwrap();
+/// assert_eq!(result.expression, "m.s");
+/// ```
+///
+/// # Errors
+///
+/// A special unit is a `SpecialUnitError` (UCUM §22.1).
+pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, UcumError> {
+    let (left, a) = eval(unit1)?;
+    let (right, b) = eval(unit2)?;
+    check_arithmetic_operand(unit1, &a, "multiplication")?;
+    check_arithmetic_operand(unit2, &b, "multiplication")?;
+    // Products and quotients read left to right are associative, so the two terms join
+    // without parentheses: "kg" times "m/s2" is "kg.m/s2", times "/s.m" is "kg/s.m"
+    let expression = match (&left, &right) {
+        (UnitExpr::Numeric(n), _) if *n == Number::ONE => right.to_string(),
+        (_, UnitExpr::Numeric(n)) if *n == Number::ONE => left.to_string(),
+        _ => {
+            let right = right.to_string();
+            if right.starts_with('/') {
+                format!("{left}{right}")
+            } else {
+                format!("{left}.{right}")
+            }
+        }
+    };
+    unit_arithmetic(expression, &a, &b, 1)
+}
+
+/// Divide one unit expression by another.
+///
+/// ```
+/// use octofhir_ucum::unit_divide;
+///
+/// let result = unit_divide("m", "s").unwrap();
+/// assert_eq!(result.expression, "m/s");
+/// ```
+///
+/// # Errors
+///
+/// A special unit is a `SpecialUnitError` (UCUM §22.1); a divisor with a factor of zero,
+/// such as `"0"`, is a `PrecisionOverflow`.
+pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticResult, UcumError> {
+    let (left, a) = eval(numerator)?;
+    let (right, b) = eval(denominator)?;
+    check_arithmetic_operand(numerator, &a, "division")?;
+    check_arithmetic_operand(denominator, &b, "division")?;
+    if b.factor.is_zero() {
+        return Err(UcumError::precision_overflow(
+            "division",
+            &format!("{numerator} / {denominator}"),
+        ));
+    }
+    let expression = match (&left, &right) {
+        (_, UnitExpr::Numeric(n)) if *n == Number::ONE => left.to_string(),
+        (UnitExpr::Numeric(n), _) if *n == Number::ONE => {
+            UnitExpr::Reciprocal(Box::new(right)).to_string()
+        }
+        _ => UnitExpr::Quotient(Box::new(left), Box::new(right)).to_string(),
+    };
+    unit_arithmetic(expression, &a, &b, -1)
+}
+
+fn unit_arithmetic(
+    expression: String,
+    a: &EvalResult,
+    b: &EvalResult,
+    exp: i32,
+) -> Result<UnitArithmeticResult, UcumError> {
+    let factor = if exp == 1 {
+        a.factor.checked_mul(b.factor)
+    } else {
+        a.factor.checked_div(b.factor)
+    }
+    .ok_or_else(|| UcumError::precision_overflow("unit arithmetic", &expression))?;
+    let mut dim = a.dim.0;
+    evaluator::add_scaled_dim(&mut dim, &b.dim, exp)?;
+    let arbitrary = evaluator::combine(&a.arbitrary, &b.arbitrary, exp);
+    Ok(UnitArithmeticResult {
+        factor: check_number(factor.to_f64(), factor.is_zero(), "unit arithmetic", || {
+            expression.clone()
+        })?,
+        is_dimensionless: dim == [0; 7] && arbitrary.is_empty(),
+        expression,
+        dimension: Dimension(dim),
+    })
+}
+
 // ============================================================================
-// Core API Enhancement - Search Functionality
+// Search
 // ============================================================================
 
 #[cfg(feature = "std")]
@@ -574,137 +636,78 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 #[cfg(feature = "std")]
 use regex::Regex;
 
-/// Search for units by name, code, or display name.
-///
-/// Returns a list of units that match the search criteria. The search is case-insensitive
-/// and matches partial strings in unit codes, names, and display names.
-///
-/// # Examples
+/// Search unit atoms whose code, name or property contains the query, ignoring case. Exact
+/// codes come first, then shorter codes.
 ///
 /// ```
 /// use octofhir_ucum::search_units;
 ///
-/// let results = search_units("meter");
-/// for unit in results {
-///     println!("{}: {}", unit.code, unit.display_name);
-/// }
+/// assert!(search_units("meter").iter().any(|u| u.code == "m"));
 /// ```
 pub fn search_units(query: &str) -> Vec<&'static UnitRecord> {
     let query_lower = query.to_lowercase();
-    let mut results = Vec::new();
-
-    for unit in get_all_units() {
-        // Simple substring search (case-insensitive)
-        let matches = unit.code.to_lowercase().contains(&query_lower)
-            || unit.display_name.to_lowercase().contains(&query_lower)
-            || unit.property.to_lowercase().contains(&query_lower);
-
-        if matches {
-            results.push(unit);
-        }
-    }
-
-    // Sort results by relevance (exact matches first, then by code length)
+    let mut results: Vec<&'static UnitRecord> = get_all_units()
+        .iter()
+        .filter(|unit| {
+            unit.code.to_lowercase().contains(&query_lower)
+                || unit.display_name.to_lowercase().contains(&query_lower)
+                || unit.property.to_lowercase().contains(&query_lower)
+        })
+        .collect();
     results.sort_by(|a, b| {
         let a_exact = a.code.to_lowercase() == query_lower;
         let b_exact = b.code.to_lowercase() == query_lower;
-
-        match (a_exact, b_exact) {
-            (true, false) => core::cmp::Ordering::Less,
-            (false, true) => core::cmp::Ordering::Greater,
-            _ => a.code.len().cmp(&b.code.len()),
-        }
+        b_exact.cmp(&a_exact).then(a.code.len().cmp(&b.code.len()))
     });
-
     results
 }
 
-/// Search for units by property (e.g., "length", "mass", "time").
-///
-/// Returns all units that have the specified property.
-///
-/// # Examples
+/// All unit atoms of a property (`length`, `pressure`), ignoring case.
 ///
 /// ```
 /// use octofhir_ucum::search_units_by_property;
 ///
-/// let length_units = search_units_by_property("length");
-/// for unit in length_units {
-///     println!("{}: {}", unit.code, unit.display_name);
-/// }
+/// assert!(search_units_by_property("length").iter().any(|u| u.code == "m"));
 /// ```
 pub fn search_units_by_property(property: &str) -> Vec<&'static UnitRecord> {
     let property_lower = property.to_lowercase();
-    let mut results = Vec::new();
-
-    for unit in get_all_units() {
-        if unit.property.to_lowercase() == property_lower {
-            results.push(unit);
-        }
-    }
-
-    results
+    get_all_units()
+        .iter()
+        .filter(|unit| unit.property.to_lowercase() == property_lower)
+        .collect()
 }
 
-/// Get all defined forms of a unit code.
-///
-/// This includes the base unit and any prefixed variants that might exist.
-/// Note: This is a simplified implementation that doesn't generate all possible
-/// prefixed forms, but returns units that contain the base code.
-///
-/// # Examples
+/// The unit atoms commensurable with an expression: the units of the same dimension and
+/// arbitrary atoms, special units included.
 ///
 /// ```
 /// use octofhir_ucum::get_defined_forms;
 ///
 /// let forms = get_defined_forms("m");
-/// for unit in forms {
-///     println!("{}: {}", unit.code, unit.display_name);
-/// }
+/// assert!(forms.iter().any(|u| u.code == "[in_i]"));
+/// assert!(!forms.iter().any(|u| u.code == "g"));
 /// ```
-pub fn get_defined_forms(base_code: &str) -> Vec<&'static UnitRecord> {
-    let mut results = Vec::new();
-
-    // Add exact match if it exists
-    if let Some(unit) = find_unit(base_code) {
-        results.push(unit);
-    }
-
-    // Find units that might be prefixed versions
-    for unit in get_all_units() {
-        if unit.code != base_code && unit.code.ends_with(base_code) {
-            // Check if the prefix part is a valid prefix
-            let prefix_part = &unit.code[..unit.code.len() - base_code.len()];
-            if find_prefix(prefix_part).is_some() {
-                results.push(unit);
-            }
-        }
-    }
-
-    results
+pub fn get_defined_forms(expression: &str) -> Vec<&'static UnitRecord> {
+    let Ok((_, result)) = eval(expression) else {
+        return Vec::new();
+    };
+    get_all_units()
+        .iter()
+        .filter(|unit| {
+            evaluate(&UnitExpr::Symbol(unit.code.to_string()))
+                .is_ok_and(|r| r.is_commensurable(&result))
+        })
+        .collect()
 }
 
-/// Search for units using regular expressions.
-///
-/// Returns a list of units that match the regex pattern in unit codes, names, or display names.
-/// The search is case-insensitive by default.
-///
-/// # Arguments
-/// * `pattern` - Regular expression pattern to match against
-/// * `case_sensitive` - Whether the search should be case-sensitive
-///
-/// # Examples
+/// Search unit atoms whose code, name or property matches a regular expression.
 ///
 /// ```
 /// use octofhir_ucum::search_units_regex;
 ///
-/// // Find all units containing "meter" or "metre"
 /// let results = search_units_regex(r"mete?r", false).unwrap();
-/// for unit in results {
-///     println!("{}: {}", unit.code, unit.display_name);
-/// }
+/// assert!(results.iter().any(|u| u.code == "m"));
 /// ```
-#[allow(clippy::result_large_err)]
 #[cfg(feature = "std")]
 pub fn search_units_regex(
     pattern: &str,
@@ -715,117 +718,85 @@ pub fn search_units_regex(
     } else {
         format!("(?i){pattern}")
     };
-
     let regex = Regex::new(&regex_pattern)
         .map_err(|_| UcumError::invalid_expression("Invalid regex pattern"))?;
-
-    let mut results = Vec::new();
-
-    for unit in get_all_units() {
-        let matches = regex.is_match(unit.code)
-            || regex.is_match(unit.display_name)
-            || regex.is_match(unit.property);
-
-        if matches {
-            results.push(unit);
-        }
-    }
-
-    // Sort by relevance (code matches first, then display name matches)
+    let mut results: Vec<&'static UnitRecord> = get_all_units()
+        .iter()
+        .filter(|unit| {
+            regex.is_match(unit.code)
+                || regex.is_match(unit.display_name)
+                || regex.is_match(unit.property)
+        })
+        .collect();
     results.sort_by(|a, b| {
-        let a_code_match = regex.is_match(a.code);
-        let b_code_match = regex.is_match(b.code);
-
-        match (a_code_match, b_code_match) {
-            (true, false) => core::cmp::Ordering::Less,
-            (false, true) => core::cmp::Ordering::Greater,
-            _ => a.code.len().cmp(&b.code.len()),
-        }
+        regex
+            .is_match(b.code)
+            .cmp(&regex.is_match(a.code))
+            .then(a.code.len().cmp(&b.code.len()))
     });
-
     Ok(results)
 }
 
-/// Search for units using fuzzy matching.
-///
-/// Returns a list of units that fuzzy match the query string, sorted by match score.
-/// Higher scores indicate better matches.
-///
-/// # Arguments
-/// * `query` - Query string to fuzzy match against
-/// * `threshold` - Minimum match score threshold (0-100, higher is more strict)
-///
-/// # Examples
+/// Search unit atoms by fuzzy matching of their code, name or property, best first.
 ///
 /// ```
 /// use octofhir_ucum::search_units_fuzzy;
 ///
-/// // Find units similar to "meter" (will match "metre", "meter", etc.)
 /// let results = search_units_fuzzy("meter", 50);
-/// for (unit, score) in results {
-///     println!("{}: {} (score: {})", unit.code, unit.display_name, score);
-/// }
+/// assert!(results.iter().any(|(u, _)| u.code == "m"));
 /// ```
 #[cfg(feature = "std")]
 pub fn search_units_fuzzy(query: &str, threshold: i64) -> Vec<(&'static UnitRecord, i64)> {
     let matcher = SkimMatcherV2::default();
-    let mut results = Vec::new();
-
-    for unit in get_all_units() {
-        // Try matching against code, display name, and property
-        let code_score = matcher.fuzzy_match(unit.code, query).unwrap_or(0);
-        let display_score = matcher.fuzzy_match(unit.display_name, query).unwrap_or(0);
-        let property_score = matcher.fuzzy_match(unit.property, query).unwrap_or(0);
-
-        // Use the best score among all fields
-        let best_score = code_score.max(display_score).max(property_score);
-
-        if best_score >= threshold {
-            results.push((unit, best_score));
-        }
-    }
-
-    // Sort by score (descending - best matches first)
+    let mut results: Vec<(&'static UnitRecord, i64)> = get_all_units()
+        .iter()
+        .filter_map(|unit| {
+            let score = [unit.code, unit.display_name, unit.property]
+                .iter()
+                .filter_map(|field| matcher.fuzzy_match(field, query))
+                .max()
+                .unwrap_or(0);
+            (score >= threshold).then_some((unit, score))
+        })
+        .collect();
     results.sort_by_key(|a| core::cmp::Reverse(a.1));
-
     results
 }
 
-/// Concept kinds for filtering search results.
+/// Kinds of unit atoms, for filtering searches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConceptKind {
-    /// Base units (meter, gram, second, etc.)
+    /// The seven base units (meter, second, gram, radian, kelvin, coulomb, candela)
     BaseUnit,
-    /// Derived units (newton, pascal, joule, etc.)
+    /// Proper units defined from other units (newton, inch)
     DerivedUnit,
-    /// Prefixed units (kilometer, milligram, etc.)
-    PrefixedUnit,
-    /// Arbitrary units (square-bracketed units)
+    /// Arbitrary units (`[IU]`, `[arb'U]`)
     ArbitraryUnit,
-    /// Special units (temperature, logarithmic, etc.)
+    /// Special units on non-ratio scales (`Cel`, `B`, `[pH]`)
     SpecialUnit,
 }
 
-/// Search for units with concept kind filtering.
-///
-/// Returns a list of units that match the query and belong to the specified concept kinds.
-///
-/// # Arguments
-/// * `query` - Query string to search for
-/// * `kinds` - List of concept kinds to include in results
-/// * `use_fuzzy` - Whether to use fuzzy matching (if false, uses substring matching).
-///   Fuzzy matching requires the `std` feature; without it substring matching is used.
-///
-/// # Examples
+/// The kind of a unit atom.
+pub fn classify_unit(unit: &UnitRecord) -> ConceptKind {
+    if unit.is_base {
+        ConceptKind::BaseUnit
+    } else if unit.special.is_arbitrary() {
+        ConceptKind::ArbitraryUnit
+    } else if unit.special.is_special() {
+        ConceptKind::SpecialUnit
+    } else {
+        ConceptKind::DerivedUnit
+    }
+}
+
+/// Search unit atoms of some kinds, by substring or, with the `std` feature, by fuzzy
+/// matching.
 ///
 /// ```
 /// use octofhir_ucum::{search_units_filtered, ConceptKind};
 ///
-/// // Find only base units containing "meter"
 /// let results = search_units_filtered("meter", &[ConceptKind::BaseUnit], false);
-/// for unit in results {
-///     println!("{}: {}", unit.code, unit.display_name);
-/// }
+/// assert!(results.iter().all(|u| u.is_base));
 /// ```
 pub fn search_units_filtered(
     query: &str,
@@ -836,7 +807,7 @@ pub fn search_units_filtered(
     let all_results = if use_fuzzy {
         search_units_fuzzy(query, 30)
             .into_iter()
-            .map(|(unit, _score)| unit)
+            .map(|(unit, _)| unit)
             .collect()
     } else {
         search_units(query)
@@ -846,556 +817,169 @@ pub fn search_units_filtered(
         let _ = use_fuzzy;
         search_units(query)
     };
-
     all_results
         .into_iter()
-        .filter(|unit| {
-            let unit_kind = classify_unit(unit);
-            kinds.contains(&unit_kind)
-        })
+        .filter(|unit| kinds.contains(&classify_unit(unit)))
         .collect()
 }
 
-/// Classify a unit into its concept kind.
-fn classify_unit(unit: &UnitRecord) -> ConceptKind {
-    // Check for arbitrary units (square brackets)
-    if unit.code.starts_with('[') && unit.code.ends_with(']') {
-        return ConceptKind::ArbitraryUnit;
-    }
-
-    // Check for special units
-    if unit.special != crate::types::SpecialKind::None {
-        return ConceptKind::SpecialUnit;
-    }
-
-    // Check for prefixed units by looking for known prefixes
-    for prefix in crate::registry::PREFIXES {
-        if unit.code.starts_with(prefix.symbol) && unit.code.len() > prefix.symbol.len() {
-            let remainder = &unit.code[prefix.symbol.len()..];
-            if find_unit(remainder).is_some() {
-                return ConceptKind::PrefixedUnit;
-            }
-        }
-    }
-
-    // Check if it's a base unit (has simple dimension vector with single 1 or -1)
-    let non_zero_dims = unit.dim.0.iter().filter(|&&x| x != 0).count();
-    if non_zero_dims <= 1 && unit.dim.0.iter().any(|&x| x.abs() == 1) {
-        ConceptKind::BaseUnit
-    } else {
-        ConceptKind::DerivedUnit
-    }
-}
-
 // ============================================================================
-// Core API Enhancement - Mathematical Operations
+// Model
 // ============================================================================
 
-/// Multiply two unit expressions together.
-///
-/// This performs unit arithmetic by multiplying the factors and adding the dimensions.
-/// The result represents the product of the two input units.
-///
-/// # Arguments
-/// * `unit1` - First unit expression (e.g., "m")
-/// * `unit2` - Second unit expression (e.g., "s")
-///
-/// # Returns
-/// A `UnitArithmeticResult` containing the resulting unit information.
-///
-/// # Examples
-///
-/// ```
-/// use octofhir_ucum::unit_multiply;
-///
-/// let result = unit_multiply("m", "s").unwrap();
-/// println!("Result: {} (factor: {})", result.expression, result.factor);
-/// // Output: Result: m.s (factor: 1)
-/// ```
-#[allow(clippy::result_large_err)]
-pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, UcumError> {
-    let (unit1, unit2) = (operand_text(unit1), operand_text(unit2));
-    let analysis1 = analyse(unit1)?;
-    let analysis2 = analyse(unit2)?;
-    check_arithmetic_operands(&analysis1, &analysis2, "multiplication")?;
-
-    // Multiply factors
-    let result_factor = analysis1.factor * analysis2.factor;
-
-    // Add dimensions
-    let mut result_dimension = analysis1.dimension.0;
-    crate::evaluator::add_scaled_dim(&mut result_dimension, &analysis2.dimension, 1)?;
-
-    // Build result expression string
-    let result_expression = if unit1 == "1" {
-        unit2.to_string()
-    } else if unit2 == "1" {
-        unit1.to_string()
-    } else if unit2.starts_with('/') {
-        // "m" times "/s" is "m/s": terms are evaluated from left to right (UCUM §7.4),
-        // and a solidus needs a left operand everywhere but at the start of the term
-        format!("{unit1}{unit2}")
-    } else {
-        format!("{unit1}.{unit2}")
-    };
-
-    Ok(UnitArithmeticResult {
-        expression: result_expression,
-        factor: result_factor,
-        dimension: Dimension(result_dimension),
-        offset: 0.0,
-        is_dimensionless: result_dimension == [0; 7],
-    })
-}
-
-/// Divide one unit expression by another.
-///
-/// This performs unit arithmetic by dividing the factors and subtracting the dimensions.
-/// The result represents the quotient of the two input units.
-///
-/// # Arguments
-/// * `numerator` - Numerator unit expression (e.g., "m")
-/// * `denominator` - Denominator unit expression (e.g., "s")
-///
-/// # Returns
-/// A `UnitArithmeticResult` containing the resulting unit information.
-///
-/// # Examples
-///
-/// ```
-/// use octofhir_ucum::unit_divide;
-///
-/// let result = unit_divide("m", "s").unwrap();
-/// println!("Result: {} (factor: {})", result.expression, result.factor);
-/// // Output: Result: m/s (factor: 1)
-/// ```
-///
-/// # Errors
-///
-/// A divisor with a factor of zero, such as `"0"`, is a `PrecisionOverflow`.
-#[allow(clippy::result_large_err)]
-pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticResult, UcumError> {
-    let (numerator, denominator) = (operand_text(numerator), operand_text(denominator));
-    let analysis1 = analyse(numerator)?;
-    let analysis2 = analyse(denominator)?;
-    check_arithmetic_operands(&analysis1, &analysis2, "division")?;
-
-    // Terms are evaluated from left to right (UCUM §7.4), so a compound divisor needs
-    // parentheses: "m/(s.kg)", not "m/s.kg".
-    let divisor = divisor_text(denominator, &analysis2.parsed_ast);
-
-    // Divide factors: a divisor such as "0" has a factor of zero
-    let result_factor = check_number(
-        analysis1.factor / analysis2.factor,
-        analysis1.factor == 0.0,
-        "division",
-        || format!("{numerator} / {divisor}"),
-    )?;
-
-    // Subtract dimensions
-    let mut result_dimension = analysis1.dimension.0;
-    crate::evaluator::add_scaled_dim(&mut result_dimension, &analysis2.dimension, -1)?;
-
-    // Build result expression string
-    let result_expression = if denominator == "1" {
-        numerator.to_string()
-    } else if numerator == "1" {
-        format!("/{divisor}")
-    } else {
-        format!("{numerator}/{divisor}")
-    };
-
-    Ok(UnitArithmeticResult {
-        expression: result_expression,
-        factor: result_factor,
-        dimension: Dimension(result_dimension),
-        offset: 0.0,
-        is_dimensionless: result_dimension == [0; 7],
-    })
-}
-
-/// Text of a unit expression used as the right operand of a division.
-fn divisor_text(unit: &str, ast: &OwnedUnitExpr) -> String {
-    let is_compound = matches!(
-        ast,
-        OwnedUnitExpr::Product(_) | OwnedUnitExpr::Quotient(_, _)
-    );
-    let is_parenthesized = unit
-        .strip_prefix('(')
-        .and_then(|rest| rest.strip_suffix(')'))
-        .is_some_and(|inner| parse_expression(inner).is_ok());
-    if !is_compound || is_parenthesized {
-        return unit.to_string();
-    }
-    // A leading solidus is only valid at the start of the whole term (`mainTerm` in the
-    // UCUM grammar): inside parentheses "/s" is written "1/s"
-    match unit.strip_prefix('/') {
-        Some(rest) => format!("(1/{rest})"),
-        None => format!("({unit})"),
-    }
-}
-
-/// An operand of unit arithmetic, without surrounding whitespace. The empty string is the
-/// unity, like for the parser.
-fn operand_text(unit: &str) -> &str {
-    match unit.trim() {
-        "" => "1",
-        trimmed => trimmed,
-    }
-}
-
-/// Whether an expression uses a unit on a logarithmic or tangent scale (`B`, `dB`, `Np`,
-/// `bit_s`, `[pH]`, `[p'diop]`, ...).
-fn has_function_unit(expr: &OwnedUnitExpr) -> bool {
-    uses_special_unit(expr, evaluator::LEVEL_KINDS)
-        || uses_special_unit(expr, &[crate::types::SpecialKind::TanTimes100])
-}
-
-/// Whether an expression uses a unit of one of these special kinds.
-fn uses_special_unit(expr: &OwnedUnitExpr, kinds: &[crate::types::SpecialKind]) -> bool {
-    uses_unit(expr, &|code| {
-        evaluator::lookup_unit(code).is_some_and(|(_, unit)| kinds.contains(&unit.special))
-    })
-}
-
-/// Whether an expression uses a level with a reference (`B[V]`, `dB[SPL]`, `[pH]`).
-fn has_referenced_level(expr: &OwnedUnitExpr) -> bool {
-    uses_unit(expr, &evaluator::is_referenced_level)
-}
-
-/// The power of `[m/s2/Hz^(1/2)]` in an expression: 1 for the unit, 2 for
-/// `[m/s2/Hz^(1/2)]2`, -1 after a solidus. It stands for the half exponents of L.T-3/2 that
-/// the dimension vector cannot hold, so two expressions are commensurable only when they
-/// have the same power of it.
-fn sqrt_power(expr: &OwnedUnitExpr) -> i32 {
-    match expr {
-        OwnedUnitExpr::Symbol(code) => i32::from(
-            evaluator::lookup_unit(code)
-                .is_some_and(|(_, unit)| unit.special == crate::types::SpecialKind::Sqrt),
-        ),
-        OwnedUnitExpr::Numeric(_) => 0,
-        OwnedUnitExpr::Product(factors) => factors.iter().fold(0, |power, f| {
-            power.saturating_add(sqrt_power(&f.expr).saturating_mul(f.exponent))
-        }),
-        OwnedUnitExpr::Quotient(numerator, denominator) => {
-            sqrt_power(numerator).saturating_sub(sqrt_power(denominator))
-        }
-        OwnedUnitExpr::Power(base, exp) => sqrt_power(base).saturating_mul(*exp),
-    }
-}
-
-/// Whether an expression uses a unit code that matches `matches`.
-fn uses_unit(expr: &OwnedUnitExpr, matches: &dyn Fn(&str) -> bool) -> bool {
-    match expr {
-        OwnedUnitExpr::Symbol(code) => matches(code),
-        OwnedUnitExpr::Numeric(_) => false,
-        OwnedUnitExpr::Product(factors) => factors.iter().any(|f| uses_unit(&f.expr, matches)),
-        OwnedUnitExpr::Quotient(numerator, denominator) => {
-            uses_unit(numerator, matches) || uses_unit(denominator, matches)
-        }
-        OwnedUnitExpr::Power(base, _) => uses_unit(base, matches),
-    }
-}
-
-/// A level (`B`, `dB`, `Np`, `bit_s`) converts linearly to another level, and a prism
-/// diopter to a prism diopter, but not to a unit on another scale: `1 dB` is a ratio of
-/// 10^0.1, not 1. Reject those conversions instead of applying the ratio of the factors.
-/// `[m/s2/Hz^(1/2)]` converts only to an expression with the same power of it, since the
-/// half exponents of its dimension are not in the dimension vector.
-pub(crate) fn check_same_scale(
-    from: &OwnedUnitExpr,
-    to: &OwnedUnitExpr,
-    from_text: &str,
-    to_text: &str,
-) -> Result<(), UcumError> {
-    for kinds in [
-        evaluator::LEVEL_KINDS,
-        &[crate::types::SpecialKind::TanTimes100],
-    ] {
-        if uses_special_unit(from, kinds) != uses_special_unit(to, kinds) {
-            return Err(UcumError::conversion_error(
-                from_text,
-                to_text,
-                "Levels (B, Np, bit_s, [pH], [hp'_X], ...) and tangent units ([p'diop], %[slope]) only convert to units on the same scale",
-            ));
-        }
-    }
-    if sqrt_power(from) != sqrt_power(to) {
-        return Err(UcumError::conversion_error(
-            from_text,
-            to_text,
-            "[m/s2/Hz^(1/2)] has a dimension with half exponents (L.T-3/2) and only converts to the same power of itself",
-        ));
-    }
-    Ok(())
-}
-
-/// Special units cannot take part in algebraic operations (UCUM §22.1): reject operands
-/// with an offset (temperature) or on a logarithmic or tangent scale, and `[m/s2/Hz^(1/2)]`,
-/// whose half exponents the dimension of the result cannot hold.
-#[allow(clippy::result_large_err)]
-fn check_arithmetic_operands(
-    left: &UnitAnalysis,
-    right: &UnitAnalysis,
-    operation: &str,
-) -> Result<(), UcumError> {
-    if left.has_offset || right.has_offset {
-        return Err(UcumError::conversion_error(
-            "offset units",
-            operation,
-            &format!("Offset units cannot be used in {operation}"),
-        ));
-    }
-    if has_function_unit(&left.parsed_ast) || has_function_unit(&right.parsed_ast) {
-        return Err(UcumError::conversion_error(
-            "special units",
-            operation,
-            &format!("Logarithmic and tangent units cannot be used in {operation}"),
-        ));
-    }
-    // The dimension of the result would lose the half exponents of L.T-3/2
-    if sqrt_power(&left.parsed_ast) != 0 || sqrt_power(&right.parsed_ast) != 0 {
-        return Err(UcumError::conversion_error(
-            "special units",
-            operation,
-            &format!(
-                "[m/s2/Hz^(1/2)] has a dimension with half exponents and cannot be used in {operation}"
-            ),
-        ));
-    }
-    Ok(())
-}
-
-// ============================================================================
-// Model Introspection API
-// ============================================================================
-
-/// UCUM model information and metadata.
+/// The UCUM tables.
 #[derive(Debug, Clone)]
 pub struct UcumModel {
-    /// UCUM specification version
-    pub version: String,
-    /// Model revision date
-    pub revision_date: String,
-    /// Available prefixes
+    /// Version of the tables (`2.2`)
+    pub version: &'static str,
+    /// Revision date of the tables
+    pub revision_date: &'static str,
+    /// Prefixes
     pub prefixes: &'static [Prefix],
-    /// All available units
+    /// Unit atoms
     pub units: &'static [UnitRecord],
 }
 
-/// Get the UCUM model information.
-///
-/// Returns metadata about the current UCUM implementation including version,
-/// available prefixes, and unit definitions.
-///
-/// # Examples
+/// The UCUM tables this crate implements.
 ///
 /// ```
 /// use octofhir_ucum::get_model;
 ///
 /// let model = get_model();
-/// println!("UCUM Version: {}", model.version);
-/// println!("Total units: {}", model.units.len());
-/// println!("Total prefixes: {}", model.prefixes.len());
+/// assert_eq!(model.version, "2.2");
+/// assert_eq!(model.prefixes.len(), 24);
 /// ```
 pub fn get_model() -> UcumModel {
     UcumModel {
-        version: "2.1".to_string(),
-        revision_date: "2017-11-21".to_string(),
-        prefixes: crate::registry::PREFIXES,
-        units: get_all_units(),
+        version: UCUM_VERSION,
+        revision_date: UCUM_REVISION_DATE,
+        prefixes: registry::PREFIXES,
+        units: registry::UNITS,
     }
 }
 
-/// Validate the UCUM implementation for self-consistency.
-///
-/// Performs comprehensive validation of the UCUM model to detect any internal
-/// inconsistencies or errors. Returns a list of validation messages.
-///
-/// # Returns
-/// A vector of validation messages. An empty vector indicates no issues found.
-///
-/// # Examples
+/// Check the tables for consistency: unique codes, the seven UCUM base units, every unit
+/// atom valid. Returns the issues found, none for consistent tables.
 ///
 /// ```
 /// use octofhir_ucum::validate_ucum;
 ///
-/// let issues = validate_ucum();
-/// if issues.is_empty() {
-///     println!("UCUM model is valid");
-/// } else {
-///     for issue in issues {
-///         println!("Issue: {}", issue);
-///     }
-/// }
+/// assert!(validate_ucum().is_empty());
 /// ```
 pub fn validate_ucum() -> Vec<String> {
     let mut issues = Vec::new();
-
-    // Check for duplicate unit codes
     let mut seen_codes = HashSet::new();
     for unit in get_all_units() {
-        if !seen_codes.insert(&unit.code) {
+        if !seen_codes.insert(unit.code) {
             issues.push(format!("Duplicate unit code: {}", unit.code));
         }
+        if let Err(e) = validate(unit.code) {
+            issues.push(format!("Unit {} failed validation: {e}", unit.code));
+        }
+        if unit.factor.is_zero() || unit.factor.is_negative() {
+            issues.push(format!(
+                "Unit {} has a factor of {}",
+                unit.code, unit.factor
+            ));
+        }
     }
-
-    // Check for duplicate prefix symbols
     let mut seen_prefixes = HashSet::new();
-    for prefix in crate::registry::PREFIXES {
-        if !seen_prefixes.insert(&prefix.symbol) {
+    for prefix in get_all_prefixes() {
+        if !seen_prefixes.insert(prefix.symbol) {
             issues.push(format!("Duplicate prefix symbol: {}", prefix.symbol));
         }
     }
-
-    // Validate unit expressions that should be parseable
-    for unit in get_all_units() {
-        if let Err(e) = validate(unit.code) {
-            issues.push(format!("Unit {} failed validation: {}", unit.code, e));
-        }
+    let base: BTreeSet<&str> = get_all_units()
+        .iter()
+        .filter(|u| u.is_base)
+        .map(|u| u.code)
+        .collect();
+    let expected: BTreeSet<&str> = Dimension::BASE_UNITS.into_iter().collect();
+    if base != expected {
+        issues.push(format!("Base units are {base:?}, UCUM has {expected:?}"));
     }
-
-    // Check for missing base units
-    let base_unit_codes = ["m", "g", "s", "A", "K", "mol", "cd"];
-    for &base_code in &base_unit_codes {
-        if find_unit(base_code).is_none() {
-            issues.push(format!("Missing base unit: {base_code}"));
-        }
-    }
-
     issues
 }
 
-/// Get all available properties in the UCUM model.
-///
-/// Returns a set of all distinct properties defined in the unit registry.
-/// Properties represent physical quantities like "length", "mass", "time", etc.
-///
-/// # Examples
-///
-/// ```
-/// use octofhir_ucum::get_properties;
-///
-/// let properties = get_properties();
-/// for property in &properties {
-///     println!("Property: {}", property);
-/// }
-/// ```
+/// The distinct properties of the unit atoms (`length`, `mass`, `electric current`).
 pub fn get_properties() -> BTreeSet<String> {
-    let mut properties = BTreeSet::new();
-
-    for unit in get_all_units() {
-        properties.insert(unit.property.to_string());
-    }
-
-    properties
+    get_all_units()
+        .iter()
+        .map(|unit| unit.property.to_string())
+        .collect()
 }
 
-/// Validate that canonical units match the expected form.
-///
-/// Checks if the provided canonical form is correct for the given unit expression.
-/// This is useful for validating externally provided canonical unit strings.
-///
-/// # Arguments
-/// * `unit` - The unit expression to validate
-/// * `canonical` - The expected canonical form
-///
-/// # Examples
-///
-/// ```
-/// use octofhir_ucum::validate_canonical_units;
-///
-/// // Valid canonical form
-/// assert!(validate_canonical_units("km", "m").unwrap());
-///
-/// // Invalid canonical form
-/// assert!(!validate_canonical_units("km", "kg").unwrap());
-/// ```
-#[allow(clippy::result_large_err)]
-pub fn validate_canonical_units(unit: &str, canonical: &str) -> Result<bool, UcumError> {
-    let canonical_result = get_canonical_units(unit)?;
-    Ok(canonical_result.unit == canonical)
-}
+// ============================================================================
+// Display names
+// ============================================================================
 
-/// Get a human-readable display name for a unit code.
-///
-/// Returns the most appropriate display name for the given unit code.
-/// Falls back to the unit code itself if no display name is available.
-///
-/// # Arguments
-/// * `code` - The unit code to get a display name for
-///
-/// # Examples
+/// The name of a unit: "kilogram" for `kg`, "meter" for `m`, the display name of
+/// `generate_display_name` for a compound expression, and the code itself when it is not
+/// valid.
 ///
 /// ```
 /// use octofhir_ucum::get_common_display;
 ///
 /// assert_eq!(get_common_display("m"), "meter");
 /// assert_eq!(get_common_display("kg"), "kilogram");
-/// assert_eq!(get_common_display("unknown"), "unknown");
+/// assert_eq!(get_common_display("k[in_i]"), "k[in_i]");
 /// ```
 pub fn get_common_display(code: &str) -> String {
-    // First try direct lookup
-    if let Some(unit) = find_unit(code) {
-        // Special handling for prefixed units like "kg"
-        if code != unit.code {
-            // This is a prefixed unit, we need to construct the display name
-            // Check if it's a prefix + base unit combination
-            for prefix_len in (1..code.len()).rev() {
-                let (prefix_part, unit_part) = code.split_at(prefix_len);
-
-                if let (Some(prefix), Some(base_unit)) =
-                    (find_prefix(prefix_part), find_unit(unit_part))
-                    && base_unit.code == unit_part
-                {
-                    // Construct prefixed display name
-                    return format!("{}{}", prefix.display_name, base_unit.display_name);
-                }
-            }
-        }
-        unit.display_name.to_string()
-    } else {
-        // Try to generate display name for compound expressions
-        match parse_expression(code) {
-            Ok(expr) => {
-                let display = crate::display::generate_display_name_owned(&expr);
-                // If the display is just the code in parentheses, return the code directly
-                if display == format!("({code})") {
-                    code.to_string()
-                } else {
-                    display
-                }
-            }
-            Err(_) => code.to_string(),
-        }
+    if let Some((prefix, unit)) = lookup_unit(code, Case::Sensitive) {
+        let prefix = prefix.map_or("", |p| p.display_name);
+        return format!("{prefix}{}", unit.display_name);
+    }
+    match parse_expression(code) {
+        Ok(expr) if evaluate(&expr).is_ok() => generate_display_name(&expr),
+        _ => code.to_string(),
     }
 }
 
+/// The display name of the official UCUM tests for an expression: "(meter)",
+/// "(meter ^ 3) * (kilogram ^ -1)", and "(unity)" for an empty code.
+///
+/// ```
+/// use octofhir_ucum::display_name;
+///
+/// assert_eq!(display_name("mm").unwrap(), "(millimeter)");
+/// assert_eq!(display_name("").unwrap(), "(unity)");
+/// ```
+pub fn display_name(code: &str) -> Result<String, UcumError> {
+    if code.is_empty() {
+        return Ok("(unity)".to_string());
+    }
+    let expr = parse_expression(code)?;
+    evaluate(&expr)?;
+    Ok(generate_display_name(&expr))
+}
+
 // ============================================================================
-// Advanced Conversion Operations
+// Conversion
 // ============================================================================
 
-/// Advanced conversion context for enhanced conversion operations.
+/// Options of `convert_with_context`.
 #[derive(Debug, Clone)]
 pub struct AdvancedConversionContext {
-    /// Precision configuration for the conversion
+    /// Rounding of the result
     pub precision: DecimalPrecision,
     /// How the last kept digit is rounded when `precision` is not `Default`
     pub rounding: RoundingMode,
+    /// Case sensitive or case insensitive symbols (UCUM §3.4)
+    pub case: Case,
 }
 
-/// Decimal precision configuration.
+/// Rounding of a converted value.
 #[derive(Debug, Clone)]
 pub enum DecimalPrecision {
-    /// Use default floating-point precision
+    /// No rounding
     Default,
-    /// Use fixed decimal places
+    /// A fixed number of decimal places
     Fixed(u32),
-    /// Use significant figures
+    /// A number of significant figures
     Significant(u32),
 }
 
-/// Rounding mode for conversions.
+/// Rounding mode of a converted value.
 #[derive(Debug, Clone)]
 pub enum RoundingMode {
     /// Round to nearest, halves away from zero (default)
@@ -1413,39 +997,54 @@ impl Default for AdvancedConversionContext {
         Self {
             precision: DecimalPrecision::Default,
             rounding: RoundingMode::Nearest,
+            case: Case::Sensitive,
         }
     }
 }
 
-/// Result of an advanced conversion operation with metadata.
+/// Result of `convert_with_context`.
 #[derive(Debug, Clone)]
 pub struct AdvancedConversionResult {
     /// Converted value
     pub value: f64,
     /// Target unit
     pub unit: String,
-    /// Conversion factor applied
-    pub factor: f64,
-    /// Offset applied (for temperature conversions)
-    pub offset: f64,
-    /// Precision information
+    /// When the conversion is linear, `value = input × factor + offset`; `None` for a
+    /// conversion through the function of a special unit (`B` to `1`, `[pH]` to `mol/L`)
+    pub factor: Option<f64>,
+    /// Offset of a linear conversion (temperatures, levels with different references)
+    pub offset: Option<f64>,
+    /// Description of the rounding
     pub precision_info: String,
-    /// Whether special unit processing was used
+    /// Whether a special unit took part in the conversion
     pub used_special_units: bool,
 }
 
-/// Convert with advanced context and precision control.
+/// Convert a value from one unit to another.
 ///
-/// Performs unit conversion with enhanced control over precision, rounding,
-/// and special unit handling.
+/// Special units convert to and from their corresponding proper units through their
+/// functions (UCUM §21.2): 0 `Cel` is 273.15 `K`, 20 `dB[SPL]` is 0.0002 `Pa`, 7 `[pH]` is
+/// 1e-7 `mol/L`. Arbitrary units convert only to the same arbitrary atoms (UCUM §25):
+/// `[IU]/mL` to `[IU]/L`, but not to `[arb'U]/mL` or `/mL`.
 ///
-/// # Arguments
-/// * `value` - The numeric value to convert
-/// * `from` - Source unit expression
-/// * `to` - Target unit expression
-/// * `context` - Advanced conversion context
+/// ```
+/// use octofhir_ucum::convert;
 ///
-/// # Examples
+/// assert_eq!(convert(1.0, "km", "m").unwrap(), 1000.0);
+/// assert_eq!(convert(100.0, "Cel", "[degF]").unwrap(), 212.0);
+/// assert!((convert(7.0, "[pH]", "mol/L").unwrap() - 1e-7).abs() < 1e-20);
+/// ```
+///
+/// # Errors
+///
+/// Units that are not commensurable are a `ConversionError`. A result that is infinite or
+/// NaN (a target unit such as `"0"`, a value out of range) is a `PrecisionOverflow`.
+pub fn convert(value: f64, from: &str, to: &str) -> Result<f64, UcumError> {
+    convert_with_context(value, from, to, &AdvancedConversionContext::default())
+        .map(|result| result.value)
+}
+
+/// Convert a value from one unit to another, with rounding and case options.
 ///
 /// ```
 /// use octofhir_ucum::{convert_with_context, AdvancedConversionContext, DecimalPrecision};
@@ -1454,45 +1053,22 @@ pub struct AdvancedConversionResult {
 ///     precision: DecimalPrecision::Fixed(2),
 ///     ..Default::default()
 /// };
-///
-/// let result = convert_with_context(1.0, "km", "m", &context).unwrap();
-/// println!("Converted: {} {}", result.value, result.unit);
+/// let result = convert_with_context(1.0, "[in_i]", "cm", &context).unwrap();
+/// assert_eq!(result.value, 2.54);
 /// ```
 ///
 /// # Errors
 ///
-/// A converted value that is infinite or NaN (a target unit that is zero such as `"0"`, a
-/// value out of range or that is not a number) is a `PrecisionOverflow`.
-///
-/// Units with an offset (temperatures) are converted through the base unit:
-/// `convert_with_context(0.0, "Cel", "[degF]", ..)` is 32, and the result satisfies
-/// `value == input * factor + offset`.
-#[allow(clippy::result_large_err)]
+/// As `convert`.
 pub fn convert_with_context(
     value: f64,
     from: &str,
     to: &str,
     context: &AdvancedConversionContext,
 ) -> Result<AdvancedConversionResult, UcumError> {
-    let from_expr = parse_expression(from)?;
-    let to_expr = parse_expression(to)?;
-    let from_eval = evaluate_owned(&from_expr)?;
-    let to_eval = evaluate_owned(&to_expr)?;
-
-    // Check dimension compatibility
-    if from_eval.dim != to_eval.dim {
-        return Err(UcumError::conversion_error(
-            from,
-            to,
-            "Cannot convert between units with different dimensions",
-        ));
-    }
-    check_same_scale(&from_expr, &to_expr, from, to)?;
-
-    // Calculate conversion
-    let operands = || format!("{value:?} {from} to {to}");
-    let (factor, offset) = conversion_terms(&from_eval, &to_eval, operands)?;
-    let converted_value = value * factor + offset;
+    let from_eval = evaluate_with_case(&parse_expression(from)?, context.case)?;
+    let to_eval = evaluate_with_case(&parse_expression(to)?, context.case)?;
+    let (converted, linear) = convert_evaluated(value, from, &from_eval, to, &to_eval)?;
 
     let round = |x: f64| match context.rounding {
         RoundingMode::Nearest => math::round(x),
@@ -1501,193 +1077,197 @@ pub fn convert_with_context(
         RoundingMode::Truncate => math::trunc(x),
     };
     let final_value = match context.precision {
-        DecimalPrecision::Default => converted_value,
+        DecimalPrecision::Default => converted,
         DecimalPrecision::Fixed(places) => {
             let multiplier = math::powi(10.0, places as i32);
-            round(converted_value * multiplier) / multiplier
+            round(converted * multiplier) / multiplier
         }
-        DecimalPrecision::Significant(sig_figs) => {
-            if converted_value == 0.0 {
-                0.0
-            } else {
-                let magnitude = math::floor(math::log10(converted_value.abs()));
-                let factor = math::powi(10.0, (sig_figs as i32 - 1) - magnitude as i32);
-                round(converted_value * factor) / factor
-            }
+        DecimalPrecision::Significant(sig_figs) if converted != 0.0 => {
+            let magnitude = math::floor(math::log10(converted.abs()));
+            let factor = math::powi(10.0, (sig_figs as i32 - 1) - magnitude as i32);
+            round(converted * factor) / factor
         }
+        DecimalPrecision::Significant(_) => converted,
     };
-
     let precision_info = match context.precision {
         DecimalPrecision::Default => "default".to_string(),
         DecimalPrecision::Fixed(places) => format!("{places} decimal places"),
         DecimalPrecision::Significant(sig_figs) => format!("{sig_figs} significant figures"),
     };
-
     Ok(AdvancedConversionResult {
-        // A target unit such as "0" has a factor of zero
-        value: check_number(final_value, true, "conversion", operands)?,
+        value: final_value,
         unit: to.to_string(),
-        factor,
-        offset,
+        factor: linear.map(|l| l.factor.to_f64()),
+        offset: linear.map(|l| l.offset.to_f64()),
         precision_info,
-        used_special_units: !from_eval.offset.is_zero()
-            || !to_eval.offset.is_zero()
-            || has_referenced_level(&from_expr)
-            || has_referenced_level(&to_expr),
+        used_special_units: from_eval.special.is_some() || to_eval.special.is_some(),
     })
 }
 
-/// The `factor` and `offset` that convert a value from one unit to another of the same
-/// dimension, as `value * factor + offset`. This is `(value * from.factor + from.offset -
-/// to.offset) / to.factor`, the conversion of UCUM through the base units.
-///
-/// Both terms are computed in `Decimal` where they fit. A term that does not fit in a `Decimal` (`Ym` to `ym` is 1e48) or is too small for it is computed in
-/// `f64`. A target unit with a factor of zero (the unit `0`) is a `PrecisionOverflow` of the
-/// conversion described by `operands`.
-pub(crate) fn conversion_terms(
-    from: &EvalResult,
-    to: &EvalResult,
-    operands: impl Fn() -> String,
-) -> Result<(f64, f64), UcumError> {
-    let quotient = |numerator: Number| {
-        let in_decimal = numerator
-            .checked_div(to.factor)
-            .filter(|ratio| !ratio.is_zero() || numerator.is_zero());
-        let ratio = match in_decimal {
-            Some(ratio) => to_f64(ratio),
-            None => to_f64(numerator) / to_f64(to.factor),
-        };
-        if ratio.is_finite() {
-            Ok(ratio)
+/// Convert a value between two evaluated expressions, after checking that they are
+/// commensurable. Returns the value and the linear mapping, if the conversion is linear.
+pub(crate) fn convert_evaluated(
+    value: f64,
+    from: &str,
+    from_eval: &EvalResult,
+    to: &str,
+    to_eval: &EvalResult,
+) -> Result<(f64, Option<evaluator::Linear>), UcumError> {
+    if !from_eval.is_commensurable(to_eval) {
+        let reason = if from_eval.arbitrary != to_eval.arbitrary {
+            "an arbitrary unit converts only to the same arbitrary unit (UCUM §25)"
         } else {
-            Err(UcumError::precision_overflow("conversion", &operands()))
-        }
-    };
-    let offset_difference = from
-        .offset
-        .checked_sub(to.offset)
-        .ok_or_else(|| UcumError::precision_overflow("conversion", &operands()))?;
-    Ok((quotient(from.factor)?, quotient(offset_difference)?))
+            "the units are not commensurable: they have different dimensions"
+        };
+        return Err(UcumError::conversion_error(from, to, reason));
+    }
+    let converted = evaluator::convert_value(value, from_eval, to_eval)?;
+    if !converted.is_finite() {
+        return Err(UcumError::precision_overflow(
+            "conversion",
+            &format!("{value:?} {from} to {to}"),
+        ));
+    }
+    Ok((converted, evaluator::linear_conversion(from_eval, to_eval)))
 }
 
 // ============================================================================
-// Extended Functionality - Unit Expression Optimization
+// Expression rewriting
 // ============================================================================
 
-/// Optimize a unit expression for better readability and canonical form.
-///
-/// This function simplifies unit expressions by combining like terms, removing
-/// redundant parentheses, and using more readable unit forms where possible.
-///
-/// # Arguments
-/// * `expr` - The unit expression to optimize
-///
-/// # Examples
+/// An equal expression that is easier to read: a base or derived SI unit with a prefix when
+/// one is equal (`g.m2.s-2` is `mJ`, `kg.m/s2` is `N`, `ft/ft.km` is `km`), otherwise the
+/// canonical unit with its magnitude (`[in_i]` is `254.10*-4.m`). Special units are returned
+/// unchanged.
 ///
 /// ```
 /// use octofhir_ucum::optimize_expression;
 ///
-/// let optimized = optimize_expression("m2/s2").unwrap();
-/// assert_eq!(optimized, "m2.s-2");
+/// assert_eq!(optimize_expression("kg.m/s2").unwrap(), "N");
+/// assert_eq!(optimize_expression("g.m2.s-2").unwrap(), "mJ");
+/// assert_eq!(optimize_expression("m2/s2").unwrap(), "m2.s-2");
 /// ```
-#[allow(clippy::result_large_err)]
 pub fn optimize_expression(expr: &str) -> Result<String, UcumError> {
-    // Parse the expression to ensure it's valid
-    let _parsed = parse_expression(expr)?;
-    let analysis = analyse(expr)?;
-
-    // Get canonical form first
-    let canonical = get_canonical_units(expr)?;
-
-    // Try to build a more readable form from the dimension vector
-    let optimized = build_optimized_unit_string(&analysis.dimension, &canonical);
-
-    Ok(optimized)
+    // Base units first, then SI derived units
+    const UNITS: [&str; 21] = [
+        "m", "s", "g", "rad", "K", "C", "cd", "N", "J", "W", "Pa", "Hz", "V", "Ohm", "F", "S",
+        "Wb", "T", "H", "A", "L",
+    ];
+    let (parsed, result) = eval(expr)?;
+    if result.special.is_some() {
+        return Ok(parsed.to_string());
+    }
+    if result.arbitrary.is_empty() {
+        for code in UNITS {
+            let unit = find_unit(code).expect("SI unit");
+            if unit.dim != result.dim {
+                continue;
+            }
+            let ratio = result
+                .factor
+                .checked_div(unit.factor)
+                .ok_or_else(|| UcumError::precision_overflow("optimization", expr))?;
+            if ratio == Number::ONE {
+                return Ok(code.to_string());
+            }
+            if let Some(prefix) = get_all_prefixes()
+                .iter()
+                .filter(|p| !p.symbol.ends_with('i') || p.symbol.len() == 1)
+                .find(|p| p.factor == ratio)
+            {
+                return Ok(format!("{}{code}", prefix.symbol));
+            }
+        }
+    }
+    let unit = canonical_unit_string(&result.dim, &result.arbitrary);
+    Ok(if result.factor == Number::ONE {
+        unit
+    } else if unit == "1" {
+        ucum_number(result.factor)
+    } else {
+        format!("{}.{unit}", ucum_number(result.factor))
+    })
 }
 
-/// Convert a unit expression to its canonical (base units) form.
-///
-/// Returns the expression in terms of the seven SI base units with appropriate
-/// exponents. This is useful for dimensional analysis and unit verification.
-///
-/// # Arguments
-/// * `expr` - The unit expression to canonicalize
-///
-/// # Examples
+/// The canonical unit of an expression, without its magnitude (see `get_canonical_units`).
 ///
 /// ```
 /// use octofhir_ucum::canonicalize_expression;
 ///
-/// let canonical = canonicalize_expression("N").unwrap();
-/// assert_eq!(canonical, "g.m.s-2");
+/// assert_eq!(canonicalize_expression("N").unwrap(), "g.m.s-2");
 /// ```
-#[allow(clippy::result_large_err)]
 pub fn canonicalize_expression(expr: &str) -> Result<String, UcumError> {
-    let canonical = get_canonical_units(expr)?;
-    Ok(canonical.unit)
+    get_canonical_units(expr).map(|canonical| canonical.unit)
 }
 
-/// Simplify a unit expression by combining like terms and reducing complexity.
-///
-/// This function performs algebraic simplification on unit expressions,
-/// combining exponents of the same units and removing identity operations.
-///
-/// # Arguments
-/// * `expr` - The unit expression to simplify
-///
-/// # Examples
+/// An equal expression with the exponents of each simple unit combined, numbers
+/// multiplied and annotations dropped: `m.s/s` is `m`, `km.km` is `km2`. Special units are
+/// returned unchanged.
 ///
 /// ```
 /// use octofhir_ucum::simplify_expression;
 ///
-/// let simplified = simplify_expression("m.s/s").unwrap();
-/// assert_eq!(simplified, "m");
+/// assert_eq!(simplify_expression("m.s/s").unwrap(), "m");
+/// assert_eq!(simplify_expression("km.s/s").unwrap(), "km");
+/// assert_eq!(simplify_expression("2.m/4").unwrap(), "5.10*-1.m");
 /// ```
-#[allow(clippy::result_large_err)]
 pub fn simplify_expression(expr: &str) -> Result<String, UcumError> {
-    // For now, return a simplified version based on canonical form
-    // This avoids potential infinite loops in AST processing
-    let canonical = get_canonical_units(expr)?;
-
-    // If the canonical form is simpler, return it, otherwise return original
-    if canonical.unit.len() < expr.len() {
-        Ok(canonical.unit)
+    let (parsed, result) = eval(expr)?;
+    if result.special.is_some() {
+        return Ok(parsed.to_string());
+    }
+    let mut number = Number::ONE;
+    let mut symbols: Vec<(String, i32)> = Vec::new();
+    collect_terms(&parsed, 1, &mut number, &mut symbols)
+        .ok_or_else(|| UcumError::precision_overflow("simplification", expr))?;
+    let mut parts: Vec<String> = Vec::new();
+    if number != Number::ONE {
+        parts.push(ucum_number(number));
+    }
+    for (symbol, exp) in symbols.into_iter().filter(|(_, e)| *e != 0) {
+        parts.push(if exp == 1 {
+            symbol
+        } else {
+            format!("{symbol}{exp}")
+        });
+    }
+    Ok(if parts.is_empty() {
+        "1".to_string()
     } else {
-        Ok(expr.to_string())
-    }
+        parts.join(".")
+    })
 }
 
-/// Build an optimized unit string from dimension vector.
-fn build_optimized_unit_string(dim: &Dimension, canonical: &CanonicalUnit) -> String {
-    // Try to use more readable derived units where possible
-    let common_units = [
-        // Force units
-        (Dimension([1, 1, -2, 0, 0, 0, 0]), "N", 1.0),
-        // Energy units
-        (Dimension([1, 2, -2, 0, 0, 0, 0]), "J", 1.0),
-        // Power units
-        (Dimension([1, 2, -3, 0, 0, 0, 0]), "W", 1.0),
-        // Pressure units
-        (Dimension([1, -1, -2, 0, 0, 0, 0]), "Pa", 1.0),
-        // Frequency units
-        (Dimension([0, 0, -1, 0, 0, 0, 0]), "Hz", 1.0),
-        // Voltage units
-        (Dimension([1, 2, -3, -1, 0, 0, 0]), "V", 1.0),
-        // Resistance units
-        (Dimension([1, 2, -3, -2, 0, 0, 0]), "Ohm", 1.0),
-    ];
-
-    // Check if dimension matches a common derived unit
-    for (dim_pattern, unit_name, _factor) in &common_units {
-        if dim == dim_pattern {
-            return unit_name.to_string();
+/// Collect the simple units with their exponents, in order of appearance, and the product
+/// of the numbers of an expression raised to `exp`.
+fn collect_terms(
+    expr: &UnitExpr,
+    exp: i32,
+    number: &mut Number,
+    symbols: &mut Vec<(String, i32)>,
+) -> Option<()> {
+    match expr {
+        UnitExpr::Symbol(symbol) => {
+            match symbols.iter_mut().find(|(s, _)| s == symbol) {
+                Some(entry) => entry.1 = entry.1.checked_add(exp)?,
+                None => symbols.push((symbol.clone(), exp)),
+            }
+            Some(())
         }
+        UnitExpr::Numeric(n) => {
+            *number = number.checked_mul(n.checked_powi(exp)?)?;
+            Some(())
+        }
+        UnitExpr::Annotation(_) => Some(()),
+        UnitExpr::Annotated(inner, _) => collect_terms(inner, exp, number, symbols),
+        UnitExpr::Power(base, e) => collect_terms(base, exp.checked_mul(*e)?, number, symbols),
+        UnitExpr::Product(terms) => terms
+            .iter()
+            .try_for_each(|term| collect_terms(term, exp, number, symbols)),
+        UnitExpr::Quotient(numerator, denominator) => {
+            collect_terms(numerator, exp, number, symbols)?;
+            collect_terms(denominator, exp.checked_neg()?, number, symbols)
+        }
+        UnitExpr::Reciprocal(inner) => collect_terms(inner, exp.checked_neg()?, number, symbols),
     }
-
-    // Fall back to canonical form
-    canonical.unit.clone()
 }
-
-// Feature-gated modules
-#[cfg(feature = "fhir")]
-pub mod fhir;

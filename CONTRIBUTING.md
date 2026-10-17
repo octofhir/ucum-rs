@@ -87,49 +87,24 @@ cargo doc --open --no-deps --all
 cargo test --doc
 ```
 
+## Specification Conformance
+
+UCUM-RS follows the UCUM specification (version 2.2) as a requirement. Before changing
+semantics, read the relevant section in [`spec/`](spec/) and cite it (§) in the code, the
+tests and the pull request. A behaviour that the specification does not define, or where
+its sources disagree, must be listed in the README ("Specification conformance").
+Backward compatibility never justifies a deviation.
+
 ## Architecture Overview
 
-The UCUM-RS library implements a high-performance zero-copy parsing architecture. Key components:
+- **Registry** (`build.rs`): generated from `ucum-essence.xml`, every unit resolved to the
+  UCUM base units with exact decimal arithmetic
+- **Number** (`src/number.rs`): exact decimal numbers of any magnitude
+- **Parser** (`src/parser.rs`, `src/ast.rs`): strict UCUM syntax (§1-10)
+- **Evaluator** (`src/evaluator.rs`): semantics, special and arbitrary units, conversion
+  (§16-26)
 
-### Core Components
-
-- **Parser** (`src/parser.rs`): Zero-copy parsing with `nom`, handles all UCUM edge cases
-- **AST** (`src/ast.rs`): Dual AST architecture - `UnitExpr<'a>` (borrowed) and `OwnedUnitExpr` (owned)
-- **Evaluator** (`src/evaluator.rs`): Computes canonical forms, dimensions, and conversion factors
-- **Registry** (`src/registry.rs`): Compile-time generated from `ucum-essence.xml` via `build.rs`
-- **Special Units** (`src/special_units.rs`): Extensible handlers for temperature, logarithmic units
-
-### Design Principles
-
-1. **Zero-Copy Optimization**: Parser creates AST that borrows from input strings
-2. **Compile-Time Code Generation**: Registry generated from XML specification at build time
-3. **`no_std` + `alloc`**: Core compiles without `std`; no thread-local storage (WASM)
-4. **Comprehensive Error Handling**: Precise error locations with helpful suggestions
-
-For detailed architecture documentation, see [CLAUDE.md](CLAUDE.md).
-
-## Development Areas
-
-### Core Parser (`src/parser.rs`)
-
-When adding parser features:
-
-1. Implement in `parser.rs` maintaining zero-copy optimizations
-2. Add comprehensive tests covering edge cases
-3. Ensure backward compatibility with existing API
-4. Validate against official UCUM conformance tests
-
-### AST and Evaluation (`src/ast.rs`, `src/evaluator.rs`)
-
-- Follow zero-copy patterns where possible
-- Use `UnitExpr<'a>` for borrowed data, `OwnedUnitExpr` for owned data
-- Maintain dimensional analysis consistency
-
-### Registry and Build System (`src/registry.rs`, `build.rs`)
-
-- Registry is generated at compile-time from `ucum-essence.xml`
-- Changes to build system must maintain WASM compatibility
-- Avoid thread-local storage for cross-platform support
+See [CLAUDE.md](CLAUDE.md) for details.
 
 ## Adding New Features
 
@@ -203,15 +178,15 @@ fn test_new_feature() {
 - [ ] No clippy warnings (`cargo clippy --all -- -D warnings`)
 - [ ] Documentation updated for public APIs
 - [ ] [CHANGELOG.md](CHANGELOG.md) updated if applicable
-- [ ] Backward compatibility maintained
+- [ ] Behaviour cites and follows the UCUM specification
 
 ## Project-Specific Guidelines
 
-### Unicode Handling
+### Character Set
 
-- Always handle µ (micro sign) properly in parsers
-- Use UTF-8 byte sequences (0xC2 0xB5) for micro sign detection
-- Test with both ASCII 'u' and Unicode 'µ' variants
+- UCUM expressions are 7-bit ASCII (§3.1): never accept `µ` or other non-ASCII characters
+- White space is rejected
+- Test that non-ASCII input returns an error, never a panic
 
 ### WASM Compatibility
 
@@ -227,7 +202,7 @@ fn test_new_feature() {
 
 ### Error Messages
 
-- Provide precise error locations with spans
+- Include the position of syntax errors in the message
 - Include suggestions for common mistakes
 - Test error message clarity with real users
 

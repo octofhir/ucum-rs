@@ -1,167 +1,166 @@
-use octofhir_ucum::{find_unit, get_all_units};
-use std::collections::HashSet;
-use std::fs;
+//! The registry holds every prefix and unit atom of `ucum-essence.xml`, and nothing else,
+//! with the attributes of the XML: case insensitive codes, the metric, special and
+//! arbitrary flags, the class and the name.
 
-#[test]
-fn test_all_units_from_xml_are_in_registry() {
-    // Read and parse the ucum-essence.xml file
-    let xml_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ucum-essence.xml");
-    let xml_content = fs::read_to_string(&xml_path).expect("Failed to read ucum-essence.xml");
+use octofhir_ucum::{Number, find_prefix, find_unit, get_all_prefixes, get_all_units};
+use quick_xml::Reader;
+use quick_xml::events::Event;
+use std::collections::{BTreeSet, HashMap};
 
-    // Extract all unit codes from XML
-    let xml_units = extract_unit_codes_from_xml(&xml_content);
-    println!("Found {} units in ucum-essence.xml", xml_units.len());
+const XML: &str = include_str!("../ucum-essence.xml");
 
-    // Get all units from registry
-    let registry_units = get_all_units();
-    let registry_codes: HashSet<String> = registry_units
-        .iter()
-        .map(|unit| unit.code.to_string())
-        .collect();
-
-    println!("Found {} units in registry", registry_codes.len());
-
-    // Check for missing units
-    let mut missing_units = Vec::new();
-    let mut found_units = Vec::new();
-
-    for xml_unit in &xml_units {
-        if registry_codes.contains(xml_unit) {
-            found_units.push(xml_unit.clone());
-        } else {
-            missing_units.push(xml_unit.clone());
-        }
-    }
-
-    // Print results
-    println!("Units found in registry: {}", found_units.len());
-    if !missing_units.is_empty() {
-        println!("Missing units from registry:");
-        for unit in &missing_units {
-            println!("  - {unit}");
-        }
-    }
-
-    // Also check if we can lookup each unit
-    let mut lookup_failures = Vec::new();
-    for xml_unit in &xml_units {
-        if find_unit(xml_unit).is_none() {
-            lookup_failures.push(xml_unit.clone());
-        }
-    }
-
-    if !lookup_failures.is_empty() {
-        println!("Units that failed lookup:");
-        for unit in &lookup_failures {
-            println!("  - {unit}");
-        }
-    }
-
-    // Print some sample units for verification
-    println!("\nSample units from XML:");
-    for (i, unit) in xml_units.iter().take(10).enumerate() {
-        println!("  {}. {}", i + 1, unit);
-    }
-
-    println!("\nSample units from registry:");
-    for (i, unit) in registry_units.iter().take(10).enumerate() {
-        println!("  {}. {} ({})", i + 1, unit.code, unit.display_name);
-    }
-
-    // The test passes if all units from XML are found in registry
-    assert!(
-        missing_units.is_empty(),
-        "Found {} missing units in registry: {:?}",
-        missing_units.len(),
-        missing_units
-    );
-
-    // Also verify lookup works for all units
-    assert!(
-        lookup_failures.is_empty(),
-        "Found {} units that failed lookup: {:?}",
-        lookup_failures.len(),
-        lookup_failures
-    );
-}
-
-fn extract_unit_codes_from_xml(xml_content: &str) -> Vec<String> {
-    let mut unit_codes = Vec::new();
-
-    let mut reader = quick_xml::Reader::from_str(xml_content);
-
+/// `(element name, attributes, first <name>, <value value=...>)` of every prefix, base unit
+/// and unit.
+fn elements() -> Vec<(String, HashMap<String, String>, String, String)> {
+    let mut reader = Reader::from_str(XML);
+    let mut elements = Vec::new();
+    let mut current: Option<(String, HashMap<String, String>, String, String)> = None;
+    let mut in_name = false;
+    // Some units have several names; the first one is the primary
+    let mut names = 0;
     loop {
-        use quick_xml::events::Event;
-        match reader.read_event() {
-            Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) => {
-                match e.name().as_ref() {
-                    b"base-unit" | b"unit" => {
-                        // Extract the Code attribute
-                        if let Some(code_attr) = e
-                            .attributes()
-                            .filter_map(|a| a.ok())
-                            .find(|a| a.key.as_ref() == b"Code")
-                        {
-                            let code = String::from_utf8_lossy(&code_attr.value).to_string();
-                            unit_codes.push(code);
+        match reader.read_event().expect("well-formed XML") {
+            Event::Start(e) | Event::Empty(e) => {
+                let tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let attributes: HashMap<String, String> = e
+                    .attributes()
+                    .map(|a| {
+                        let a = a.unwrap();
+                        (
+                            String::from_utf8_lossy(a.key.as_ref()).into_owned(),
+                            a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                .unwrap()
+                                .into_owned(),
+                        )
+                    })
+                    .collect();
+                match tag.as_str() {
+                    "prefix" | "base-unit" | "unit" => {
+                        current = Some((tag, attributes, String::new(), String::new()));
+                        names = 0;
+                    }
+                    "name" => {
+                        names += 1;
+                        in_name = names == 1;
+                    }
+                    "value" => {
+                        if let Some(c) = current.as_mut() {
+                            c.3 = attributes.get("value").cloned().unwrap_or_default();
                         }
                     }
                     _ => {}
                 }
             }
-            Ok(Event::Eof) => break,
-            Err(e) => panic!("Error reading XML: {e:?}"),
+            Event::Text(t) if in_name => {
+                if let Some(c) = current.as_mut() {
+                    c.2.push_str(&t.decode().unwrap());
+                }
+            }
+            Event::GeneralRef(r) if in_name => {
+                if let Some(c) = current.as_mut()
+                    && let Ok(Some(ch)) = r.resolve_char_ref()
+                {
+                    c.2.push(ch);
+                }
+            }
+            Event::End(e) => match e.name().as_ref() {
+                b"name" => in_name = false,
+                b"prefix" | b"base-unit" | b"unit" => elements.extend(current.take()),
+                _ => {}
+            },
+            Event::Eof => return elements,
             _ => {}
         }
     }
+}
 
-    // Remove duplicates and sort
-    unit_codes.sort();
-    unit_codes.dedup();
-
-    unit_codes
+fn flag(attributes: &HashMap<String, String>, key: &str) -> bool {
+    attributes.get(key).is_some_and(|v| v == "yes")
 }
 
 #[test]
-fn test_specific_units_exist() {
-    // Test some specific units that should definitely exist
-    let expected_units = vec![
-        "m",     // meter (base unit)
-        "kg",    // kilogram (base unit)
-        "s",     // second (base unit)
-        "A",     // ampere (base unit)
-        "K",     // kelvin (base unit)
-        "mol",   // mole (base unit)
-        "cd",    // candela (base unit)
-        "g",     // gram
-        "L",     // liter
-        "l",     // liter (lowercase)
-        "min",   // minute
-        "h",     // hour
-        "d",     // day
-        "Cel",   // Celsius
-        "bar",   // bar
-        "Pa",    // pascal
-        "N",     // newton
-        "J",     // joule
-        "W",     // watt
-        "V",     // volt
-        "Ohm",   // ohm
-        "Hz",    // hertz
-        "wk",    // week
-        "[NTU]", // Nephelometric Turbidity Unit
-        "[FNU]", // Formazin Turbidity Unit
-    ];
+fn every_unit_of_the_xml_is_in_the_registry_and_nothing_else() {
+    let xml: BTreeSet<String> = elements()
+        .into_iter()
+        .filter(|(tag, ..)| tag != "prefix")
+        .map(|(_, attributes, ..)| attributes["Code"].clone())
+        .collect();
+    let registry: BTreeSet<String> = get_all_units().iter().map(|u| u.code.to_string()).collect();
+    assert_eq!(xml.len(), 312);
+    assert_eq!(registry, xml);
+    // Sorted by code, for the binary search of `find_unit`
+    assert!(get_all_units().windows(2).all(|w| w[0].code < w[1].code));
+}
 
-    for unit_code in expected_units {
-        let unit = find_unit(unit_code);
-        assert!(
-            unit.is_some(),
-            "Expected unit '{unit_code}' not found in registry"
+#[test]
+fn units_have_the_attributes_of_the_xml() {
+    for (tag, attributes, name, _) in elements().into_iter().filter(|(tag, ..)| tag != "prefix") {
+        let code = &attributes["Code"];
+        let unit = find_unit(code).unwrap_or_else(|| panic!("{code}"));
+        let base = tag == "base-unit";
+        assert_eq!(unit.is_base, base, "{code}");
+        assert_eq!(unit.code_ci, attributes["CODE"], "{code}");
+        // White space in names is collapsed to single spaces
+        let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(unit.display_name, name, "{code}");
+        assert_eq!(
+            unit.class,
+            attributes.get("class").map_or("", String::as_str),
+            "{code}"
         );
+        // Base units are metric (UCUM §11.3)
+        assert_eq!(
+            unit.is_metric,
+            base || flag(&attributes, "isMetric"),
+            "{code}"
+        );
+        assert_eq!(
+            unit.special.is_special(),
+            flag(&attributes, "isSpecial"),
+            "{code}"
+        );
+        assert_eq!(
+            unit.special.is_arbitrary(),
+            flag(&attributes, "isArbitrary"),
+            "{code}"
+        );
+        assert_eq!(
+            unit.arbitrary.is_empty(),
+            !unit.special.is_arbitrary(),
+            "{code}"
+        );
+        assert!(
+            !unit.factor.is_zero() && !unit.factor.is_negative(),
+            "{code}"
+        );
+    }
+}
 
-        if let Some(u) = unit {
-            println!("✓ Found unit '{}': {}", unit_code, u.display_name);
-        }
+#[test]
+fn every_prefix_of_the_xml_is_in_the_registry_with_its_value() {
+    let prefixes: Vec<_> = elements()
+        .into_iter()
+        .filter(|(tag, ..)| tag == "prefix")
+        .collect();
+    assert_eq!(prefixes.len(), 24);
+    assert_eq!(get_all_prefixes().len(), 24);
+    for (_, attributes, name, value) in prefixes {
+        let code = &attributes["Code"];
+        let prefix = find_prefix(code).unwrap_or_else(|| panic!("{code}"));
+        assert_eq!(prefix.symbol_ci, attributes["CODE"], "{code}");
+        assert_eq!(prefix.display_name, name.trim(), "{code}");
+        assert_eq!(prefix.factor, Number::parse(&value).unwrap(), "{code}");
+    }
+    assert_eq!(find_prefix("Ki").unwrap().factor, Number::from_i64(1024));
+}
+
+#[test]
+fn units_frequently_used_in_practice_exist() {
+    for code in [
+        "m", "s", "g", "rad", "K", "C", "cd", "A", "mol", "L", "l", "min", "h", "d", "wk", "Cel",
+        "bar", "Pa", "N", "J", "W", "V", "Ohm", "Hz", "%", "[NTU]", "[FNU]", "[IU]", "[degF]",
+        "m[Hg]", "[in_i]", "[lb_av]",
+    ] {
+        assert!(find_unit(code).is_some(), "{code}");
     }
 }

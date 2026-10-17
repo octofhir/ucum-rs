@@ -37,15 +37,15 @@ fn error_names_the_exponents_that_overflow() {
 #[test]
 fn exponents_in_range_still_work() {
     let product = multiply(2.0, "m60", 3.0, "m67").unwrap();
-    assert_eq!(product.dimension, Dimension([0, 127, 0, 0, 0, 0, 0]));
+    assert_eq!(product.dimension, Dimension([127, 0, 0, 0, 0, 0, 0]));
     let quotient = unit_divide("m2", "m3").unwrap();
-    assert_eq!(quotient.dimension, Dimension([0, -1, 0, 0, 0, 0, 0]));
+    assert_eq!(quotient.dimension, Dimension([-1, 0, 0, 0, 0, 0, 0]));
 
     // -128 is the lowest exponent that fits
     let lowest = unit_divide("/m64", "m64").unwrap();
-    assert_eq!(lowest.dimension, Dimension([0, -128, 0, 0, 0, 0, 0]));
+    assert_eq!(lowest.dimension, Dimension([-128, 0, 0, 0, 0, 0, 0]));
     let lowest = divide_by(1.0, "/m64", 1.0, "m64").unwrap();
-    assert_eq!(lowest.dimension, Dimension([0, -128, 0, 0, 0, 0, 0]));
+    assert_eq!(lowest.dimension, Dimension([-128, 0, 0, 0, 0, 0, 0]));
     let highest = unit_multiply("m60", "m67").unwrap();
-    assert_eq!(highest.dimension, Dimension([0, 127, 0, 0, 0, 0, 0]));
+    assert_eq!(highest.dimension, Dimension([127, 0, 0, 0, 0, 0, 0]));
 }

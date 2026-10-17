@@ -123,7 +123,7 @@ export const useUcum = () => {
       if (!ucumWasm || !wasmInitialized) throw new Error('UCUM not initialized');
 
       try {
-        const result = await queueWasmCall(() => ucumWasm?.analyze_unit(expression));
+        const result = await queueWasmCall(() => ucumWasm?.analyze(expression));
         return { info: result };
       } catch (error: any) {
         if (error && typeof error === 'object' && error.message) {
@@ -174,7 +174,7 @@ export const useUcum = () => {
       if (!ucumWasm || !wasmInitialized) throw new Error('UCUM not initialized');
 
       try {
-        const result = await queueWasmCall(() => ucumWasm?.search_units_text(query));
+        const result = await queueWasmCall(() => ucumWasm?.search(query));
         if (result && result.units) {
           return { units: result.units };
         }
@@ -258,7 +258,7 @@ export const useUcum = () => {
       if (!ucumWasm || !wasmInitialized) throw new Error('UCUM not initialized');
 
       try {
-        const result = await queueWasmCall(() => ucumWasm?.units_comparable(unit1, unit2));
+        const result = await queueWasmCall(() => ucumWasm?.comparable(unit1, unit2));
         return { compatible: Boolean(result) };
       } catch (error: any) {
         if (error && typeof error === 'object' && error.message) {
@@ -292,7 +292,7 @@ export const useUcum = () => {
       if (!ucumWasm || !wasmInitialized) throw new Error('UCUM not initialized');
 
       try {
-        const result = await queueWasmCall(() => ucumWasm?.evaluate_expression(expression));
+        const result = await queueWasmCall(() => ucumWasm?.analyze(expression));
         return { result };
       } catch (error: any) {
         if (error && typeof error === 'object' && error.message) {

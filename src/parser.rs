@@ -1,689 +1,353 @@
-//! UCUM expression parser: a single-pass tokenizer and a recursive-descent parser
-//! that builds a borrowing `UnitExpr`, returned as an `OwnedUnitExpr`.
+//! Parser of UCUM expressions, following the syntax of UCUM §1-10 and its grammar:
+//!
+//! ```text
+//! mainTerm    := '/' term | term
+//! term        := component (('.' | '/') component)*
+//! component   := simpleUnit exponent? annotation?
+//!              | digits annotation?
+//!              | annotation
+//!              | '(' term ')'
+//! exponent    := ('+' | '-')? digits
+//! annotation  := '{' (characters 33-126 but '{' and '}')+ '}'
+//! ```
+//!
+//! A leading solidus inverts the component right after it (UCUM §7.3). Expressions use the
+//! characters 33-126 of ASCII only (§3.1): white space is an error, as §3 allows. A simple
+//! unit is a run of the characters allowed in unit symbols (§3.2) and of square bracket
+//! groups (§5); digits at its end are its exponent (`m2`). A run of digits alone is a
+//! positive integer (§8), and is a symbol when another symbol character follows (`10*`).
 
-use crate::ast::{OwnedUnitExpr, UnitExpr, UnitFactor};
+use crate::ast::UnitExpr;
 use crate::error::UcumError;
-use crate::math;
+use crate::number::Number;
 use crate::prelude::*;
-use smallvec::SmallVec;
 
-// ============================================================================
-// Compile-time lookup tables
-// ============================================================================
-
-/// ASCII character classification lookup table
-static CHAR_CLASS: [CharClass; 256] = {
-    let mut table = [CharClass::Invalid; 256];
-    let mut i = 0;
-    while i < 256 {
-        let ch = i as u8 as char;
-        table[i] = if ch.is_ascii_alphabetic() {
-            CharClass::Letter
-        } else if ch.is_ascii_digit() {
-            CharClass::Digit
-        } else {
-            match ch {
-                '.' => CharClass::Dot,
-                '/' => CharClass::Slash,
-                '^' => CharClass::Caret,
-                '(' => CharClass::OpenParen,
-                ')' => CharClass::CloseParen,
-                '{' => CharClass::OpenBrace,
-                '}' => CharClass::CloseBrace,
-                '[' => CharClass::OpenBracket,
-                ']' => CharClass::CloseBracket,
-                '-' | '+' => CharClass::Sign,
-                '_' | '\'' | '%' => CharClass::Symbol,
-                '*' => CharClass::Star,
-                ' ' | '\t' | '\n' | '\r' => CharClass::Whitespace,
-                _ => CharClass::Invalid,
-            }
-        };
-        i += 1;
-    }
-    table
-};
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-enum CharClass {
-    Letter,
-    Digit,
-    Dot,
-    Slash,
-    Caret,
-    OpenParen,
-    CloseParen,
-    OpenBrace,
-    CloseBrace,
-    OpenBracket,
-    CloseBracket,
-    Sign,
-    Symbol,
-    Star,
-    Whitespace,
-    Invalid,
+/// Characters that cannot be part of a unit symbol outside square brackets (UCUM §3.2).
+fn is_symbol_char(b: u8) -> bool {
+    (33..=126).contains(&b) && !b"\"()+-./=[]{}".contains(&b)
 }
 
-// ============================================================================
-// Fast character validation
-// ============================================================================
-
-/// Fast symbol character check using lookup table.
-///
-/// Returns true if the character can be part of a UCUM symbol.
-/// This includes letters, digits, brackets, and some special symbols.
-#[inline(always)]
-fn is_symbol_char_fast(ch: u8) -> bool {
-    matches!(
-        CHAR_CLASS[ch as usize],
-        CharClass::Letter
-            | CharClass::Digit
-            | CharClass::Symbol
-            | CharClass::OpenBracket
-            | CharClass::CloseBracket
-            | CharClass::Sign
-    )
-}
-
-/// Token types produced by the tokenizer.
-///
-/// Each token represents a meaningful unit in a UCUM expression.
-#[derive(Debug, Clone, PartialEq)]
-enum Token<'a> {
-    Symbol(&'a str),
-    Number(f64),
-    TenPower(i32),
-    Operator(char),
-    OpenParen,
-    CloseParen,
-    Annotation(&'a str),
-}
-
-/// Fast single-pass tokenizer for UCUM expressions.
-///
-/// This tokenizer processes UCUM expressions character by character,
-/// producing tokens that can be consumed by the parser.
-struct Tokenizer<'a> {
+struct Parser<'a> {
     input: &'a str,
     bytes: &'a [u8],
     pos: usize,
 }
 
-impl<'a> Tokenizer<'a> {
-    /// Create a new tokenizer for the given input string.
-    fn new(input: &'a str) -> Self {
-        Self {
-            input,
-            bytes: input.as_bytes(),
-            pos: 0,
-        }
+type Result<T> = core::result::Result<T, UcumError>;
+
+impl<'a> Parser<'a> {
+    fn error(&self, reason: &str) -> UcumError {
+        UcumError::invalid_expression(&format!("{reason} at position {}", self.pos))
     }
 
-    /// Get the current byte at the tokenizer position.
-    #[inline]
-    fn current_byte(&self) -> Option<u8> {
+    fn peek(&self) -> Option<u8> {
         self.bytes.get(self.pos).copied()
     }
 
-    /// Peek at a byte at the given offset from the current position.
-    #[inline]
-    fn peek_byte(&self, offset: usize) -> Option<u8> {
-        self.bytes.get(self.pos + offset).copied()
-    }
-
-    /// Skip whitespace characters and advance the position.
-    fn skip_whitespace(&mut self) {
-        while let Some(b) = self.current_byte() {
-            if CHAR_CLASS[b as usize] == CharClass::Whitespace {
-                self.pos += 1;
-            } else {
-                break;
-            }
-        }
-    }
-
-    /// Scan a UCUM symbol token.
-    ///
-    /// Handles both ASCII symbols and UTF-8 micro signs (µ).
-    /// A trailing exponent ("2" in "m2", "-1" in "s-1", "+2" in "m+2") is left
-    /// for `scan_exponent`.
-    fn scan_symbol(&mut self) -> Option<Token<'a>> {
-        let start = self.pos;
-
-        // UTF-8 µ (micro sign) as the first character
-        if self.current_byte() == Some(0xC2) && self.peek_byte(1) == Some(0xB5) {
-            self.pos += 2;
-        }
-
-        let mut in_brackets = false;
-        while let Some(b) = self.current_byte() {
-            if in_brackets {
-                // Anything but a nested bracket goes inside "[...]", e.g. "B[10.nV]"
-                if b == b'[' || !b.is_ascii_graphic() {
-                    break;
-                }
-                in_brackets = b != b']';
-            } else if is_symbol_char_fast(b) {
-                in_brackets = b == b'[';
-            } else {
-                break;
-            }
+    fn main_term(&mut self) -> Result<UnitExpr> {
+        if self.peek() == Some(b'/') {
             self.pos += 1;
+            let first = UnitExpr::Reciprocal(Box::new(self.component()?));
+            self.term_from(first)
+        } else {
+            let first = self.component()?;
+            self.term_from(first)
         }
-
-        if self.pos == start {
-            return None;
-        }
-
-        let symbol = &self.input[start..self.pos];
-
-        // Bytes, not chars: the last non-digit may be the second byte of µ
-        if let Some(last) = symbol.bytes().rposition(|b| !b.is_ascii_digit()) {
-            let digits_start = last + 1;
-            if digits_start < symbol.len() {
-                // A sign right before the digits belongs to the exponent (e.g., "s-2")
-                let base_end = match symbol.as_bytes()[last] {
-                    b'-' | b'+' => last,
-                    _ => digits_start,
-                };
-                self.pos = start + base_end;
-                return Some(Token::Symbol(&symbol[..base_end]));
-            }
-        }
-
-        Some(Token::Symbol(symbol))
     }
 
-    /// Scan an exponent written right after a unit symbol: digits with an optional
-    /// sign, e.g. "2" in "m2", "-1" in "s-1", "+2" in "m+2" (UCUM §9).
-    ///
-    /// Returns `Ok(None)` and leaves the position untouched if there is no exponent.
-    #[allow(clippy::result_large_err)]
-    fn scan_exponent(&mut self) -> Result<Option<i32>, UcumError> {
-        let start = self.pos;
-        let digits_start = match self.current_byte() {
-            Some(b'-' | b'+') => start + 1,
-            _ => start,
-        };
-
-        let mut end = digits_start;
-        while self.bytes.get(end).is_some_and(u8::is_ascii_digit) {
-            end += 1;
-        }
-        if end == digits_start {
-            return Ok(None);
-        }
-
-        self.pos = end;
-        self.input[start..end]
-            .parse::<i32>()
-            .map(Some)
-            .map_err(|_| UcumError::invalid_expression("Exponent out of range"))
+    fn term(&mut self) -> Result<UnitExpr> {
+        let first = self.component()?;
+        self.term_from(first)
     }
 
-    /// Scan a numeric token: a positive integer. Terms have no decimals, the period
-    /// is always multiplication ("2.5" is 2 × 5, UCUM §7.2).
-    fn scan_number(&mut self) -> Option<Token<'a>> {
-        let start = self.pos;
-        while self.current_byte().is_some_and(|b| b.is_ascii_digit()) {
-            self.pos += 1;
-        }
-
-        if self.pos > start
-            && let Ok(num) = self.input[start..self.pos].parse::<f64>()
-        {
-            return Some(Token::Number(num));
-        }
-
-        None
-    }
-
-    /// Scan a power-of-ten token (e.g., "10*3" or "10^-2").
-    ///
-    /// "10*" and "10^" are unit atoms worth ten: without an exponent they are "10*1".
-    fn scan_ten_power(&mut self) -> Option<Token<'a>> {
-        // Check for "10*" or "10^" patterns
-        if self.bytes.get(self.pos..self.pos + 3) == Some(b"10*")
-            || self.bytes.get(self.pos..self.pos + 3) == Some(b"10^")
-        {
-            self.pos += 3;
-
-            // Parse exponent
-            let exp_start = self.pos;
-            if let Some(sign) = self.current_byte()
-                && (sign == b'+' || sign == b'-')
-            {
-                self.pos += 1;
-            }
-
-            let digit_start = self.pos;
-            while let Some(b) = self.current_byte() {
-                if b.is_ascii_digit() {
+    /// The rest of a term after its first component, left to right (UCUM §7.4).
+    fn term_from(&mut self, first: UnitExpr) -> Result<UnitExpr> {
+        let mut terms = vec![first];
+        loop {
+            match self.peek() {
+                Some(b'.') => {
                     self.pos += 1;
-                } else {
-                    break;
+                    terms.push(self.component()?);
                 }
-            }
-
-            if self.pos > digit_start
-                && let Ok(exp) = self.input[exp_start..self.pos].parse::<i32>()
-            {
-                return Some(Token::TenPower(exp));
-            }
-            if self.pos == exp_start {
-                // No sign and no digits: the atom on its own
-                return Some(Token::TenPower(1));
-            }
-        }
-
-        None
-    }
-
-    /// Scan an annotation token enclosed in braces (e.g., "{comment}").
-    fn scan_annotation(&mut self) -> Option<Token<'a>> {
-        if self.current_byte() != Some(b'{') {
-            return None;
-        }
-
-        self.pos += 1;
-        let start = self.pos;
-        let mut escaped = false;
-
-        while let Some(b) = self.current_byte() {
-            if escaped {
-                escaped = false;
-                self.pos += 1;
-            } else if b == b'\\' {
-                escaped = true;
-                self.pos += 1;
-            } else if b == b'}' {
-                let content = &self.input[start..self.pos];
-                self.pos += 1;
-                return Some(Token::Annotation(content));
-            } else {
-                self.pos += 1;
-            }
-        }
-
-        None
-    }
-
-    /// Get the next token from the input stream.
-    fn next_token(&mut self) -> Option<Token<'a>> {
-        self.skip_whitespace();
-
-        let b = self.current_byte()?;
-
-        // Check for UTF-8 µ (micro sign) first
-        if b == 0xC2 && self.peek_byte(1) == Some(0xB5) {
-            return self.scan_symbol();
-        }
-
-        match CHAR_CLASS[b as usize] {
-            // '%', "'" and "''" are unit atoms too
-            CharClass::Letter | CharClass::OpenBracket | CharClass::Symbol => self.scan_symbol(),
-            CharClass::Digit => {
-                // Check for 10* or 10^ patterns
-                if b == b'1'
-                    && self.peek_byte(1) == Some(b'0')
-                    && (self.peek_byte(2) == Some(b'*') || self.peek_byte(2) == Some(b'^'))
-                {
-                    self.scan_ten_power()
-                } else {
-                    self.scan_number()
-                }
-            }
-            CharClass::Dot | CharClass::Slash | CharClass::Caret => {
-                self.pos += 1;
-                Some(Token::Operator(b as char))
-            }
-            CharClass::OpenParen => {
-                self.pos += 1;
-                Some(Token::OpenParen)
-            }
-            CharClass::CloseParen => {
-                self.pos += 1;
-                Some(Token::CloseParen)
-            }
-            CharClass::OpenBrace => self.scan_annotation(),
-            _ => None,
-        }
-    }
-}
-
-// ============================================================================
-// AST building with small vector optimization
-// ============================================================================
-
-/// Small vector optimization for unit factors.
-/// Most UCUM expressions have 4 or fewer factors, so we optimize for that case.
-type SmallFactorVec<'a> = SmallVec<[UnitFactor<'a>; 4]>;
-
-/// Optimized parser that builds AST from tokens
-pub struct OptimizedParser<'a> {
-    tokenizer: Tokenizer<'a>,
-    // Reusable string buffer for normalization
-    norm_buffer: String,
-}
-
-impl<'a> OptimizedParser<'a> {
-    /// Create a new optimized parser for the given input.
-    pub fn new(input: &'a str) -> Self {
-        Self {
-            tokenizer: Tokenizer::new(input),
-            norm_buffer: String::with_capacity(32),
-        }
-    }
-
-    /// Normalize µ (micro) to u if needed, using pre-allocated buffer.
-    ///
-    /// This handles Unicode micro signs (µ) by converting them to ASCII 'u'
-    /// for consistent processing.
-    fn normalize_symbol(&mut self, symbol: &'a str) -> UnitExpr<'a> {
-        if symbol.contains('µ') {
-            self.norm_buffer.clear();
-            self.norm_buffer.reserve(symbol.len());
-            for ch in symbol.chars() {
-                self.norm_buffer.push(if ch == 'µ' { 'u' } else { ch });
-            }
-            UnitExpr::SymbolOwned(self.norm_buffer.clone())
-        } else {
-            UnitExpr::Symbol(symbol)
-        }
-    }
-
-    /// Parse a factor (base expression with optional exponent).
-    ///
-    /// A factor consists of a base expression (symbol, number, or parenthesized expression)
-    /// optionally followed by an exponent (explicit with ^ or implicit like "s2" or "s-1").
-    ///
-    /// Returns `Ok(None)` and leaves the position untouched if there is no factor.
-    #[allow(clippy::result_large_err)]
-    fn parse_factor(&mut self) -> Result<Option<UnitFactor<'a>>, UcumError> {
-        let start = self.tokenizer.pos;
-        let token = match self.tokenizer.next_token() {
-            Some(t) => t,
-            None => {
-                self.tokenizer.pos = start;
-                return Ok(None);
-            }
-        };
-        let is_symbol = matches!(token, Token::Symbol(_));
-
-        let base_expr = match token {
-            Token::Symbol(s) => self.normalize_symbol(s),
-            Token::Number(n) => UnitExpr::Numeric(n),
-            Token::TenPower(exp) => UnitExpr::Numeric(math::powi(10.0, exp)),
-            Token::OpenParen => {
-                // Parse parenthesized expression
-                let inner = self.parse_term()?;
-                match self.tokenizer.next_token() {
-                    Some(Token::CloseParen) => inner,
-                    _ => return Err(UcumError::invalid_expression("Missing closing parenthesis")),
-                }
-            }
-            Token::Annotation(content) => {
-                // Standalone annotation
-                UnitExpr::SymbolOwned(format!("{{{content}}}"))
-            }
-            _ => {
-                self.tokenizer.pos = start;
-                return Ok(None);
-            }
-        };
-
-        // Exponent written right after a symbol (s2, s-2, s+2; UCUM §9), or after '^'
-        let mut exponent = 1;
-        if is_symbol && let Some(exp) = self.tokenizer.scan_exponent()? {
-            exponent = exp;
-        } else if self.tokenizer.current_byte() == Some(b'^') {
-            self.tokenizer.pos += 1;
-            exponent = self
-                .tokenizer
-                .scan_exponent()?
-                .ok_or_else(|| UcumError::invalid_expression("Invalid exponent"))?;
-        }
-
-        // Skip trailing annotations
-        loop {
-            let saved_pos = self.tokenizer.pos;
-            match self.tokenizer.next_token() {
-                Some(Token::Annotation(_)) => {
-                    // Consume annotation and continue
-                }
-                _ => {
-                    // Not an annotation, backtrack and stop
-                    self.tokenizer.pos = saved_pos;
-                    break;
-                }
-            }
-        }
-
-        Ok(Some(UnitFactor {
-            expr: base_expr,
-            exponent,
-        }))
-    }
-
-    /// Parse a factor that must be present, e.g. after an operator.
-    #[allow(clippy::result_large_err)]
-    fn expect_factor(&mut self, after: char) -> Result<UnitFactor<'a>, UcumError> {
-        self.parse_factor()?.ok_or_else(|| {
-            UcumError::invalid_expression(&format!("'{after}' must be followed by a unit"))
-        })
-    }
-
-    /// Turn a factor into an expression, wrapping it in a power if needed.
-    fn factor_into_expr(factor: UnitFactor<'a>) -> UnitExpr<'a> {
-        if factor.exponent == 1 {
-            factor.expr
-        } else {
-            UnitExpr::Power(Box::new(factor.expr), factor.exponent)
-        }
-    }
-
-    /// Turn the factors collected so far into a single expression.
-    fn fold_factors(mut factors: SmallFactorVec<'a>) -> UnitExpr<'a> {
-        if factors.len() == 1 {
-            Self::factor_into_expr(factors.remove(0))
-        } else {
-            UnitExpr::Product(factors.into_vec())
-        }
-    }
-
-    /// Parse a term: factors joined by '.' and '/'.
-    ///
-    /// Both operators have the same precedence and are evaluated left to right
-    /// (UCUM §7.4), so "a/b.c" is "(a/b).c". A leading '/' inverts the factor right
-    /// after it (UCUM §7.3). The operator is mandatory (UCUM §7.2), so the term stops
-    /// at anything else, e.g. a close parenthesis.
-    #[allow(clippy::result_large_err)]
-    fn parse_term(&mut self) -> Result<UnitExpr<'a>, UcumError> {
-        let mut factors = SmallFactorVec::new();
-
-        // Leading division: "/min" is "1/min"
-        let saved_pos = self.tokenizer.pos;
-        let leading_slash = self.tokenizer.next_token() == Some(Token::Operator('/'));
-        self.tokenizer.pos = saved_pos;
-        if leading_slash {
-            factors.push(UnitFactor {
-                expr: UnitExpr::Numeric(1.0),
-                exponent: 1,
-            });
-        } else {
-            match self.parse_factor()? {
-                Some(f) => factors.push(f),
-                None => return Err(UcumError::invalid_expression("Expected a unit")),
-            }
-        }
-
-        loop {
-            let saved_pos = self.tokenizer.pos;
-            match self.tokenizer.next_token() {
-                Some(Token::Operator('.')) => {
-                    factors.push(self.expect_factor('.')?);
-                }
-                Some(Token::Operator('/')) => {
-                    // Everything so far is the numerator
-                    let numerator = Self::fold_factors(core::mem::take(&mut factors));
-                    let denominator = Self::factor_into_expr(self.expect_factor('/')?);
-                    factors.push(UnitFactor {
-                        expr: UnitExpr::Quotient(Box::new(numerator), Box::new(denominator)),
-                        exponent: 1,
-                    });
-                }
-                _ => {
-                    self.tokenizer.pos = saved_pos;
-                    break;
-                }
-            }
-        }
-
-        Ok(Self::fold_factors(factors))
-    }
-
-    /// Parse a full expression.
-    #[allow(clippy::result_large_err)]
-    pub fn parse_expression(&mut self) -> Result<UnitExpr<'a>, UcumError> {
-        self.tokenizer.skip_whitespace();
-        self.parse_term()
-    }
-
-    /// Parse and validate a complete UCUM expression.
-    ///
-    /// Performs pre-validation checks and ensures all input is consumed.
-    /// Returns an owned AST that can outlive the input string.
-    #[allow(clippy::result_large_err)]
-    pub fn parse(mut self) -> Result<OwnedUnitExpr, UcumError> {
-        // Quick pre-validation
-        let input = self.tokenizer.input;
-
-        // Check for invalid characters. Annotations ("{...}") and square brackets
-        // ("[...]") may hold any of the characters 33-126 (UCUM §5.2, §6.1)
-        let mut in_annotation = false;
-        let mut in_brackets = false;
-        for (pos, ch) in input.char_indices() {
-            if in_annotation || in_brackets {
-                if ch == '}' && in_annotation {
-                    in_annotation = false;
-                } else if ch == ']' && in_brackets {
-                    in_brackets = false;
-                } else if !ch.is_ascii_graphic() {
-                    return Err(UcumError::invalid_expression(&format!(
-                        "Invalid character '{ch}' at position {pos}"
-                    )));
-                }
-                continue;
-            }
-
-            match ch {
-                '{' => in_annotation = true,
-                '[' => in_brackets = true,
-                // '+' only signs an exponent ("m+2", "10*+3"), it is never addition
-                '+' if !input[pos + 1..].starts_with(|c: char| c.is_ascii_digit()) => {
-                    return Err(UcumError::invalid_expression(
-                        "Addition operators are not allowed in UCUM expressions",
+                Some(b'/') => {
+                    self.pos += 1;
+                    let denominator = self.component()?;
+                    let numerator = fold(core::mem::take(&mut terms));
+                    terms.push(UnitExpr::Quotient(
+                        Box::new(numerator),
+                        Box::new(denominator),
                     ));
                 }
-                // Allow µ (micro) as it's handled specially
-                'µ' => {}
-                _ if !ch.is_ascii() => {
-                    return Err(UcumError::invalid_expression(&format!(
-                        "Invalid non-ASCII character '{ch}' at position {pos}"
-                    )));
-                }
-                _ if CHAR_CLASS[ch as usize] == CharClass::Invalid && !ch.is_ascii_whitespace() => {
-                    return Err(UcumError::invalid_expression(&format!(
-                        "Invalid character '{ch}' at position {pos}"
-                    )));
-                }
-                _ => {}
+                _ => return Ok(fold(terms)),
             }
         }
+    }
 
-        // Parse expression
-        let expr = self.parse_expression()?;
-
-        // Ensure all input was consumed
-        self.tokenizer.skip_whitespace();
-        let pos = self.tokenizer.pos;
-        if let Some(ch) = input[pos..].chars().next() {
-            return Err(UcumError::invalid_expression(&format!(
-                "Unexpected character '{ch}' at position {pos}"
-            )));
+    fn component(&mut self) -> Result<UnitExpr> {
+        match self.peek() {
+            None => Err(self.error("Expected a unit")),
+            Some(b'(') => {
+                self.pos += 1;
+                let term = self.term()?;
+                if self.peek() != Some(b')') {
+                    return Err(self.error("Expected ')'"));
+                }
+                self.pos += 1;
+                Ok(term)
+            }
+            Some(b'{') => Ok(UnitExpr::Annotation(self.annotation()?)),
+            Some(b) if b.is_ascii_digit() && !self.digits_are_symbol() => {
+                let start = self.pos;
+                while self.peek().is_some_and(|b| b.is_ascii_digit()) {
+                    self.pos += 1;
+                }
+                let value = Number::parse(&self.input[start..self.pos]).expect("digits");
+                if value.is_zero() {
+                    self.pos = start;
+                    return Err(self.error("A number must be a positive integer"));
+                }
+                self.annotated(UnitExpr::Numeric(value))
+            }
+            Some(b) if is_symbol_char(b) || b == b'[' => {
+                let unit = self.simple_unit()?;
+                self.annotated(unit)
+            }
+            Some(b) => Err(self.error(&format!("Unexpected character '{}'", b as char))),
         }
+    }
 
-        Ok(expr.to_owned())
+    /// Whether the digits at the position start a symbol: a symbol character follows them
+    /// (`10*`, `12a`; UCUM §8.2).
+    fn digits_are_symbol(&self) -> bool {
+        let rest = &self.bytes[self.pos..];
+        let end = rest
+            .iter()
+            .position(|b| !b.is_ascii_digit())
+            .unwrap_or(rest.len());
+        rest.get(end)
+            .is_some_and(|&b| is_symbol_char(b) || b == b'[')
+    }
+
+    /// A simple unit with its exponent: "m", "m2", "s-1", "mm[Hg]", "10*-3".
+    fn simple_unit(&mut self) -> Result<UnitExpr> {
+        let start = self.pos;
+        // End of the last square bracket group, so that digits inside one ("[H2O]") are
+        // never read as an exponent
+        let mut bracket_end = start;
+        while let Some(b) = self.peek() {
+            if b == b'[' {
+                self.pos += 1;
+                loop {
+                    match self.peek() {
+                        Some(b']') => break,
+                        Some(b'[') => return Err(self.error("Square brackets cannot be nested")),
+                        Some(33..=126) => self.pos += 1,
+                        _ => return Err(self.error("Expected ']'")),
+                    }
+                }
+                self.pos += 1;
+                bracket_end = self.pos;
+            } else if is_symbol_char(b) {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        let text = &self.input[start..self.pos];
+        let digits = text.bytes().rev().take_while(u8::is_ascii_digit).count();
+        let symbol_end = (self.pos - digits).max(bracket_end);
+        let symbol = &self.input[start..symbol_end];
+        let unit = UnitExpr::Symbol(symbol.to_string());
+
+        let exponent_start = symbol_end;
+        if symbol_end < self.pos {
+            // Unsigned exponent: "m2"
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                return Err(self.error("Unexpected sign after an exponent"));
+            }
+        } else if matches!(self.peek(), Some(b'+' | b'-')) {
+            // Signed exponent: "m-2", "m+2"
+            self.pos += 1;
+            if !self.peek().is_some_and(|b| b.is_ascii_digit()) {
+                return Err(self.error("Expected the digits of an exponent"));
+            }
+            while self.peek().is_some_and(|b| b.is_ascii_digit()) {
+                self.pos += 1;
+            }
+        } else {
+            return Ok(unit);
+        }
+        let exponent = self.input[exponent_start..self.pos]
+            .parse::<i32>()
+            .map_err(|_| self.error("Exponent out of range"))?;
+        Ok(UnitExpr::Power(Box::new(unit), exponent))
+    }
+
+    /// `expr` followed by an optional annotation.
+    fn annotated(&mut self, expr: UnitExpr) -> Result<UnitExpr> {
+        if self.peek() == Some(b'{') {
+            let text = self.annotation()?;
+            Ok(UnitExpr::Annotated(Box::new(expr), text))
+        } else {
+            Ok(expr)
+        }
+    }
+
+    /// An annotation, without its braces (UCUM §6).
+    fn annotation(&mut self) -> Result<String> {
+        self.pos += 1;
+        let start = self.pos;
+        loop {
+            match self.peek() {
+                Some(b'}') => break,
+                Some(b'{') => return Err(self.error("Curly braces cannot be nested")),
+                Some(33..=126) => self.pos += 1,
+                _ => return Err(self.error("Expected '}'")),
+            }
+        }
+        if self.pos == start {
+            return Err(self.error("An annotation cannot be empty"));
+        }
+        let text = self.input[start..self.pos].to_string();
+        self.pos += 1;
+        Ok(text)
     }
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
-/// Parse a UCUM expression string into an `OwnedUnitExpr` AST.
-#[allow(clippy::result_large_err)]
-pub fn parse_expression(input: &str) -> Result<OwnedUnitExpr, UcumError> {
-    let input = input.trim();
-
-    // The unity, as in an empty canonical unit; `validate` rejects it as a term
-    if input.is_empty() {
-        return Ok(OwnedUnitExpr::Numeric(1.0));
+/// One term from the terms joined by '.'.
+fn fold(mut terms: Vec<UnitExpr>) -> UnitExpr {
+    if terms.len() == 1 {
+        terms.remove(0)
+    } else {
+        UnitExpr::Product(terms)
     }
+}
 
-    OptimizedParser::new(input).parse()
+/// Parse a UCUM expression into its syntax tree.
+///
+/// The syntax is checked; whether the symbols are units is checked by evaluation (see
+/// `validate`).
+pub fn parse_expression(input: &str) -> Result<UnitExpr> {
+    if input.is_empty() {
+        return Err(UcumError::invalid_expression(
+            "Empty expression: the unity is written \"1\"",
+        ));
+    }
+    if let Some((pos, ch)) = input
+        .char_indices()
+        .find(|&(_, ch)| !(ch.is_ascii_graphic()))
+    {
+        let what = if ch.is_whitespace() {
+            "White space"
+        } else {
+            "A character outside ASCII 33-126"
+        };
+        return Err(UcumError::invalid_expression(&format!(
+            "{what} ({ch:?}) is not allowed in UCUM expressions (UCUM §3.1), at position {pos}"
+        )));
+    }
+    let mut parser = Parser {
+        input,
+        bytes: input.as_bytes(),
+        pos: 0,
+    };
+    let expr = parser.main_term()?;
+    if parser.pos < input.len() {
+        let ch = input.as_bytes()[parser.pos] as char;
+        return Err(parser.error(&format!("Unexpected character '{ch}'")));
+    }
+    Ok(expr)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_tokenizer() {
-        let mut tokenizer = Tokenizer::new("kg.m/s2");
-        assert_eq!(tokenizer.next_token(), Some(Token::Symbol("kg")));
-        assert_eq!(tokenizer.next_token(), Some(Token::Operator('.')));
-        assert_eq!(tokenizer.next_token(), Some(Token::Symbol("m")));
-        assert_eq!(tokenizer.next_token(), Some(Token::Operator('/')));
-        assert_eq!(tokenizer.next_token(), Some(Token::Symbol("s")));
-        assert_eq!(tokenizer.next_token(), Some(Token::Number(2.0)));
-        assert_eq!(tokenizer.next_token(), None);
+    fn parse(input: &str) -> UnitExpr {
+        parse_expression(input).unwrap_or_else(|e| panic!("{input}: {e}"))
+    }
+
+    fn symbol(s: &str) -> UnitExpr {
+        UnitExpr::Symbol(s.to_string())
+    }
+
+    fn power(s: &str, exp: i32) -> UnitExpr {
+        UnitExpr::Power(Box::new(symbol(s)), exp)
     }
 
     #[test]
-    fn test_ten_power() {
-        let mut tokenizer = Tokenizer::new("10*3.mol");
-        assert_eq!(tokenizer.next_token(), Some(Token::TenPower(3)));
-        assert_eq!(tokenizer.next_token(), Some(Token::Operator('.')));
-        assert_eq!(tokenizer.next_token(), Some(Token::Symbol("mol")));
+    fn reads_terms_left_to_right() {
+        assert_eq!(
+            parse("kg.m/s2"),
+            UnitExpr::Quotient(
+                Box::new(UnitExpr::Product(vec![symbol("kg"), symbol("m")])),
+                Box::new(power("s", 2))
+            )
+        );
+        assert_eq!(
+            parse("m/s.kg"),
+            UnitExpr::Product(vec![
+                UnitExpr::Quotient(Box::new(symbol("m")), Box::new(symbol("s"))),
+                symbol("kg")
+            ])
+        );
     }
 
     #[test]
-    fn test_micro_normalization() {
-        // First test tokenization
-        let mut tokenizer = Tokenizer::new("µg");
-        let token = tokenizer.next_token();
-        println!("Tokenized µg as: {:?}", token);
+    fn reads_exponents_and_ten_powers() {
+        assert_eq!(parse("m2"), power("m", 2));
+        assert_eq!(parse("s-1"), power("s", -1));
+        assert_eq!(parse("m+2"), power("m", 2));
+        assert_eq!(parse("10*3"), power("10*", 3));
+        assert_eq!(parse("10*-3"), power("10*", -3));
+        assert_eq!(parse("10^"), symbol("10^"));
+        assert_eq!(parse("[H2O]"), symbol("[H2O]"));
+        assert_eq!(parse("m[H2O]2"), power("m[H2O]", 2));
+    }
 
-        let result = parse_expression("µg").unwrap();
-        println!("Parsed µg as: {:?}", result);
-        match result {
-            OwnedUnitExpr::Symbol(s) => assert_eq!(s, "ug"),
-            _ => panic!("Expected symbol, got {:?}", result),
+    #[test]
+    fn reads_numbers_and_annotations() {
+        assert_eq!(
+            parse("4.[pi]"),
+            UnitExpr::Product(vec![UnitExpr::Numeric(Number::from_i64(4)), symbol("[pi]")])
+        );
+        assert_eq!(parse("{rbc}"), UnitExpr::Annotation("rbc".into()));
+        assert_eq!(
+            parse("rad2{a}"),
+            UnitExpr::Annotated(Box::new(power("rad", 2)), "a".into())
+        );
+        assert_eq!(parse("/min"), UnitExpr::Reciprocal(Box::new(symbol("min"))));
+    }
+
+    #[test]
+    fn rejects_invalid_syntax() {
+        for input in [
+            "", " m", "m s", "m/", "/", "m..s", "(m", "m)", "(/m)", "m.(/s)", "µg", "0", "0.m",
+            "10+3", "m{a}{b}", "(m){a}", "{a{b}", "{}", "{a", "m2-1", "[[a]]", "[a", "m]", "m=s",
+            "kg\"", "(m.s)2",
+        ] {
+            assert!(
+                parse_expression(input).is_err(),
+                "{input:?} should be invalid"
+            );
         }
     }
 
     #[test]
-    fn test_complex_expression() {
-        let result = parse_expression("kg.m/s2").unwrap();
-        match result {
-            OwnedUnitExpr::Quotient(num, den) => {
-                // The numerator should be kg.m as a product
-                assert!(matches!(*num, OwnedUnitExpr::Product(_)));
-                // The denominator should be s^2 as a power (single factor with exponent > 1)
-                assert!(matches!(*den, OwnedUnitExpr::Power(_, 2)));
-            }
-            _ => panic!("Expected quotient, got {:?}", result),
+    fn displays_as_written() {
+        for input in [
+            "kg.m/s2",
+            "/min",
+            "m/s.kg",
+            "kg/(m.s)",
+            "10*-3",
+            "4.[pi]",
+            "mg{total}",
+            "{rbc}",
+            "1{c}",
+            "m[H2O]2",
+        ] {
+            assert_eq!(parse(input).to_string(), input);
         }
     }
 }

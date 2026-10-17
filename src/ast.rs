@@ -1,205 +1,97 @@
-//! Abstract Syntax Tree (AST) definitions for UCUM expressions.
+//! Abstract syntax tree of UCUM expressions (UCUM §1-10).
 //!
-//! Separated from the parser so that other components (e.g. registry, semantic
-//! checks, conversions) can depend on the data model without pulling in the
-//! `nom` parsing machinery.
+//! The tree keeps annotations so that an expression displays as it was written
+//! (`kg{dry}/m3`), although they have no meaning (UCUM §6.2) and evaluation ignores them.
 
+use crate::number::Number;
 use crate::prelude::*;
 use core::fmt;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// A zero-copy UCUM expression for parsing (borrows from input string).
-#[derive(Clone, Debug, PartialEq)]
-pub enum UnitExpr<'a> {
-    /// Product of multiple factors (each with an integer exponent).
-    Product(Vec<UnitFactor<'a>>),
-    /// Quotient of numerator / denominator.
-    Quotient(Box<UnitExpr<'a>>, Box<UnitExpr<'a>>),
-    /// An expression raised to an integer power.
-    Power(Box<UnitExpr<'a>>, i32),
-    /// A numeric coefficient (e.g., 1000 from `10*3`).
-    Numeric(f64),
-    /// A single symbol borrowed from input (zero-copy).
-    Symbol(&'a str),
-    /// A symbol that requires ownership (normalization, etc).
-    SymbolOwned(String),
-}
-
-/// Owned version of UnitExpr for final results.
+/// A parsed UCUM expression.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum OwnedUnitExpr {
-    /// Product of multiple factors (each with an integer exponent).
-    Product(Vec<OwnedUnitFactor>),
-    /// Quotient of numerator / denominator.
-    Quotient(Box<OwnedUnitExpr>, Box<OwnedUnitExpr>),
-    /// An expression raised to an integer power.
-    Power(Box<OwnedUnitExpr>, i32),
-    /// A numeric coefficient (e.g., 1000 from `10*3`).
-    Numeric(f64),
-    /// A single symbol (possibly prefix+code) referring to a registry unit.
+pub enum UnitExpr {
+    /// A simple unit: a unit atom, with a prefix if the atom is metric (`m`, `kg`,
+    /// `mm[Hg]`, `10*`).
     Symbol(String),
+    /// A positive integer factor (UCUM §8): `4` in `4.[pi]`.
+    Numeric(Number),
+    /// A simple unit raised to an integer power (UCUM §9): `m2`, `s-1`, `10*3`.
+    Power(Box<UnitExpr>, i32),
+    /// An annotation on its own, the unity (UCUM §6.4): `{rbc}`, without the braces.
+    Annotation(String),
+    /// A simple unit, a power or an integer followed by an annotation (`kg{dry}`), without
+    /// the braces.
+    Annotated(Box<UnitExpr>, String),
+    /// Terms joined by '.': `kg.m`.
+    Product(Vec<UnitExpr>),
+    /// A term divided by a component: `m/s`. Terms are read left to right (UCUM §7.4), so
+    /// `a/b.c` is `Product([Quotient(a, b), c])`.
+    Quotient(Box<UnitExpr>, Box<UnitExpr>),
+    /// A leading solidus, which inverts the component right after it (UCUM §7.3): `/min`.
+    Reciprocal(Box<UnitExpr>),
 }
 
-// Display writes UCUM that parses back to the same unit: "kg/(m.s)", "s-2", "10*-3".
-
-/// A number as UCUM can read it back: an integer or a power of ten.
-fn write_numeric(f: &mut fmt::Formatter<'_>, val: f64) -> fmt::Result {
-    if (0.0..1e15).contains(&val) && val == crate::math::round(val) {
-        return write!(f, "{}", val as u64);
-    }
-    if val > 0.0 {
-        let exp = crate::math::round(crate::math::log10(val)) as i32;
-        if crate::math::powi(10.0, exp) == val {
-            return write!(f, "10*{exp}");
-        }
-    }
-    write!(f, "{val}")
-}
-
-/// `base` raised to `exp`: "s-2" after a unit symbol, "(...)^2" otherwise.
-fn write_power(
-    f: &mut fmt::Formatter<'_>,
-    base: &dyn fmt::Display,
-    unit_symbol: bool,
-    exp: i32,
-) -> fmt::Result {
-    if exp == 1 {
-        write!(f, "{base}")
-    } else if unit_symbol {
-        write!(f, "{base}{exp}")
-    } else {
-        write!(f, "({base})^{exp}")
+impl UnitExpr {
+    /// Whether the expression needs parentheses to be one component of a term.
+    fn is_compound(&self) -> bool {
+        matches!(
+            self,
+            UnitExpr::Product(_) | UnitExpr::Quotient(..) | UnitExpr::Reciprocal(_)
+        )
     }
 }
 
-/// A symbol that can take an exponent right after it (not an annotation or the unity).
-fn is_unit_symbol(sym: &str) -> bool {
-    !sym.is_empty() && !sym.starts_with('{')
-}
+/// `expr` as a component: in parentheses when it is a term of its own.
+struct Component<'a>(&'a UnitExpr);
 
-impl UnitExpr<'_> {
-    fn is_unit_symbol(&self) -> bool {
-        match self {
-            UnitExpr::Symbol(sym) => is_unit_symbol(sym),
-            UnitExpr::SymbolOwned(sym) => is_unit_symbol(sym),
-            _ => false,
-        }
-    }
-}
-
-impl OwnedUnitExpr {
-    fn is_unit_symbol(&self) -> bool {
-        matches!(self, OwnedUnitExpr::Symbol(sym) if is_unit_symbol(sym))
-    }
-}
-
-impl<'a> fmt::Display for UnitExpr<'a> {
+impl fmt::Display for Component<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            UnitExpr::Product(factors) => {
-                for (idx, fac) in factors.iter().enumerate() {
-                    if idx > 0 {
-                        write!(f, ".")?;
-                    }
-                    write!(f, "{fac}")?;
+        if self.0.is_compound() {
+            f.write_str("(")?;
+            write_term(f, self.0, false)?;
+            f.write_str(")")
+        } else {
+            write_term(f, self.0, false)
+        }
+    }
+}
+
+/// Write a term. A leading solidus is only valid at the start of an expression (UCUM §7.3),
+/// so elsewhere, inside parentheses, a reciprocal is written `1/x`.
+fn write_term(f: &mut fmt::Formatter<'_>, expr: &UnitExpr, top: bool) -> fmt::Result {
+    match expr {
+        UnitExpr::Symbol(symbol) => f.write_str(symbol),
+        UnitExpr::Numeric(n) => write!(f, "{n}"),
+        UnitExpr::Power(base, exp) => write!(f, "{}{exp}", Component(base)),
+        UnitExpr::Annotation(text) => write!(f, "{{{text}}}"),
+        UnitExpr::Annotated(expr, text) => write!(f, "{}{{{text}}}", Component(expr)),
+        UnitExpr::Product(terms) => {
+            for (i, term) in terms.iter().enumerate() {
+                if i == 0 {
+                    // Terms are read left to right, so the first one needs no parentheses
+                    write_term(f, term, top)?;
+                } else {
+                    write!(f, ".{}", Component(term))?;
                 }
-                Ok(())
             }
-            // '.' and '/' bind left to right, so a compound denominator needs parentheses
-            UnitExpr::Quotient(num, den) => match den.as_ref() {
-                UnitExpr::Product(_) | UnitExpr::Quotient(..) => write!(f, "{num}/({den})"),
-                _ => write!(f, "{num}/{den}"),
-            },
-            UnitExpr::Power(expr, exp) => write_power(f, expr, expr.is_unit_symbol(), *exp),
-            UnitExpr::Numeric(val) => write_numeric(f, *val),
-            UnitExpr::Symbol(sym) => write!(f, "{sym}"),
-            UnitExpr::SymbolOwned(sym) => write!(f, "{sym}"),
+            Ok(())
         }
+        UnitExpr::Quotient(numerator, denominator) => {
+            write_term(f, numerator, top)?;
+            write!(f, "/{}", Component(denominator))
+        }
+        UnitExpr::Reciprocal(expr) if top => write!(f, "/{}", Component(expr)),
+        UnitExpr::Reciprocal(expr) => write!(f, "1/{}", Component(expr)),
     }
 }
 
-impl fmt::Display for OwnedUnitExpr {
+// Display writes UCUM that parses back to the same expression: "kg/(m.s)", "s-2", "/min".
+impl fmt::Display for UnitExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OwnedUnitExpr::Product(factors) => {
-                for (idx, fac) in factors.iter().enumerate() {
-                    if idx > 0 {
-                        write!(f, ".")?;
-                    }
-                    write!(f, "{fac}")?;
-                }
-                Ok(())
-            }
-            // '.' and '/' bind left to right, so a compound denominator needs parentheses
-            OwnedUnitExpr::Quotient(num, den) => match den.as_ref() {
-                OwnedUnitExpr::Product(_) | OwnedUnitExpr::Quotient(..) => {
-                    write!(f, "{num}/({den})")
-                }
-                _ => write!(f, "{num}/{den}"),
-            },
-            OwnedUnitExpr::Power(expr, exp) => write_power(f, expr, expr.is_unit_symbol(), *exp),
-            OwnedUnitExpr::Numeric(val) => write_numeric(f, *val),
-            OwnedUnitExpr::Symbol(sym) => write!(f, "{sym}"),
-        }
-    }
-}
-
-/// A base expression accompanied by an integer exponent (default 1) - zero-copy version.
-#[derive(Clone, Debug, PartialEq)]
-pub struct UnitFactor<'a> {
-    pub expr: UnitExpr<'a>,
-    pub exponent: i32,
-}
-
-/// A base expression accompanied by an integer exponent (default 1) - owned version.
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct OwnedUnitFactor {
-    pub expr: OwnedUnitExpr,
-    pub exponent: i32,
-}
-
-impl<'a> fmt::Display for UnitFactor<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_power(f, &self.expr, self.expr.is_unit_symbol(), self.exponent)
-    }
-}
-
-impl fmt::Display for OwnedUnitFactor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_power(f, &self.expr, self.expr.is_unit_symbol(), self.exponent)
-    }
-}
-
-/// Conversion from zero-copy to owned AST.
-impl<'a> UnitExpr<'a> {
-    pub fn to_owned(self) -> OwnedUnitExpr {
-        match self {
-            UnitExpr::Product(factors) => {
-                OwnedUnitExpr::Product(factors.into_iter().map(|f| f.to_owned()).collect())
-            }
-            UnitExpr::Quotient(num, den) => OwnedUnitExpr::Quotient(
-                Box::new(num.as_ref().clone().to_owned()),
-                Box::new(den.as_ref().clone().to_owned()),
-            ),
-            UnitExpr::Power(expr, exp) => {
-                OwnedUnitExpr::Power(Box::new(expr.as_ref().clone().to_owned()), exp)
-            }
-            UnitExpr::Numeric(val) => OwnedUnitExpr::Numeric(val),
-            UnitExpr::Symbol(sym) => OwnedUnitExpr::Symbol(sym.to_string()),
-            UnitExpr::SymbolOwned(sym) => OwnedUnitExpr::Symbol(sym),
-        }
-    }
-}
-
-impl<'a> UnitFactor<'a> {
-    pub fn to_owned(self) -> OwnedUnitFactor {
-        OwnedUnitFactor {
-            expr: self.expr.to_owned(),
-            exponent: self.exponent,
-        }
+        write_term(f, self, true)
     }
 }

@@ -4,9 +4,9 @@
 //! published to npm as `@octofhir/ucum-wasm` via `wasm-pack`.
 
 use octofhir_ucum::{
-    AdvancedConversionContext, UcumError, UnitRecord, analyse, convert_with_context,
-    evaluate_owned, find_unit, get_canonical_units, is_comparable, parse_expression,
-    search_units as core_search_units, validate as core_validate,
+    UcumError, UnitArithmeticResult, UnitRecord, analyse, convert as core_convert, find_unit,
+    get_canonical_units, is_comparable, search_units as core_search_units, unit_divide,
+    unit_multiply, validate as core_validate,
 };
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::to_value;
@@ -34,10 +34,22 @@ pub struct UnitInfo {
 pub struct JsUnitAnalysis {
     pub expression: String,
     pub factor: f64,
+    /// Exponents of m, s, g, rad, K, C, cd
     pub dimension: [i8; 7],
+    pub scale: f64,
     pub offset: f64,
+    pub arbitrary: Vec<(String, i32)>,
+    /// Kind of the special unit (`Celsius`, `Lg`), if the expression is one
+    pub special: Option<String>,
     pub is_dimensionless: bool,
-    pub has_offset: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsUnitArithmetic {
+    pub expression: String,
+    pub factor: f64,
+    pub dimension: [i8; 7],
+    pub is_dimensionless: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -94,9 +106,15 @@ pub fn analyze(expression: &str) -> Result<JsValue, JsValue> {
                 expression: analysis.expression,
                 factor: analysis.factor,
                 dimension: analysis.dimension.0,
+                scale: analysis.scale,
                 offset: analysis.offset,
+                arbitrary: analysis
+                    .arbitrary
+                    .iter()
+                    .map(|(atom, exp)| (atom.to_string(), *exp))
+                    .collect(),
+                special: analysis.special.map(|kind| format!("{kind:?}")),
                 is_dimensionless: analysis.is_dimensionless,
-                has_offset: analysis.has_offset,
             };
             Ok(to_value(&js_analysis)?)
         }
@@ -166,16 +184,6 @@ pub fn get_unit_info(code: &str) -> Result<JsValue, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn analyze_unit(expression: &str) -> Result<JsValue, JsValue> {
-    analyze(expression)
-}
-
-#[wasm_bindgen]
-pub fn search_units_text(query: &str) -> JsValue {
-    search(query)
-}
-
-#[wasm_bindgen]
 pub fn list_units(filter: Option<String>) -> JsValue {
     let all_units = core_search_units("");
     let filtered_units: Vec<UnitInfo> = if let Some(f) = filter {
@@ -196,86 +204,30 @@ pub fn list_units(filter: Option<String>) -> JsValue {
     to_value(&search_result).unwrap_or(JsValue::NULL)
 }
 
-#[wasm_bindgen]
-pub fn units_comparable(unit1: &str, unit2: &str) -> Result<bool, JsValue> {
-    comparable(unit1, unit2)
+fn arithmetic_result(result: Result<UnitArithmeticResult, UcumError>) -> Result<JsValue, JsValue> {
+    match result {
+        Ok(result) => Ok(to_value(&JsUnitArithmetic {
+            expression: result.expression,
+            factor: result.factor,
+            dimension: result.dimension.0,
+            is_dimensionless: result.is_dimensionless,
+        })?),
+        Err(err) => Err(to_value(&convert_error(err))?),
+    }
 }
 
 #[wasm_bindgen]
-pub fn multiply_units(_unit1: &str, _unit2: &str) -> Result<JsValue, JsValue> {
-    let js_error = create_simple_js_error(
-        "Unit multiplication not yet implemented".to_string(),
-        "NotImplemented".to_string(),
-    );
-    Err(to_value(&js_error)?)
+pub fn multiply_units(unit1: &str, unit2: &str) -> Result<JsValue, JsValue> {
+    arithmetic_result(unit_multiply(unit1, unit2))
 }
 
 #[wasm_bindgen]
-pub fn divide_units(_unit1: &str, _unit2: &str) -> Result<JsValue, JsValue> {
-    let js_error = create_simple_js_error(
-        "Unit division not yet implemented".to_string(),
-        "NotImplemented".to_string(),
-    );
-    Err(to_value(&js_error)?)
-}
-
-#[wasm_bindgen]
-pub fn evaluate_expression(expression: &str) -> Result<JsValue, JsValue> {
-    analyze(expression)
+pub fn divide_units(unit1: &str, unit2: &str) -> Result<JsValue, JsValue> {
+    arithmetic_result(unit_divide(unit1, unit2))
 }
 
 #[wasm_bindgen]
 pub fn convert(value: f64, from_unit: &str, to_unit: &str) -> Result<f64, JsValue> {
-    let from_expr = match parse_expression(from_unit) {
-        Ok(expr) => expr,
-        Err(err) => {
-            let js_error = convert_error(err);
-            return Err(to_value(&js_error)?);
-        }
-    };
-
-    let to_expr = match parse_expression(to_unit) {
-        Ok(expr) => expr,
-        Err(err) => {
-            let js_error = convert_error(err);
-            return Err(to_value(&js_error)?);
-        }
-    };
-
-    let from_res = match evaluate_owned(&from_expr) {
-        Ok(res) => res,
-        Err(err) => {
-            let js_error = convert_error(err);
-            return Err(to_value(&js_error)?);
-        }
-    };
-
-    let to_res = match evaluate_owned(&to_expr) {
-        Ok(res) => res,
-        Err(err) => {
-            let js_error = convert_error(err);
-            return Err(to_value(&js_error)?);
-        }
-    };
-
-    if from_res.dim != to_res.dim {
-        let js_error = create_simple_js_error(
-            format!(
-                "Incompatible dimensions between '{}' and '{}'",
-                from_unit, to_unit
-            ),
-            "IncompatibleDimensions".to_string(),
-        );
-        return Err(to_value(&js_error)?);
-    }
-
-    match convert_with_context(
-        value,
-        from_unit,
-        to_unit,
-        &AdvancedConversionContext::default(),
-    ) {
-        Ok(result) => Ok(result.value),
-        Err(err) => Err(to_value(&convert_error(err))?),
-    }
+    core_convert(value, from_unit, to_unit)
+        .map_err(|err| to_value(&convert_error(err)).unwrap_or(JsValue::NULL))
 }

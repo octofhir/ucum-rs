@@ -11,7 +11,7 @@ cargo bench
 # Run specific benchmark group
 cargo bench parsing
 cargo bench evaluation
-cargo bench api
+cargo bench conversion
 
 # Run with specific baseline comparison
 cargo bench -- --baseline master
@@ -19,28 +19,13 @@ cargo bench -- --baseline master
 
 ## Benchmark Structure
 
-The benchmarks are organized into four main groups:
-
-### 1. Parsing (`parsing`)
-Tests the performance of parsing various UCUM expressions:
-- Simple units (m, kg, s, K, mol)
-- Prefixed units (km, mg, µs, kPa, mL)
-- Complex expressions (kg.m/s2, mg/dL, km/h, m2.kg/s3/A)
-
-### 2. Evaluation (`evaluation`)
-Tests the performance of evaluating parsed expressions:
-- Simple units (kg)
-- Prefixed units (mg)
-- Compound units (kg.m/s2)
-- Complex units (mg/dL)
-
-### 3. API Operations (`api`)
-Tests high-level API functions:
-- `validate()` - Expression validation
-- `analyse()` - Unit analysis
-
-### 4. Real-World Usage (`validate_parse_evaluate`)
-End-to-end benchmark simulating typical usage patterns.
+- `parsing_by_complexity`, `parsing_categories`, `parser_features`: parsing of simple,
+  prefixed, compound and annotated expressions, powers of ten
+- `evaluation`: evaluation of parsed expressions, arbitrary and special units included
+- `api`: `validate()` (valid and invalid expressions) and `analyse()`
+- `conversion`: linear, customary, temperature, level-to-level, logarithmic and arbitrary
+  unit conversions
+- `edge_cases`, `real_world_usage`: empty and long expressions, end-to-end patterns
 
 ## Viewing Results
 

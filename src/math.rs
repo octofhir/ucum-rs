@@ -22,13 +22,15 @@ macro_rules! float_fn {
 }
 
 float_fn!(powf(x, n) => std: x.powf(n), libm: libm::pow(x, n));
+float_fn!(ln(x) => std: x.ln(), libm: libm::log(x));
 float_fn!(log10(x) => std: x.log10(), libm: libm::log10(x));
+float_fn!(atan(x) => std: x.atan(), libm: libm::atan(x));
+float_fn!(sqrt(x) => std: x.sqrt(), libm: libm::sqrt(x));
 float_fn!(tan(x) => std: x.tan(), libm: libm::tan(x));
 float_fn!(floor(x) => std: x.floor(), libm: libm::floor(x));
 float_fn!(ceil(x) => std: x.ceil(), libm: libm::ceil(x));
 float_fn!(trunc(x) => std: x.trunc(), libm: libm::trunc(x));
 float_fn!(round(x) => std: x.round(), libm: libm::round(x));
-float_fn!(fract(x) => std: x.fract(), libm: x - libm::trunc(x));
 
 /// Raise `x` to an integer power.
 #[inline]

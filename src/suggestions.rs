@@ -5,7 +5,7 @@ use crate::{UnitRecord, get_all_units};
 use hashbrown::HashSet;
 
 /// Suggestion engine for providing error corrections and alternatives
-pub struct SuggestionEngine {
+pub(crate) struct SuggestionEngine {
     /// All available units for fuzzy matching
     all_units: Vec<&'static UnitRecord>,
 }
@@ -131,32 +131,15 @@ impl SuggestionEngine {
         suggestions
     }
 
-    /// Suggest alternatives based on unit property
-    pub fn suggest_alternatives(&self, unit: &str, property: &str) -> Vec<String> {
-        let mut alternatives = Vec::new();
-
-        // Find units with the same property
-        for other_unit in &self.all_units {
-            if other_unit.property.to_lowercase() == property.to_lowercase()
-                && other_unit.code != unit
-            {
-                alternatives.push(format!("{} ({})", other_unit.code, other_unit.display_name));
-            }
-        }
-
-        // Sort and limit results
-        alternatives.sort();
-        alternatives.truncate(10);
-
-        alternatives
-    }
-
     /// Suggest prefixed alternatives for a unit
     fn suggest_prefixed_alternatives(&self, invalid_unit: &str, suggestions: &mut Vec<String>) {
         // Check if this might be a missing or incorrect prefix
         for unit in &self.all_units {
             // Check if the invalid unit ends with a valid unit code
-            if invalid_unit.len() > unit.code.len() && invalid_unit.ends_with(&unit.code) {
+            if unit.is_metric
+                && invalid_unit.len() > unit.code.len()
+                && invalid_unit.ends_with(&unit.code)
+            {
                 let potential_prefix = &invalid_unit[..invalid_unit.len() - unit.code.len()];
                 if potential_prefix.len() <= 3 {
                     // Reasonable prefix length
@@ -268,13 +251,6 @@ mod tests {
         let engine = SuggestionEngine::new();
         let suggestions = engine.suggest_corrections("metr");
         assert!(!suggestions.is_empty());
-    }
-
-    #[test]
-    fn test_suggest_alternatives() {
-        let engine = SuggestionEngine::new();
-        let alternatives = engine.suggest_alternatives("m", "length");
-        assert!(!alternatives.is_empty());
     }
 
     #[test]

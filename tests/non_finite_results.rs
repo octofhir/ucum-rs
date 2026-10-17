@@ -1,21 +1,27 @@
 //! Quantity and unit arithmetic must report a result that is not a number (infinite or
-//! NaN) or that is too small for an `f64`, like the evaluator does for `m/0`, instead of
-//! returning it as a success.
+//! NaN) or that is too small for an `f64`, instead of returning it as a success.
 
 mod common;
 
 use common::assert_overflow;
-use octofhir_ucum::{divide_by, multiply, unit_divide, unit_multiply};
+use octofhir_ucum::{ErrorKind, divide_by, multiply, unit_divide, unit_multiply};
 
 #[test]
-fn division_by_a_zero_unit_is_an_error() {
-    // These two used to return an infinite factor and an infinite value
-    assert_overflow(unit_divide("m", "0"), "unit_divide");
-    assert_overflow(divide_by(10.0, "m", 2.0, "0"), "divide_by");
-    // 0/0 used to be NaN
-    assert_overflow(unit_divide("0", "0"), "unit_divide 0/0");
-    assert_overflow(divide_by(0.0, "m", 2.0, "0"), "divide_by 0/0");
-    assert_overflow(unit_divide("m", "0.s"), "unit_divide compound");
+fn a_zero_unit_is_not_ucum() {
+    // A number is a positive integer (UCUM §8.1): there is no unit to divide by zero
+    for result in [
+        unit_divide("m", "0").map(|_| ()),
+        unit_divide("m", "0.s").map(|_| ()),
+        divide_by(10.0, "m", 2.0, "0").map(|_| ()),
+        multiply(1.0, "0", 2.0, "s").map(|_| ()),
+    ] {
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::InvalidExpression { .. }),
+            "{:?}",
+            err.kind
+        );
+    }
 }
 
 #[test]
@@ -52,16 +58,14 @@ fn non_finite_operands_are_an_error() {
 
 #[test]
 fn error_names_the_operation_and_the_operands() {
-    let err = unit_divide("m", "0").unwrap_err();
-    assert!(err.to_string().contains("division: m / 0"), "{err}");
-    let err = unit_divide("m", "0/s").unwrap_err();
-    assert!(err.to_string().contains("division: m / (0/s)"), "{err}");
     let err = multiply(1e300, "m", 1e300, "s").unwrap_err();
     assert!(
         err.to_string()
             .contains("multiplication: 1e300 m * 1e300 s"),
         "{err}"
     );
+    let err = divide_by(1.0, "m", 0.0, "s").unwrap_err();
+    assert!(err.to_string().contains("division: 1.0 m / 0.0 s"), "{err}");
 }
 
 #[test]
@@ -85,9 +89,7 @@ fn finite_results_still_work() {
     assert_eq!(unit_multiply("km", "km").unwrap().factor, 1e6);
     assert_eq!(unit_divide("km", "s").unwrap().factor, 1e3);
 
-    // A zero is a number: only the division by it is rejected
-    assert_eq!(unit_multiply("m", "0").unwrap().factor, 0.0);
-    assert_eq!(unit_divide("0", "m").unwrap().factor, 0.0);
+    // A zero value is a number: only the division by it is rejected
     assert_eq!(multiply(0.0, "m", 2.0, "s").unwrap().value, 0.0);
     assert_eq!(divide_by(0.0, "m", 2.0, "s").unwrap().value, 0.0);
 

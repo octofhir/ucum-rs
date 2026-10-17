@@ -1,98 +1,183 @@
-//! Semantic evaluator – computes canonical factor, dimension vector and offset
-//! from a parsed `UnitExpr`.
-//!
-//! The evaluator traverses the expression tree and combines factors using the
-//! generated registry data (prefixes & units).
-//!
-//! Limitations (initial version):
-//! • Offsets are supported only for linear temperature units (e.g., °C ↔ K).
-//!   Offsets must appear only on standalone symbols, not in products/powers.
-//! • Square‐bracket arbitrary units are treated as dimensionless with factor 1.
-//! • Percentage symbol (%) is treated as dimensionless factor 0.01 in the parser;
-//!   here we simply use the numeric value produced by the parser.
-//!
-//! Future work:
-//! • Full offset algebra, logarithmic units, etc.
-//! • Detailed error diagnostics with spans.
+//! Semantics of UCUM expressions (UCUM §16-26): the magnitude and dimension of a term in
+//! the base units, its arbitrary atoms, and for a special unit its function and scale; and
+//! the conversion of a measurement between two commensurable terms.
 
-use crate::math;
+use crate::ast::UnitExpr;
+use crate::error::UcumError;
+use crate::number::Number;
 use crate::prelude::*;
-use crate::{
-    ast::*,
-    error::UcumError,
-    find_unit,
-    precision::{Number, NumericOps, from_f64, to_f64},
-    registry::is_metric,
-    types::{Dimension, SpecialKind, UnitRecord},
-};
+use crate::registry;
+use crate::types::{Dimension, Prefix, SpecialKind, UnitRecord};
 
-/// Helper to extract string from either Symbol or SymbolOwned variants
-fn extract_symbol_str<'a>(expr: &'a UnitExpr<'a>) -> Option<&'a str> {
-    match expr {
-        UnitExpr::Symbol(s) => Some(s),
-        UnitExpr::SymbolOwned(s) => Some(s.as_str()),
-        _ => None,
-    }
+/// How symbols are matched against the tables (UCUM §3.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Case {
+    /// Case sensitive symbols (`Pa`, `mm[Hg]`), the default.
+    #[default]
+    Sensitive,
+    /// Case insensitive symbols (`PAL`, `MM[HG]`), in which case has no meaning.
+    Insensitive,
 }
 
-/// A factor as a `Decimal`, with an error instead of a silent 0 when it is out of
-/// the `Decimal` range (about 1e-28 to 7.9e28 in magnitude).
-#[allow(clippy::result_large_err)]
-fn to_number(value: f64) -> Result<Number, UcumError> {
-    let number = from_f64(value);
-    if value != 0.0 && number.is_zero() {
-        return Err(UcumError::precision_overflow(
-            "conversion to Decimal",
-            &format!("{value} is out of range"),
-        ));
-    }
-    Ok(number)
+/// A special unit with its scale (UCUM §22.4): a prefix or numeric factors, `0.1` for `dB`,
+/// `2` for `2.Cel`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpecialTerm {
+    /// The special unit
+    pub unit: &'static UnitRecord,
+    /// The scale `α`: a value `r` in the term is the proper quantity `f⁻¹(α r) × u`
+    pub scale: Number,
 }
 
-/// `a * b`, with an error instead of a panic when the result does not fit, or
-/// instead of a silent 0 when it is too small.
-#[allow(clippy::result_large_err)]
-fn checked_mul(a: Number, b: Number) -> Result<Number, UcumError> {
-    a.checked_mul(b)
-        .filter(|r| !r.is_zero() || a.is_zero() || b.is_zero())
-        .ok_or_else(|| UcumError::precision_overflow("multiplication", &format!("{a} * {b}")))
+/// The semantics of a term: `factor` times the base units of `dim` times its arbitrary
+/// atoms, or for a special unit the factor and dimension of its corresponding proper unit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EvalResult {
+    /// Magnitude in base units; for a special unit, of its corresponding proper unit
+    pub factor: Number,
+    /// Exponents of the base units
+    pub dim: Dimension,
+    /// Arbitrary atoms and their exponents, sorted (`[IU]/mL` has `[("[iU]", 1)]`)
+    pub arbitrary: Vec<(&'static str, i32)>,
+    /// The special unit of the term, if it is one
+    pub special: Option<SpecialTerm>,
 }
 
-/// `a / b`, with an error instead of a panic on overflow or division by zero, or
-/// instead of a silent 0 when the result is too small.
-#[allow(clippy::result_large_err)]
-fn checked_div(a: Number, b: Number) -> Result<Number, UcumError> {
-    a.checked_div(b)
-        .filter(|r| !r.is_zero() || a.is_zero())
-        .ok_or_else(|| UcumError::precision_overflow("division", &format!("{a} / {b}")))
-}
-
-/// `base^exp` by squaring: O(log exp) steps, and an error instead of a panic when the
-/// result does not fit.
-#[allow(clippy::result_large_err)]
-fn checked_pow(base: Number, exp: i32) -> Result<Number, UcumError> {
-    let mut result = Number::one();
-    let mut square = base;
-    let mut n = exp.unsigned_abs();
-    while n > 0 {
-        if n & 1 == 1 {
-            result = checked_mul(result, square)?;
-        }
-        n >>= 1;
-        if n > 0 {
-            square = checked_mul(square, square)?;
+impl EvalResult {
+    fn scalar(factor: Number) -> Self {
+        Self {
+            factor,
+            dim: Dimension::zero(),
+            arbitrary: Vec::new(),
+            special: None,
         }
     }
-    if exp < 0 {
-        checked_div(Number::one(), result)
-    } else {
-        Ok(result)
+
+    /// Whether the term is a number: a proper unit without dimension or arbitrary atoms.
+    pub fn is_scalar(&self) -> bool {
+        self.special.is_none() && self.dim.is_dimensionless() && self.arbitrary.is_empty()
     }
+
+    /// Whether two terms are commensurable (UCUM §17, §21.3, §25): the same dimension and
+    /// the same arbitrary atoms. A special unit is commensurable with its corresponding
+    /// proper unit.
+    pub fn is_commensurable(&self, other: &Self) -> bool {
+        self.dim == other.dim && self.arbitrary == other.arbitrary
+    }
+}
+
+fn overflow(operation: &str) -> UcumError {
+    UcumError::precision_overflow(operation, "the exponent of a factor does not fit")
+}
+
+fn algebra_error(code: &str) -> UcumError {
+    UcumError::special_unit_error(
+        code,
+        "a special unit takes part in no product, quotient or power (UCUM §22.1); it can only be scaled by a number",
+    )
+}
+
+/// The special unit of a term, for error messages.
+fn special_code(term: &EvalResult) -> &'static str {
+    term.special.map_or("", |s| s.unit.code)
+}
+
+fn multiply(a: EvalResult, b: EvalResult) -> Result<EvalResult, UcumError> {
+    match (a.special, b.special) {
+        (None, None) => {
+            let mut dim = a.dim.0;
+            add_scaled_dim(&mut dim, &b.dim, 1)?;
+            Ok(EvalResult {
+                factor: a
+                    .factor
+                    .checked_mul(b.factor)
+                    .ok_or_else(|| overflow("multiplication"))?,
+                dim: Dimension(dim),
+                arbitrary: combine(&a.arbitrary, &b.arbitrary, 1),
+                special: None,
+            })
+        }
+        // A number scales a special unit (UCUM §22.3)
+        (Some(special), None) if b.is_scalar() => scaled(a, special, b.factor),
+        (None, Some(special)) if a.is_scalar() => scaled(b, special, a.factor),
+        _ => Err(algebra_error(if a.special.is_some() {
+            special_code(&a)
+        } else {
+            special_code(&b)
+        })),
+    }
+}
+
+fn scaled(mut term: EvalResult, special: SpecialTerm, by: Number) -> Result<EvalResult, UcumError> {
+    let scale = special
+        .scale
+        .checked_mul(by)
+        .ok_or_else(|| overflow("scale"))?;
+    term.special = Some(SpecialTerm { scale, ..special });
+    Ok(term)
+}
+
+fn divide(a: EvalResult, b: EvalResult) -> Result<EvalResult, UcumError> {
+    if let Some(special) = a.special
+        && b.is_scalar()
+    {
+        let inverse = Number::ONE
+            .checked_div(b.factor)
+            .ok_or_else(|| division_by_zero(&b))?;
+        return scaled(a, special, inverse);
+    }
+    multiply(a, power(b, -1)?)
+}
+
+fn division_by_zero(_divisor: &EvalResult) -> UcumError {
+    UcumError::precision_overflow("division", "division by a unit of factor zero")
+}
+
+fn power(term: EvalResult, exp: i32) -> Result<EvalResult, UcumError> {
+    if term.special.is_some() {
+        return if exp == 1 {
+            Ok(term)
+        } else {
+            Err(algebra_error(special_code(&term)))
+        };
+    }
+    let mut dim = [0; 7];
+    add_scaled_dim(&mut dim, &term.dim, exp)?;
+    let factor = term.factor.checked_powi(exp).ok_or_else(|| {
+        if term.factor.is_zero() {
+            division_by_zero(&term)
+        } else {
+            overflow("exponentiation")
+        }
+    })?;
+    Ok(EvalResult {
+        factor,
+        dim: Dimension(dim),
+        arbitrary: combine(&[], &term.arbitrary, exp),
+        special: None,
+    })
+}
+
+/// `a + b × exp` for sorted lists of atoms with exponents.
+pub(crate) fn combine(
+    a: &[(&'static str, i32)],
+    b: &[(&'static str, i32)],
+    exp: i32,
+) -> Vec<(&'static str, i32)> {
+    let mut atoms: Vec<(&'static str, i32)> = a.to_vec();
+    for &(atom, e) in b {
+        let e = e.saturating_mul(exp);
+        match atoms.binary_search_by(|(x, _)| x.cmp(&atom)) {
+            Ok(i) => atoms[i].1 = atoms[i].1.saturating_add(e),
+            Err(i) => atoms.insert(i, (atom, e)),
+        }
+    }
+    atoms.retain(|&(_, e)| e != 0);
+    atoms
 }
 
 /// `acc += dim * exp` per component, with an error instead of wrapping or saturating
 /// when a component does not fit in `i8`.
-#[allow(clippy::result_large_err)]
 pub(crate) fn add_scaled_dim(
     acc: &mut [i8; 7],
     dim: &Dimension,
@@ -114,308 +199,250 @@ pub(crate) fn add_scaled_dim(
     Ok(())
 }
 
-/// Result returned by `evaluate()` – canonical factor, dimension vector, offset.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EvalResult {
+pub(crate) fn find_atom(code: &str, case: Case) -> Option<&'static UnitRecord> {
+    match case {
+        Case::Sensitive => registry::UNITS
+            .binary_search_by(|u| u.code.cmp(code))
+            .ok()
+            .map(|i| &registry::UNITS[i]),
+        Case::Insensitive => {
+            let upper = code.to_ascii_uppercase();
+            registry::UNITS_CI
+                .binary_search_by(|(c, _)| (*c).cmp(upper.as_str()))
+                .ok()
+                .map(|i| &registry::UNITS[registry::UNITS_CI[i].1])
+        }
+    }
+}
+
+pub(crate) fn find_prefix(code: &str, case: Case) -> Option<&'static Prefix> {
+    match case {
+        Case::Sensitive => registry::PREFIXES
+            .binary_search_by(|p| p.symbol.cmp(code))
+            .ok()
+            .map(|i| &registry::PREFIXES[i]),
+        Case::Insensitive => {
+            let upper = code.to_ascii_uppercase();
+            registry::PREFIXES_CI
+                .binary_search_by(|(c, _)| (*c).cmp(upper.as_str()))
+                .ok()
+                .map(|i| &registry::PREFIXES[registry::PREFIXES_CI[i].1])
+        }
+    }
+}
+
+/// A simple unit: its prefix, if any, and its unit atom. The prefix is the longest leading
+/// substring that is a prefix and leaves a metric unit atom; otherwise the whole symbol is
+/// the atom (UCUM §4.4).
+pub fn lookup_unit(
+    code: &str,
+    case: Case,
+) -> Option<(Option<&'static Prefix>, &'static UnitRecord)> {
+    for len in (1..code.len().min(3)).rev() {
+        let (Some(prefix), Some(atom)) = (code.get(..len), code.get(len..)) else {
+            continue;
+        };
+        if let Some(prefix) = find_prefix(prefix, case)
+            && let Some(unit) = find_atom(atom, case).filter(|u| u.is_metric)
+        {
+            return Some((Some(prefix), unit));
+        }
+    }
+    find_atom(code, case).map(|unit| (None, unit))
+}
+
+fn simple_unit(code: &str, case: Case) -> Result<EvalResult, UcumError> {
+    let (prefix, unit) = lookup_unit(code, case).ok_or_else(|| UcumError::unit_not_found(code))?;
+    let prefix_factor = prefix.map_or(Number::ONE, |p| p.factor);
+    if unit.special.is_special() {
+        // The prefix scales the value of a special unit (UCUM §22.3)
+        return Ok(EvalResult {
+            factor: unit.factor,
+            dim: unit.dim,
+            arbitrary: Vec::new(),
+            special: Some(SpecialTerm {
+                unit,
+                scale: prefix_factor,
+            }),
+        });
+    }
+    let mut arbitrary: Vec<(&'static str, i32)> = unit.arbitrary.to_vec();
+    arbitrary.sort();
+    Ok(EvalResult {
+        factor: prefix_factor
+            .checked_mul(unit.factor)
+            .ok_or_else(|| overflow("prefix"))?,
+        dim: unit.dim,
+        arbitrary,
+        special: None,
+    })
+}
+
+/// Evaluate a parsed expression with case sensitive symbols.
+pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
+    evaluate_with_case(expr, Case::Sensitive)
+}
+
+/// Evaluate a parsed expression, matching symbols as `case` says.
+pub fn evaluate_with_case(expr: &UnitExpr, case: Case) -> Result<EvalResult, UcumError> {
+    match expr {
+        UnitExpr::Symbol(code) => simple_unit(code, case),
+        UnitExpr::Numeric(n) => Ok(EvalResult::scalar(*n)),
+        UnitExpr::Annotation(_) => Ok(EvalResult::scalar(Number::ONE)),
+        UnitExpr::Annotated(expr, _) => evaluate_with_case(expr, case),
+        UnitExpr::Power(base, exp) => power(evaluate_with_case(base, case)?, *exp),
+        UnitExpr::Product(terms) => {
+            let mut result = EvalResult::scalar(Number::ONE);
+            for term in terms {
+                result = multiply(result, evaluate_with_case(term, case)?)?;
+            }
+            Ok(result)
+        }
+        UnitExpr::Quotient(numerator, denominator) => divide(
+            evaluate_with_case(numerator, case)?,
+            evaluate_with_case(denominator, case)?,
+        ),
+        UnitExpr::Reciprocal(expr) => divide(
+            EvalResult::scalar(Number::ONE),
+            evaluate_with_case(expr, case)?,
+        ),
+    }
+}
+
+/// A measurement mapping `value × factor + offset` from one term to another.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Linear {
     pub factor: Number,
-    pub dim: Dimension,
     pub offset: Number,
 }
 
-impl EvalResult {
-    const ZERO_DIM: Dimension = Dimension([0; 7]);
+/// The magnitude a term is measured against: the factor of a proper term, the corresponding
+/// unit of a special one.
+fn magnitude(term: &EvalResult) -> Number {
+    term.factor
+}
 
-    #[allow(clippy::result_large_err)]
-    fn numeric(val: f64) -> Result<Self, UcumError> {
-        Ok(Self {
-            factor: to_number(val)?,
-            dim: Self::ZERO_DIM,
-            offset: Number::zero(),
-        })
+/// `(α, o, u)` such that a value `r` in the term is the proper quantity `(α r + o) × u`: a
+/// proper term (`α = 1`, `o = 0`, `u` its factor), or a special unit on an interval scale (a
+/// temperature).
+fn affine(term: &EvalResult) -> Option<(Number, Number, Number)> {
+    match term.special {
+        None => Some((Number::ONE, Number::ZERO, term.factor)),
+        Some(special) => Some((special.scale, special.unit.special.offset()?, term.factor)),
     }
+}
 
-    #[allow(clippy::result_large_err)]
-    fn from_unit(code: &str) -> Result<Self, UcumError> {
-        // Handle empty string and a standalone annotation ("{rbc}") as the unity.
-        // Annotations hold the characters 33-126 only (UCUM §6.1)
-        let is_annotation = code.len() >= 2
-            && code.starts_with('{')
-            && code.ends_with('}')
-            && code.bytes().all(|b| b.is_ascii_graphic());
-        if code.is_empty() || is_annotation {
-            return Ok(Self {
-                factor: Number::one(),
-                dim: Self::ZERO_DIM,
-                offset: Number::zero(),
+/// `(α r + o) × u` of `from` as a value of `to`, step by step, so that rounding errors of
+/// the factors do not add up: 32 [degF] is 0 Cel, not 2e-26.
+fn affine_value(
+    value: Number,
+    (scale, offset, magnitude): (Number, Number, Number),
+    (to_scale, to_offset, to_magnitude): (Number, Number, Number),
+) -> Option<Number> {
+    let base = scale
+        .checked_mul(value)?
+        .checked_add(offset)?
+        .checked_mul(magnitude)?;
+    base.checked_div(to_magnitude)?
+        .checked_sub(to_offset)?
+        .checked_div(to_scale)
+}
+
+/// `log10(n)` for a positive number, exact for powers of ten.
+fn log10(n: Number) -> f64 {
+    let text = format!("{n:e}");
+    let (mantissa, exp) = text.split_once('e').expect("scientific notation");
+    let mantissa: f64 = mantissa.parse().expect("mantissa");
+    let exp: f64 = exp.parse().expect("exponent");
+    if mantissa == 1.0 {
+        exp
+    } else {
+        crate::math::log10(mantissa) + exp
+    }
+}
+
+/// The linear mapping between two commensurable terms, when there is one: between proper
+/// units and temperatures, between logarithmic units (`dB` to `Np`, `B[V]` to `B[mV]`),
+/// between tangent units or between square roots of the same unit.
+pub fn linear_conversion(from: &EvalResult, to: &EvalResult) -> Option<Linear> {
+    if let (Some(a), Some(b)) = (affine(from), affine(to)) {
+        let offset = affine_value(Number::ZERO, a, b)?;
+        return Some(Linear {
+            factor: affine_value(Number::ONE, a, b)?.checked_sub(offset)?,
+            offset,
+        });
+    }
+    let (from_special, to_special) = (from.special?, to.special?);
+    let ratio = magnitude(from).checked_div(magnitude(to))?;
+    let (alpha_from, alpha_to) = (from_special.scale, to_special.scale);
+    let (kind_from, kind_to) = (from_special.unit.special, to_special.unit.special);
+    if let (Some(((n_from, d_from), base_from)), Some(((n_to, d_to), base_to))) =
+        (kind_from.logarithm(), kind_to.logarithm())
+    {
+        // r_to = k_to (ln ratio + α_from r ln b_from / k_from) / (α_to ln b_to)
+        let k_ratio =
+            Number::from_i64(n_to * d_from).checked_div(Number::from_i64(d_to * n_from))?;
+        let mut factor = k_ratio.checked_mul(alpha_from)?.checked_div(alpha_to)?;
+        if base_from != base_to {
+            let bases = crate::math::ln(base_from) / crate::math::ln(base_to);
+            factor = factor.checked_mul(Number::from_f64(bases)?)?;
+        }
+        let k_to = Number::from_i64(n_to).checked_div(Number::from_i64(d_to))?;
+        let log_ratio = if ratio == Number::ONE {
+            Number::ZERO
+        } else if base_to == 10.0 {
+            Number::from_f64(log10(ratio))?
+        } else {
+            Number::from_f64(crate::math::ln(ratio.to_f64()) / crate::math::ln(base_to))?
+        };
+        let offset = k_to.checked_mul(log_ratio)?.checked_div(alpha_to)?;
+        return Some(Linear { factor, offset });
+    }
+    if kind_from == kind_to && ratio == Number::ONE {
+        // 100 tan and √ of the same unit: r_to = α_from r / α_to
+        if matches!(kind_from, SpecialKind::TanTimes100 | SpecialKind::Sqrt) {
+            return Some(Linear {
+                factor: alpha_from.checked_div(alpha_to)?,
+                offset: Number::ZERO,
             });
         }
-
-        let (pref_factor, unit) =
-            lookup_unit(code).ok_or_else(|| UcumError::unit_not_found(code))?;
-        match unit.special {
-            SpecialKind::TanTimes100 => Ok(Self {
-                factor: to_number(unit.factor)?,
-                dim: unit.dim,
-                offset: Number::zero(),
-            }),
-            // The factor of a level is its size in bels, from the registry, so that a
-            // conversion between levels is the ratio of their factors: `dB` is 0.1, `Np` is
-            // lg e (a ratio of e is 0.434 B), `bit_s` is lg 2 and `[pH]` is -1.
-            // `<number>.<level>` is the ratio itself, see `special_function_value`. A level
-            // with a reference (`B[V]`, `[pH]`) has the dimension of that reference and, as
-            // offset, its level in the base units
-            _ => Ok(Self {
-                factor: checked_mul(to_number(pref_factor)?, to_number(unit.factor)?)?,
-                dim: unit.dim,
-                offset: from_f64(unit.offset),
-            }),
-        }
     }
+    None
 }
 
-/// Evaluate a parsed `UnitExpr` into canonical factor, dimension and offset.
-#[allow(clippy::result_large_err)]
-pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
-    evaluate_impl(expr)
-}
-
-/// Evaluate an owned `UnitExpr` into canonical factor, dimension and offset.
-#[allow(clippy::result_large_err)]
-pub fn evaluate_owned(expr: &crate::ast::OwnedUnitExpr) -> Result<EvalResult, UcumError> {
-    evaluate_owned_impl(expr)
-}
-
-/// Internal implementation of evaluate without caching.
-#[allow(clippy::result_large_err)]
-fn evaluate_impl(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
-    match expr {
-        UnitExpr::Numeric(v) => EvalResult::numeric(*v),
-        UnitExpr::Symbol(sym) => EvalResult::from_unit(sym),
-        UnitExpr::SymbolOwned(sym) => EvalResult::from_unit(sym),
-        UnitExpr::Product(factors) => {
-            if !matches!(factors.as_slice(), [factor] if factor.exponent == 1) {
-                reject_referenced_level(expr)?;
-            }
-            // A number times a logarithmic or prism diopter unit ("20.dB", "2.Np",
-            // "100.[p'diop]"): the number is the argument of the unit's function
-            if let [a, b] = factors.as_slice()
-                && let Some((v, code)) = numeric_and_symbol(a, b).or(numeric_and_symbol(b, a))
-                && let Some((pref_factor, unit)) = lookup_unit(code)
-                && (LEVEL_KINDS.contains(&unit.special) || unit.special == SpecialKind::TanTimes100)
-            {
-                return special_function_value(v, code, to_number(pref_factor)?, unit);
-            }
-
-            let mut factor_acc = Number::one();
-            let mut dim_acc = [0i8; 7];
-            for fac in factors {
-                let res = evaluate(&fac.expr)?;
-                if res.offset != Number::zero() {
-                    return Err(UcumError::conversion_error(
-                        "offset units",
-                        "products",
-                        "offset units cannot participate in products",
-                    ));
-                }
-                factor_acc = checked_mul(factor_acc, checked_pow(res.factor, fac.exponent)?)?;
-                add_scaled_dim(&mut dim_acc, &res.dim, fac.exponent)?;
-            }
-
-            Ok(EvalResult {
-                factor: factor_acc,
-                dim: Dimension(dim_acc),
-                offset: Number::zero(),
-            })
-        }
-        UnitExpr::Quotient(num, den) => {
-            reject_referenced_level(expr)?;
-            let n = evaluate(num)?;
-            let d = evaluate(den)?;
-
-            if n.offset != Number::zero() || d.offset != Number::zero() {
-                return Err(UcumError::conversion_error(
-                    "offset units",
-                    "quotient expressions",
-                    "offset units not allowed in quotient expressions",
-                ));
-            }
-
-            // Arbitrary units such as [IU] are dimensionless, so [IU]/mL has the
-            // dimension of 1/mL through the ordinary subtraction
-            let mut dim_vec = n.dim.0;
-            add_scaled_dim(&mut dim_vec, &d.dim, -1)?;
-
-            Ok(EvalResult {
-                factor: checked_div(n.factor, d.factor)?,
-                dim: Dimension(dim_vec),
-                offset: Number::zero(),
-            })
-        }
-        UnitExpr::Power(base_expr, exp) => {
-            reject_referenced_level(expr)?;
-            let base = evaluate(base_expr)?;
-            if base.offset != Number::zero() {
-                return Err(UcumError::conversion_error(
-                    "offset units",
-                    "exponentiation",
-                    "offset units not allowed with exponentiation",
-                ));
-            }
-            let mut dim_vec = [0i8; 7];
-            add_scaled_dim(&mut dim_vec, &base.dim, *exp)?;
-            Ok(EvalResult {
-                factor: checked_pow(base.factor, *exp)?,
-                dim: Dimension(dim_vec),
-                offset: Number::zero(),
-            })
-        }
+/// Convert a measurement `value` from one commensurable term to another (UCUM §21.2,
+/// §22.4): exactly through decimal arithmetic when the mapping is linear, through the
+/// functions of the special units otherwise.
+pub fn convert_value(value: f64, from: &EvalResult, to: &EvalResult) -> Result<f64, UcumError> {
+    let operands = || format!("{value:?}");
+    // A function can map an infinite value to a finite one: 10^-∞ is 0
+    if !value.is_finite() {
+        return Err(UcumError::precision_overflow("conversion", &operands()));
     }
-}
-
-/// The kinds of levels, units on a logarithmic scale (`B`, `Np`, `bit_s`, `[pH]`).
-pub(crate) const LEVEL_KINDS: &[SpecialKind] =
-    &[SpecialKind::Log10, SpecialKind::Ln, SpecialKind::Log2];
-
-/// Whether a unit code is a level with a reference (`B[V]`, `dB[SPL]`, `[pH]`): the
-/// logarithm of a dimensioned quantity, with the dimension of that quantity and its level in
-/// bels as offset.
-pub(crate) fn is_referenced_level(code: &str) -> bool {
-    lookup_unit(code).is_some_and(|(_, unit)| {
-        LEVEL_KINDS.contains(&unit.special) && unit.dim != EvalResult::ZERO_DIM
-    })
-}
-
-/// A level with a reference takes no part in a product, a quotient or a power (UCUM
-/// §22.1), nor is it scaled by a number: `2.B[V]` is not a ratio like `2.B`. The check
-/// does not rely on the offset, which is 0 for `B[mV]`.
-#[allow(clippy::result_large_err)]
-fn reject_referenced_level(expr: &UnitExpr) -> Result<(), UcumError> {
-    match expr {
-        UnitExpr::Symbol(_) | UnitExpr::SymbolOwned(_) => match extract_symbol_str(expr) {
-            Some(code) if is_referenced_level(code) => Err(UcumError::special_unit_error(
-                code,
-                "a level with a reference cannot be part of a product, a quotient or a power",
-            )),
-            _ => Ok(()),
-        },
-        UnitExpr::Numeric(_) => Ok(()),
-        UnitExpr::Product(factors) => factors
-            .iter()
-            .try_for_each(|f| reject_referenced_level(&f.expr)),
-        UnitExpr::Quotient(num, den) => {
-            reject_referenced_level(num)?;
-            reject_referenced_level(den)
-        }
-        UnitExpr::Power(base, _) => reject_referenced_level(base),
+    if let (Some(a), Some(b)) = (affine(from), affine(to)) {
+        return Number::from_f64(value)
+            .and_then(|v| affine_value(v, a, b))
+            .map(Number::to_f64)
+            .ok_or_else(|| UcumError::precision_overflow("conversion", &operands()));
     }
-}
-
-/// Look up a unit code: an exact match first, then a prefix on a metric unit
-/// ("km", "dam", "mm[Hg]"). Returns the prefix factor and the unit.
-pub(crate) fn lookup_unit(code: &str) -> Option<(f64, &'static UnitRecord)> {
-    if let Some(unit) = find_unit(code)
-        && unit.code == code
-    {
-        return Some((1.0, unit));
+    if let Some(linear) = linear_conversion(from, to) {
+        let result = Number::from_f64(value)
+            .and_then(|v| v.checked_mul(linear.factor))
+            .and_then(|v| v.checked_add(linear.offset))
+            .ok_or_else(|| UcumError::precision_overflow("conversion", &operands()))?;
+        return Ok(result.to_f64());
     }
-    // Prefixes have one ("k") or two ("da", "Ki") characters; the longest one that
-    // leaves a metric unit wins (UCUM §4.4)
-    (1..=2).rev().find_map(|len| {
-        let prefix = code.get(..len).and_then(crate::find_prefix)?;
-        let rest = &code[len..];
-        let unit = find_unit(rest).filter(|u| u.code == rest && is_metric(rest))?;
-        Some((prefix.factor, unit))
-    })
-}
-
-/// `(value, code)` when `a` is a plain number and `b` a plain unit symbol.
-fn numeric_and_symbol<'e>(a: &'e UnitFactor, b: &'e UnitFactor) -> Option<(f64, &'e str)> {
-    match (&a.expr, a.exponent, b.exponent) {
-        (UnitExpr::Numeric(v), 1, 1) => Some((*v, extract_symbol_str(&b.expr)?)),
-        _ => None,
-    }
-}
-
-/// The ratio a logarithmic or prism diopter unit stands for, e.g. 20 dB -> 10^2.
-/// The prefix scales the argument: 1 dB is 0.1 B. A decimal level is 10 to the power of its
-/// value in bels, through its size in the registry (3 [hp'_C] is 10^-6); `Np` and `bit_s`
-/// are powers of their own base, which keeps 2^3 exact.
-#[allow(clippy::result_large_err)]
-fn special_function_value(
-    value: f64,
-    code: &str,
-    pref_factor: Number,
-    unit: &UnitRecord,
-) -> Result<EvalResult, UcumError> {
-    let arg = value * to_f64(pref_factor);
-    let ratio = match unit.special {
-        // 100 [p'diop] is a deflection of tan(1 rad)
-        SpecialKind::TanTimes100 => math::tan(arg / 100.0),
-        SpecialKind::Log10 => math::powf(10.0, arg * unit.factor),
-        SpecialKind::Ln | SpecialKind::Log2 => math::powf(unit.special.ratio(), arg),
-        _ => return Err(UcumError::special_unit_error(code, "not a function unit")),
+    // In multiples of the magnitude of `from`, then of `to`
+    let x = match from.special {
+        Some(special) => special.unit.special.inverse(special.scale.to_f64() * value),
+        None => value,
     };
-    Ok(EvalResult {
-        factor: to_number(ratio)?,
-        dim: EvalResult::ZERO_DIM,
-        offset: Number::zero(),
+    let ratio = magnitude(from)
+        .checked_div(magnitude(to))
+        .ok_or_else(|| UcumError::precision_overflow("conversion", &operands()))?;
+    let y = x * ratio.to_f64();
+    Ok(match to.special {
+        Some(special) => special.unit.special.forward(y) / special.scale.to_f64(),
+        None => y,
     })
-}
-
-/// Internal implementation of evaluate for owned AST
-#[allow(clippy::result_large_err)]
-fn evaluate_owned_impl(expr: &crate::ast::OwnedUnitExpr) -> Result<EvalResult, UcumError> {
-    match expr {
-        crate::ast::OwnedUnitExpr::Numeric(v) => EvalResult::numeric(*v),
-        crate::ast::OwnedUnitExpr::Symbol(sym) => EvalResult::from_unit(sym),
-        crate::ast::OwnedUnitExpr::Product(factors) => {
-            // Convert owned factors to borrowed for evaluation
-            let borrowed_factors: Vec<UnitFactor> = factors
-                .iter()
-                .map(|f| UnitFactor {
-                    expr: owned_to_borrowed(&f.expr),
-                    exponent: f.exponent,
-                })
-                .collect();
-
-            let borrowed_expr = UnitExpr::Product(borrowed_factors);
-            evaluate_impl(&borrowed_expr)
-        }
-        crate::ast::OwnedUnitExpr::Quotient(num, den) => {
-            let borrowed_num = owned_to_borrowed(num);
-            let borrowed_den = owned_to_borrowed(den);
-            let borrowed_expr = UnitExpr::Quotient(Box::new(borrowed_num), Box::new(borrowed_den));
-            evaluate_impl(&borrowed_expr)
-        }
-        crate::ast::OwnedUnitExpr::Power(expr, exp) => {
-            let borrowed_expr_inner = owned_to_borrowed(expr);
-            let borrowed_expr = UnitExpr::Power(Box::new(borrowed_expr_inner), *exp);
-            evaluate_impl(&borrowed_expr)
-        }
-    }
-}
-
-/// Convert owned AST to borrowed AST for evaluation
-fn owned_to_borrowed(expr: &crate::ast::OwnedUnitExpr) -> UnitExpr<'_> {
-    match expr {
-        crate::ast::OwnedUnitExpr::Numeric(v) => UnitExpr::Numeric(*v),
-        crate::ast::OwnedUnitExpr::Symbol(sym) => UnitExpr::SymbolOwned(sym.clone()),
-        crate::ast::OwnedUnitExpr::Product(factors) => {
-            let borrowed_factors: Vec<UnitFactor> = factors
-                .iter()
-                .map(|f| UnitFactor {
-                    expr: owned_to_borrowed(&f.expr),
-                    exponent: f.exponent,
-                })
-                .collect();
-            UnitExpr::Product(borrowed_factors)
-        }
-        crate::ast::OwnedUnitExpr::Quotient(num, den) => UnitExpr::Quotient(
-            Box::new(owned_to_borrowed(num)),
-            Box::new(owned_to_borrowed(den)),
-        ),
-        crate::ast::OwnedUnitExpr::Power(expr, exp) => {
-            UnitExpr::Power(Box::new(owned_to_borrowed(expr)), *exp)
-        }
-    }
 }

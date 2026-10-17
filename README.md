@@ -5,14 +5,59 @@
 [![npm](https://img.shields.io/npm/v/@octofhir/ucum-wasm.svg)](https://www.npmjs.com/package/@octofhir/ucum-wasm)
 [![Docs.rs](https://docs.rs/octofhir-ucum/badge.svg)](https://docs.rs/octofhir-ucum)
 
-High-performance Unified Code for Units of Measure (UCUM) implementation in Rust. Validate, parse, convert, and manipulate units of measure with comprehensive UCUM specification support.
+An implementation of the [Unified Code for Units of Measure](https://ucum.org/) (UCUM) in
+Rust: validate, compare and convert unit expressions exactly as the UCUM specification
+defines them.
+
+## Specification conformance
+
+**This library follows the UCUM specification, version 2.2 (tables of 2024-06-17).
+Conformance is mandatory, not best effort.** When the code and the specification disagree,
+the code is wrong: every deviation is a bug, and a fix to it takes priority over backward
+compatibility. The specification text, its tables (`ucum-essence.xml`) and the official
+functional tests are kept in [`spec/`](spec/) and [`tests/official/`](tests/official/).
+
+What this means in practice:
+
+- **Full conformance (§2.2)**: expressions are compared by their semantics, not their
+  spelling. `kg.m/s2` equals `N`, `mg{total}` equals `mg`.
+- **The seven UCUM base units (§28)**: meter, second, gram, radian, kelvin, coulomb and
+  candela. The radian has a dimension of its own (`Hz` is not `rad/s`, `sr` is `rad2`) and
+  the mole is a number, 6.02214076·10²³ (`mol` converts to `10*23`).
+- **Exact decimal arithmetic**: factors are decimal numbers of any magnitude, not `f64`.
+  `[in_i]` is exactly 2.54 cm, `[m_e]` keeps all its digits at 9.1093837139·10⁻²⁸ g, and
+  `[h]` or `Ym3` are valid.
+- **Special units (§21-23)** are measured on their own scales through their functions:
+  0 `Cel` is 273.15 `K`, 20 `dB[SPL]` is 2·10⁻⁴ `Pa`, 7 `[pH]` is 10⁻⁷ `mol/L`, 100
+  `%[slope]` is 45 `deg`. A prefix or a number scales them (`mCel`, `20.dB` is 2 `B`); they
+  take part in no product, quotient or power (`Cel/h`, `B2` are errors, §22.1).
+- **Arbitrary units (§24-26)** are commensurable with no other unit: `[IU]` does not
+  convert to `1` or to `[arb'U]`. A term with an arbitrary unit converts only to a term with
+  the same arbitrary units (`[IU]/mL` to `[IU]/L`), as the reference implementation does.
+- **Strict syntax (§1-15)**: 7-bit ASCII only, no white space, no `^` operator, no `µ`,
+  positive integers only, one non-empty annotation per component.
+- **Case insensitive codes (§3.4)** are supported with `Case::Insensitive` (`PAL`, `MG`).
+- **100% of the official UCUM functional tests pass** (validation, display names,
+  conversion, multiplication, division), checked to the precision each outcome is written in.
+
+Where the sources disagree, this is what the library does:
+
+| Question | Sources | Choice |
+|---|---|---|
+| Leading solidus: `/m.s` | §7.3 says it inverts the unit right after it; the grammar inverts the whole term | §7.3: `(1/m).s` |
+| Annotation on a number: `1{c}` | the grammar forbids it; official test 1-117 accepts it | accepted |
+| `%[slope]` | the `<function>` element of the XML says `deg`; its definition and the specification say `rad` | `100tan(1 rad)` |
+| White space | §3 allows implementations to reject it or to ignore it | rejected |
+| Empty string | not a term (§7); official test 2-101 gives it the display name "(unity)" | invalid, except for `display_name` |
+
+Found a deviation? Please [open an issue](https://github.com/octofhir/ucum-rs/issues) with
+the expression, the result and the section of the specification.
 
 ## Quick Start
 
 ### Rust Library
 
 ```sh
-# Add to your project
 cargo add octofhir-ucum
 
 # no_std + alloc (embedded / bare-metal): disable default features
@@ -20,44 +65,48 @@ cargo add octofhir-ucum --no-default-features
 ```
 
 Without the default `std` feature the crate is `no_std` + `alloc`: parsing, validation,
-analysis, conversion and unit arithmetic all work, float math goes through `libm`.
-Only `search_units_regex` and `search_units_fuzzy` require `std`.
+analysis, conversion and unit arithmetic all work, float math goes through `libm`. Only
+`search_units_regex` and `search_units_fuzzy` require `std`.
 
 ```rust
-use octofhir_ucum::{validate, convert, analyse, unit_multiply};
+use octofhir_ucum::{analyse, convert, is_comparable, unit_multiply, validate};
 
 // Validate UCUM expressions
 assert!(validate("mg/dL").is_ok());
+assert!(validate("Cel/h").is_err()); // a special unit in a quotient (§22.1)
 
-// Convert between units
-let result = convert(100.0, "kPa", "mm[Hg]")?;
-// result ≈ 750.06
+// Convert between commensurable units
+let mmhg = convert(100.0, "kPa", "mm[Hg]")?; // 750.06...
+let fahrenheit = convert(37.0, "Cel", "[degF]")?; // 98.6
+let concentration = convert(7.4, "[pH]", "nmol/L")?; // 39.8...
 
-// Analyze units (dimensions, properties, canonical form)
+// Commensurability
+assert!(is_comparable("[psi]", "Pa")?);
+assert!(!is_comparable("[IU]", "[arb'U]")?);
+
+// Analysis: magnitude in base units and dimension
 let info = analyse("mg/dL")?;
-println!("Canonical: {}", info.canonical_form);  // g.dL-1
-println!("Dimensions: {:?}", info.dimensions);   // [1, 0, 0, 0, 0, 0, 0]
+assert_eq!(info.dimension.to_string(), "L-3.M");
+assert!((info.factor - 10.0).abs() < 1e-12); // 10 g/m3
 
 // Unit arithmetic
-let result = unit_multiply("kg", "m/s2")?;
-// result = "kg.m/s2" (Newton)
+let force = unit_multiply("kg", "m/s2")?;
+assert_eq!(force.expression, "kg.m/s2");
+# Ok::<(), octofhir_ucum::UcumError>(())
 ```
 
 ### Command-Line Interface
 
 ```sh
-# Install CLI
-cargo install octofhir-ucum
+cargo install octofhir-ucum --features cli
 
-# Validate units
 octofhir-ucum validate "mg/dL"
-
-# Convert values
-octofhir-ucum convert --value 100 --from kPa --to "mm[Hg]"
-
-# Explore units
-octofhir-ucum list-units --property length
-octofhir-ucum explain kg
+octofhir-ucum convert 100 kPa "mm[Hg]"
+octofhir-ucum analyze "[pH]"
+octofhir-ucum canonical N
+octofhir-ucum comparable Cel "[degF]"
+octofhir-ucum search pascal
+octofhir-ucum -i validate PAL      # case insensitive codes
 ```
 
 ### JavaScript/TypeScript (WASM)
@@ -67,126 +116,80 @@ npm install @octofhir/ucum-wasm
 ```
 
 ```typescript
-import { start, validate, convert, get_unit_info } from '@octofhir/ucum-wasm';
+import { start, validate, convert, analyze, comparable } from '@octofhir/ucum-wasm';
 
-// Initialize WASM module
 start();
 
-// Validate and convert
-const isValid = validate('mg/dL');  // true
-const result = convert(100, 'kPa', 'mm[Hg]');  // 750.06...
-
-// Get unit information
-const info = get_unit_info('mg');
-console.log(info.factor);       // 0.000001
-console.log(info.dimensions);   // [1, 0, 0, 0, 0, 0, 0]
+validate('mg/dL');                    // true
+convert(100, 'kPa', 'mm[Hg]');        // 750.06...
+comparable('Cel', '[degF]');          // true
+analyze('[pH]').special;              // "PH"
 ```
 
-## Features
+The package also exports `get_canonical`, `get_unit_info`, `search`, `list_units`,
+`multiply_units` and `divide_units`.
 
-### Core Capabilities
+## Usage
 
-- **Full UCUM Support**: SI base/derived units, customary units, specialized medical/laboratory units
-- **Validation**: Comprehensive syntax validation with helpful error messages
-- **Unit Conversion**: Accurate conversion with support for temperature offsets and logarithmic units
-- **Unit Analysis**: Dimensional analysis, canonical forms, and commensurability checking
-- **Unit Arithmetic**: Multiply and divide units to derive new units
-- **Advanced Search**: Find units by text, property, dimensions, or fuzzy matching
-- **High Performance**: Zero-copy parsing architecture with optimized lookups
-
-### Integration Options
-
-- **Rust Library**: Full-featured API with zero-copy parsing
-- **CLI Tool**: Command-line interface for validation, conversion, and exploration
-- **WASM Package**: Use in browsers and Node.js applications
-- **FHIR Support**: Native integration with FHIR Quantity data types
-
-### Conformance
-
-- 100% conformance with the official UCUM functional test suite (574/574 cases)
-- Handles edge cases: temperature conversions, logarithmic units, arbitrary units
-- Comprehensive error reporting with suggestions for common mistakes
-
-## Usage Examples
-
-### Unit Conversion
+### Conversion
 
 ```rust
-use octofhir_ucum::convert;
+use octofhir_ucum::{convert, convert_with_context, AdvancedConversionContext, Case, DecimalPrecision};
 
-// Simple conversion
-let kg_to_g = convert(1.0, "kg", "g")?;  // 1000.0
+convert(1.0, "kg", "g")?;               // 1000
+convert(100.0, "Cel", "K")?;            // 373.15
+convert(1.0, "[IU]/mL", "[IU]/L")?;     // 1000
+convert(0.0, "B[V]", "dB[uV]")?;        // 120
+convert(1.0, "mol", "10*23")?;          // 6.02214076
+assert!(convert(1.0, "[IU]", "1").is_err());
 
-// Pressure conversion
-let kpa_to_mmhg = convert(100.0, "kPa", "mm[Hg]")?;  // 750.06
-
-// Temperature conversion (with offset handling)
-let celsius_to_kelvin = convert(100.0, "Cel", "K")?;  // 373.15
+let context = AdvancedConversionContext {
+    precision: DecimalPrecision::Fixed(2),
+    case: Case::Insensitive,
+    ..Default::default()
+};
+let result = convert_with_context(1.0, "[IN_I]", "CM", &context)?;
+assert_eq!(result.value, 2.54);
+assert_eq!(result.factor, Some(2.54)); // None for a non-linear conversion
+# Ok::<(), octofhir_ucum::UcumError>(())
 ```
 
-### Unit Validation
+### Canonical form and expression rewriting
+
+```rust
+use octofhir_ucum::{get_canonical_units, optimize_expression, simplify_expression};
+
+let canonical = get_canonical_units("N")?;
+assert_eq!(canonical.unit, "g.m.s-2");
+assert_eq!(canonical.factor, 1000.0);
+
+assert_eq!(optimize_expression("g.m2.s-2")?, "mJ");
+assert_eq!(simplify_expression("km.s/s")?, "km");
+# Ok::<(), octofhir_ucum::UcumError>(())
+```
+
+### Validation errors
 
 ```rust
 use octofhir_ucum::validate;
 
-// Valid units
-assert!(validate("mg/dL").is_ok());
-assert!(validate("kg.m/s2").is_ok());
-
-// Invalid units - get helpful error messages
-match validate("mg/invalid") {
-    Err(e) => println!("Error: {}", e),  // "Unknown unit: invalid"
-    Ok(_) => {}
-}
-```
-
-### Unit Analysis
-
-```rust
-use octofhir_ucum::analyse;
-
-let info = analyse("mg/dL")?;
-println!("Canonical: {}", info.canonical_form);  // g.dL-1
-println!("Factor: {}", info.factor);             // 0.00001
-println!("Property: {}", info.property);         // mass concentration
-println!("Dimensions: {:?}", info.dimensions);   // [1, 0, 0, 0, 0, 0, 0]
-```
-
-### Advanced Conversion with Precision
-
-```rust
-use octofhir_ucum::{convert_with_context, AdvancedConversionContext, DecimalPrecision, RoundingMode};
-
-let context = AdvancedConversionContext {
-    precision: DecimalPrecision::Fixed(3),
-    rounding: RoundingMode::Nearest,
-    ..Default::default()
-};
-
-let result = convert_with_context(1000.0, "g", "kg", &context)?;
-println!("{}", result.value);  // 1.000
+let error = validate("mg/invalid").unwrap_err();
+println!("{error}"); // "Unknown unit: 'invalid'", with suggestions
 ```
 
 ## FHIR Integration
 
-Seamless integration with FHIR Quantity data types:
-
 ```rust
-use octofhir_ucum_fhir::{FhirQuantity, convert_quantity, are_equivalent};
+use octofhir_ucum::fhir::{FhirQuantity, are_equivalent, convert_quantity};
 
-// Create FHIR Quantity
 let quantity = FhirQuantity::with_ucum_code(1000.0, "mg");
-
-// Convert units
 let converted = convert_quantity(&quantity, "g")?;
 assert_eq!(converted.value, 1.0);
 
-// Check equivalence
-let quantity2 = FhirQuantity::with_ucum_code(1.0, "g");
-assert!(are_equivalent(&quantity2, &converted)?);
+let gram = FhirQuantity::with_ucum_code(1.0, "g");
+assert!(are_equivalent(&gram, &converted)?);
+# Ok::<(), octofhir_ucum::fhir::FhirError>(())
 ```
-
-Enable FHIR support:
 
 ```sh
 cargo add octofhir-ucum --features fhir
@@ -194,68 +197,43 @@ cargo add octofhir-ucum --features fhir
 
 ## Interactive Playground
 
-Try the library in your browser with our interactive playground:
-
 ```sh
 cd playground
 pnpm install
 npm run dev  # http://localhost:6000
 ```
 
-The playground provides real-time validation, conversion, and unit exploration.
-
 ## Documentation
 
-- [API Documentation](https://docs.rs/octofhir-ucum) - Complete API reference
-- [User Guide](USER_GUIDE.md) - Comprehensive usage guide with examples
-- [Tutorial](TUTORIAL.md) - Step-by-step introduction
-- [Contributing Guide](CONTRIBUTING.md) - Development setup and guidelines
-- [Changelog](CHANGELOG.md) - Release history
-
-## Performance
-
-The library is designed for high performance with zero-copy parsing:
-
-- Simple parsing: ~7.9M ops/sec (~126 ns/op)
-- Complex expressions: ~1.5M ops/sec (~640 ns/op)
-- Unit evaluation: ~1.3M ops/sec (~718 ns/op)
-
-See [benchmarks](benches/) for detailed performance metrics.
+- [API Documentation](https://docs.rs/octofhir-ucum)
+- [User Guide](USER_GUIDE.md)
+- [Tutorial](TUTORIAL.md)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 
 ## Project Structure
 
 ```
 ucum-rs/
+├── build.rs                # Generates the unit registry from ucum-essence.xml
 ├── src/
-│   ├── lib.rs              # Core library
-│   ├── parser.rs           # Zero-copy parser
-│   ├── evaluator.rs        # Unit evaluation
-│   ├── registry.rs         # Unit registry (generated)
+│   ├── lib.rs              # Public API
+│   ├── parser.rs           # Syntax (UCUM §1-15)
+│   ├── evaluator.rs        # Semantics and conversion (UCUM §16-26)
+│   ├── number.rs           # Exact decimal numbers of any magnitude
 │   ├── bin/cli.rs          # Command-line interface
-│   └── fhir.rs             # FHIR integration
+│   └── fhir.rs             # FHIR Quantity integration
 ├── wasm/                   # WebAssembly bindings (npm: @octofhir/ucum-wasm)
 ├── playground/             # Interactive web playground
-├── ucum-fuzz/              # Fuzzing infrastructure
-└── spec/                   # UCUM specification assets
+├── spec/                   # UCUM specification text and grammar
+└── tests/official/         # Official UCUM functional tests
 ```
 
 ## Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
-
-- Development setup and workflow
-- Architecture overview
-- Testing guidelines
-- Code style requirements
-- Pull request process
+See [CONTRIBUTING.md](CONTRIBUTING.md). A change that touches semantics must cite the
+section of the specification it implements.
 
 ## License
 
 Apache-2.0
-
-## Resources
-
-- [UCUM Specification](https://ucum.org/)
-- [FHIR Quantity](https://www.hl7.org/fhir/datatypes.html#Quantity)
-- [GitHub Repository](https://github.com/octofhir/ucum-rs)
-- [Issue Tracker](https://github.com/octofhir/ucum-rs/issues)

@@ -5,8 +5,8 @@
 
 use clap::{Parser, Subcommand};
 use octofhir_ucum::{
-    AdvancedConversionContext, analyse, convert_with_context, get_canonical_units, is_comparable,
-    search_units, validate,
+    AdvancedConversionContext, Case, analyse, convert_with_context, get_canonical_units,
+    is_comparable, search_units, validate_with_case,
 };
 
 #[derive(Parser, Debug)]
@@ -16,13 +16,16 @@ use octofhir_ucum::{
     about = "UCUM command-line tools",
     disable_help_subcommand = true
 )]
-pub struct Cli {
+struct Cli {
+    /// Read symbols case insensitively (UCUM §3.4): `PAL` for `Pa`
+    #[arg(short = 'i', long, global = true)]
+    case_insensitive: bool,
     #[command(subcommand)]
-    pub command: Commands,
+    command: Commands,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum Commands {
+enum Commands {
     /// Validate a UCUM expression for correctness.
     Validate {
         /// UCUM expression to validate
@@ -33,7 +36,7 @@ pub enum Commands {
         /// UCUM expression to analyze
         expression: String,
     },
-    /// Get the canonical (base SI units) form of an expression.
+    /// Get the canonical form of an expression, in the UCUM base units.
     Canonical {
         /// UCUM expression to convert to canonical form
         expression: String,
@@ -48,7 +51,7 @@ pub enum Commands {
         /// Destination unit expression
         to: String,
     },
-    /// Check if two units are comparable (same dimension).
+    /// Check if two units are commensurable.
     Comparable {
         /// First unit expression
         unit1: String,
@@ -69,19 +72,24 @@ fn main() -> Result<(), anyhow::Error> {
     human_panic::setup_panic!();
     let cli = Cli::parse();
 
+    let case = if cli.case_insensitive {
+        Case::Insensitive
+    } else {
+        Case::Sensitive
+    };
     match cli.command {
-        Commands::Validate { expression } => handle_validate(&expression)?,
+        Commands::Validate { expression } => handle_validate(&expression, case)?,
         Commands::Analyze { expression } => handle_analyze(&expression)?,
         Commands::Canonical { expression } => handle_canonical(&expression)?,
-        Commands::Convert { value, from, to } => handle_convert(value, from, to)?,
+        Commands::Convert { value, from, to } => handle_convert(value, from, to, case)?,
         Commands::Comparable { unit1, unit2 } => handle_comparable(&unit1, &unit2)?,
         Commands::Search { query, limit } => handle_search(&query, limit)?,
     }
     Ok(())
 }
 
-fn handle_validate(expr: &str) -> anyhow::Result<()> {
-    match validate(expr) {
+fn handle_validate(expr: &str, case: Case) -> anyhow::Result<()> {
+    match validate_with_case(expr, case) {
         Ok(()) => println!("✅ Valid UCUM expression: {}", expr),
         Err(e) => {
             println!("❌ Error: {}", e);
@@ -95,11 +103,18 @@ fn handle_analyze(expr: &str) -> anyhow::Result<()> {
     match analyse(expr) {
         Ok(analysis) => {
             println!("📊 Unit Analysis: {}", analysis.expression);
-            println!("   Factor: {:.6}", analysis.factor);
-            println!("   Dimension: {:?}", analysis.dimension);
-            println!("   Offset: {:.6}", analysis.offset);
+            println!("   Factor: {}", analysis.factor);
+            println!("   Dimension: {}", analysis.dimension);
+            for (atom, exp) in &analysis.arbitrary {
+                println!("   Arbitrary unit: {atom} ^ {exp}");
+            }
+            if let Some(kind) = analysis.special {
+                println!("   Special unit: {kind:?}, scale {}", analysis.scale);
+                if analysis.offset != 0.0 {
+                    println!("   Offset: {}", analysis.offset);
+                }
+            }
             println!("   Dimensionless: {}", analysis.is_dimensionless);
-            println!("   Has offset: {}", analysis.has_offset);
         }
         Err(e) => {
             println!("❌ Error: {}", e);
@@ -114,11 +129,11 @@ fn handle_canonical(expr: &str) -> anyhow::Result<()> {
         Ok(canonical) => {
             println!("📐 Canonical form of '{}':", expr);
             println!("   Unit: {}", canonical.unit);
-            println!("   Factor: {:.6}", canonical.factor);
+            println!("   Factor: {}", canonical.factor);
             if canonical.offset != 0.0 {
-                println!("   Offset: {:.6}", canonical.offset);
+                println!("   Offset: {}", canonical.offset);
             }
-            println!("   Dimension: {:?}", canonical.dimension);
+            println!("   Dimension: {}", canonical.dimension);
         }
         Err(e) => {
             println!("❌ Error: {}", e);
@@ -128,8 +143,11 @@ fn handle_canonical(expr: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_convert(value: f64, from: String, to: String) -> anyhow::Result<()> {
-    let context = AdvancedConversionContext::default();
+fn handle_convert(value: f64, from: String, to: String, case: Case) -> anyhow::Result<()> {
+    let context = AdvancedConversionContext {
+        case,
+        ..Default::default()
+    };
     let result = convert_with_context(value, &from, &to, &context)?;
     println!("{} {} = {} {}", value, from, result.value, to);
     Ok(())
@@ -140,14 +158,11 @@ fn handle_comparable(unit1: &str, unit2: &str) -> anyhow::Result<()> {
         Ok(comparable) => {
             if comparable {
                 println!(
-                    "✅ '{}' and '{}' are comparable (can be converted)",
+                    "✅ '{}' and '{}' are commensurable (can be converted)",
                     unit1, unit2
                 );
             } else {
-                println!(
-                    "❌ '{}' and '{}' are NOT comparable (different dimensions)",
-                    unit1, unit2
-                );
+                println!("❌ '{}' and '{}' are NOT commensurable", unit1, unit2);
             }
         }
         Err(e) => {

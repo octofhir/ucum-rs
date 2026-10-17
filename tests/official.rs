@@ -1,16 +1,12 @@
 //! The official UCUM functional tests (`tests/official/UcumFunctionalTests.xml`), run
-//! through the public API: `validate`, `generate_display_name_owned`,
-//! `convert_with_context`, `multiply` and `divide_by`.
+//! through the public API: `validate`, `display_name`, `convert`, `multiply` and `divide_by`.
 //!
 //! A numeric outcome must match to half a unit of its last written digit ("25" is
 //! 25 ± 0.5, "0.160" is 0.160 ± 0.0005), or to 1e-14 relative when it is written with more
 //! digits than an `f64` holds (the comment of the conversion group says implementations do
 //! not need to keep the 30 digits of `[pi]`).
 
-use octofhir_ucum::{
-    AdvancedConversionContext, convert_with_context, divide_by, generate_display_name_owned,
-    multiply, parse_expression, validate,
-};
+use octofhir_ucum::{convert, display_name, divide_by, multiply, validate};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use std::collections::HashMap;
@@ -66,10 +62,8 @@ fn matches_outcome(actual: f64, expected: &str) -> bool {
     (actual - value).abs() <= half_last_digit.max(1e-14 * value.abs())
 }
 
-fn convert(value: f64, from: &str, to: &str) -> Result<f64, String> {
-    convert_with_context(value, from, to, &AdvancedConversionContext::default())
-        .map(|result| result.value)
-        .map_err(|err| err.to_string())
+fn convert_to(value: f64, from: &str, to: &str) -> Result<f64, String> {
+    convert(value, from, to).map_err(|err| err.to_string())
 }
 
 /// Cases that still fail, with the reason. Each one is a bug to fix, not a tolerance.
@@ -112,9 +106,7 @@ fn validation() {
 fn display_name_generation() {
     let mut failures = Vec::new();
     for case in group("displayNameGeneration", 9) {
-        let display = parse_expression(&case["unit"])
-            .map(|e| generate_display_name_owned(&e))
-            .map_err(|e| e.to_string());
+        let display = display_name(&case["unit"]).map_err(|e| e.to_string());
         if display.as_deref() != Ok(case["display"].as_str()) {
             failures.push(format!(
                 "{} {:?}: expected {:?}, got {display:?}",
@@ -130,7 +122,7 @@ fn conversion() {
     let mut failures = Vec::new();
     for case in group("conversion", 30) {
         let value: f64 = case["value"].parse().expect("value");
-        let result = convert(value, &case["srcUnit"], &case["dstUnit"]);
+        let result = convert_to(value, &case["srcUnit"], &case["dstUnit"]);
         if !result
             .as_ref()
             .is_ok_and(|v| matches_outcome(*v, &case["outcome"]))
@@ -159,7 +151,7 @@ fn check_arithmetic(
             unit => unit,
         };
         let result = operation(v1, &case["u1"], v2, &case["u2"])
-            .and_then(|(value, unit)| convert(value, &unit, target));
+            .and_then(|(value, unit)| convert_to(value, &unit, target));
         if !result
             .as_ref()
             .is_ok_and(|v| matches_outcome(*v, &case["vRes"]))
