@@ -251,9 +251,13 @@ pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, Uc
     if known {
         return Ok(false);
     }
+    let property_len = property.chars().count();
     let similar: Vec<String> = get_properties()
         .into_iter()
-        .filter(|p| SuggestionEngine::string_similarity(&property, p) > 0.6)
+        .filter(|p| {
+            SuggestionEngine::similarity_above(&property, property_len, p, p.chars().count(), 0.6)
+                .is_some()
+        })
         .map(|p| format!("'{p}'"))
         .collect();
     Err(UcumError::invalid_property(&property).with_suggestions(similar))

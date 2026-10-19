@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suggestions for such an expression, `unit_multiply` and `unit_divide` return the error
   when their result would nest too deep, and `evaluate` rejects a syntax tree built by hand
   deeper than a parsed one can be.
+- The suggestions of `validate` for an invalid expression, and of `validate_in_property` for
+  an unknown property, no longer compute an edit distance over the whole input against
+  every unit or property: that took 200 ms for 50 KB in a release build, seconds for a
+  megabyte. A string whose length alone keeps it below the similarity threshold is no longer
+  compared, and a distance stops as soon as it cannot pass, so the same 50 KB take 0.5 ms
+  (what remains grows with the input only through lowercasing and pattern checks). The
+  suggestions themselves are unchanged.
 
 ## [0.7.0] - 2026-10-17
 
