@@ -27,10 +27,25 @@ fn is_symbol_char(b: u8) -> bool {
     (33..=126).contains(&b) && !b"\"()+-./=[]{}".contains(&b)
 }
 
+/// How many levels an expression can nest, along any path of its syntax tree: each pair of
+/// parentheses is a level, each solidus, which nests the term before it (`a/b/c` is
+/// `(a/b)/c`, UCUM §7.4), and each product of several terms. `m/m/m` has 2 levels, `((m))` 2,
+/// `m/(m/m)` 3, `m.m/s` 2. The parser and the evaluator recurse once per level, so a deeper
+/// expression would overflow the stack (1 MiB in WebAssembly) and abort the process; it is
+/// an `InvalidExpression` instead.
+pub const MAX_NESTING_DEPTH: usize = 128;
+
+/// The start of the reason of the error for an expression nested too deep.
+pub(crate) const TOO_DEEP: &str = "Expression nested deeper than";
+
 struct Parser<'a> {
     input: &'a str,
     bytes: &'a [u8],
     pos: usize,
+    /// Levels above the component being read: its parentheses, and the quotients and
+    /// products it is a term of. The parser recurses through them, so it never goes deeper
+    /// than `MAX_NESTING_DEPTH` either.
+    depth: usize,
 }
 
 type Result<T> = core::result::Result<T, UcumError>;
@@ -40,62 +55,100 @@ impl<'a> Parser<'a> {
         UcumError::invalid_expression(&format!("{reason} at position {}", self.pos))
     }
 
+    /// `expr` and its levels of nesting, once checked against `MAX_NESTING_DEPTH` with the
+    /// levels above it.
+    fn checked(&self, expr: UnitExpr, height: usize) -> Result<(UnitExpr, usize)> {
+        if self.depth + height > MAX_NESTING_DEPTH {
+            return Err(self.too_deep());
+        }
+        Ok((expr, height))
+    }
+
+    fn too_deep(&self) -> UcumError {
+        self.error(&format!("{TOO_DEEP} {MAX_NESTING_DEPTH} levels"))
+    }
+
+    /// A component one level below the current one: a term of a quotient or a product.
+    fn component_below(&mut self) -> Result<(UnitExpr, usize)> {
+        self.depth += 1;
+        let component = self.component();
+        self.depth -= 1;
+        component
+    }
+
     fn peek(&self) -> Option<u8> {
         self.bytes.get(self.pos).copied()
     }
 
     fn main_term(&mut self) -> Result<UnitExpr> {
-        if self.peek() == Some(b'/') {
+        let first = if self.peek() == Some(b'/') {
             self.pos += 1;
-            let first = UnitExpr::Reciprocal(Box::new(self.component()?));
-            self.term_from(first)
+            let (component, height) = self.component_below()?;
+            self.checked(UnitExpr::Reciprocal(Box::new(component)), height + 1)?
         } else {
-            let first = self.component()?;
-            self.term_from(first)
-        }
+            self.component()?
+        };
+        Ok(self.term_from(first)?.0)
     }
 
-    fn term(&mut self) -> Result<UnitExpr> {
+    fn term(&mut self) -> Result<(UnitExpr, usize)> {
         let first = self.component()?;
         self.term_from(first)
     }
 
-    /// The rest of a term after its first component, left to right (UCUM §7.4).
-    fn term_from(&mut self, first: UnitExpr) -> Result<UnitExpr> {
+    /// The rest of a term after its first component, left to right (UCUM §7.4), with its
+    /// levels of nesting.
+    fn term_from(&mut self, (first, first_height): (UnitExpr, usize)) -> Result<(UnitExpr, usize)> {
         let mut terms = vec![first];
+        let mut height = first_height;
         loop {
             match self.peek() {
                 Some(b'.') => {
                     self.pos += 1;
-                    terms.push(self.component()?);
+                    let (component, component_height) = self.component_below()?;
+                    terms.push(component);
+                    height = height.max(component_height);
                 }
                 Some(b'/') => {
                     self.pos += 1;
-                    let denominator = self.component()?;
+                    let (denominator, denominator_height) = self.component_below()?;
+                    let numerator_height = height + usize::from(terms.len() > 1);
                     let numerator = fold(core::mem::take(&mut terms));
-                    terms.push(UnitExpr::Quotient(
-                        Box::new(numerator),
-                        Box::new(denominator),
-                    ));
+                    let (quotient, quotient_height) = self.checked(
+                        UnitExpr::Quotient(Box::new(numerator), Box::new(denominator)),
+                        1 + numerator_height.max(denominator_height),
+                    )?;
+                    terms.push(quotient);
+                    height = quotient_height;
                 }
-                _ => return Ok(fold(terms)),
+                _ => {
+                    let height = height + usize::from(terms.len() > 1);
+                    return self.checked(fold(terms), height);
+                }
             }
         }
     }
 
-    fn component(&mut self) -> Result<UnitExpr> {
+    /// A component, with its levels of nesting.
+    fn component(&mut self) -> Result<(UnitExpr, usize)> {
         match self.peek() {
             None => Err(self.error("Expected a unit")),
             Some(b'(') => {
+                if self.depth >= MAX_NESTING_DEPTH {
+                    return Err(self.too_deep());
+                }
                 self.pos += 1;
-                let term = self.term()?;
+                self.depth += 1;
+                let term = self.term();
+                self.depth -= 1;
+                let (term, height) = term?;
                 if self.peek() != Some(b')') {
                     return Err(self.error("Expected ')'"));
                 }
                 self.pos += 1;
-                Ok(term)
+                self.checked(term, height + 1)
             }
-            Some(b'{') => Ok(UnitExpr::Annotation(self.annotation()?)),
+            Some(b'{') => Ok((UnitExpr::Annotation(self.annotation()?), 0)),
             Some(b) if b.is_ascii_digit() && !self.digits_are_symbol() => {
                 let start = self.pos;
                 while self.peek().is_some_and(|b| b.is_ascii_digit()) {
@@ -106,11 +159,11 @@ impl<'a> Parser<'a> {
                     self.pos = start;
                     return Err(self.error("A number must be a positive integer"));
                 }
-                self.annotated(UnitExpr::Numeric(value))
+                Ok((self.annotated(UnitExpr::Numeric(value))?, 0))
             }
             Some(b) if is_symbol_char(b) || b == b'[' => {
                 let unit = self.simple_unit()?;
-                self.annotated(unit)
+                Ok((self.annotated(unit)?, 0))
             }
             Some(b) => Err(self.error(&format!("Unexpected character '{}'", b as char))),
         }
@@ -226,7 +279,9 @@ fn fold(mut terms: Vec<UnitExpr>) -> UnitExpr {
 /// Parse a UCUM expression into its syntax tree.
 ///
 /// The syntax is checked; whether the symbols are units is checked by evaluation (see
-/// `validate`).
+/// `validate`). An expression nested deeper than [`MAX_NESTING_DEPTH`] levels (parentheses,
+/// solidi and products) is an `InvalidExpression`: the parser and the evaluator recurse once per level,
+/// and would otherwise overflow the stack.
 pub fn parse_expression(input: &str) -> Result<UnitExpr> {
     if input.is_empty() {
         return Err(UcumError::invalid_expression(
@@ -250,6 +305,7 @@ pub fn parse_expression(input: &str) -> Result<UnitExpr> {
         input,
         bytes: input.as_bytes(),
         pos: 0,
+        depth: 0,
     };
     let expr = parser.main_term()?;
     if parser.pos < input.len() {

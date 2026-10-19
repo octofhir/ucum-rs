@@ -283,29 +283,49 @@ pub fn evaluate(expr: &UnitExpr) -> Result<EvalResult, UcumError> {
     evaluate_with_case(expr, Case::Sensitive)
 }
 
+/// The deepest syntax tree the evaluator walks, in nodes. `parse_expression` never returns
+/// one deeper: its levels (`MAX_NESTING_DEPTH`) are the quotients and products of the tree,
+/// and a component adds at most two nodes (`m2{a}`) to the symbol. A deeper tree can only be
+/// built by hand, and would overflow the stack.
+const MAX_TREE_HEIGHT: usize = crate::parser::MAX_NESTING_DEPTH + 3;
+
 /// Evaluate a parsed expression, matching symbols as `case` says.
+///
+/// # Errors
+///
+/// Besides the errors of the units themselves, a syntax tree built by hand deeper than
+/// `parse_expression` allows is an `InvalidExpression`.
 pub fn evaluate_with_case(expr: &UnitExpr, case: Case) -> Result<EvalResult, UcumError> {
+    evaluate_at(expr, case, 1)
+}
+
+/// `evaluate_with_case` for a node at `depth` in the tree.
+fn evaluate_at(expr: &UnitExpr, case: Case, depth: usize) -> Result<EvalResult, UcumError> {
+    if depth > MAX_TREE_HEIGHT {
+        return Err(UcumError::invalid_expression(&format!(
+            "{} {} levels",
+            crate::parser::TOO_DEEP,
+            crate::parser::MAX_NESTING_DEPTH
+        )));
+    }
+    let child = |expr| evaluate_at(expr, case, depth + 1);
     match expr {
         UnitExpr::Symbol(code) => simple_unit(code, case),
         UnitExpr::Numeric(n) => Ok(EvalResult::scalar(*n)),
         UnitExpr::Annotation(_) => Ok(EvalResult::scalar(Number::ONE)),
-        UnitExpr::Annotated(expr, _) => evaluate_with_case(expr, case),
-        UnitExpr::Power(base, exp) => power(evaluate_with_case(base, case)?, *exp),
+        UnitExpr::Annotated(expr, _) => child(expr),
+        UnitExpr::Power(base, exp) => power(child(base)?, *exp),
         UnitExpr::Product(terms) => {
             let mut result = EvalResult::scalar(Number::ONE);
             for term in terms {
-                result = multiply(result, evaluate_with_case(term, case)?)?;
+                result = multiply(result, child(term)?)?;
             }
             Ok(result)
         }
-        UnitExpr::Quotient(numerator, denominator) => divide(
-            evaluate_with_case(numerator, case)?,
-            evaluate_with_case(denominator, case)?,
-        ),
-        UnitExpr::Reciprocal(expr) => divide(
-            EvalResult::scalar(Number::ONE),
-            evaluate_with_case(expr, case)?,
-        ),
+        UnitExpr::Quotient(numerator, denominator) => {
+            divide(child(numerator)?, child(denominator)?)
+        }
+        UnitExpr::Reciprocal(expr) => divide(EvalResult::scalar(Number::ONE), child(expr)?),
     }
 }
 

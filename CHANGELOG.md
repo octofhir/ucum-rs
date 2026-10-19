@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An expression nested deeper than 128 levels (`MAX_NESTING_DEPTH`: parentheses, solidi and
+  products of several terms) is an `InvalidExpression` instead of a stack overflow that aborted
+  the process: about 5000 nested parentheses (`((((m))))`) or solidi (`m/m/m/m`, where each
+  solidus nests the term before it, UCUM §7.4) did so on a 2 MiB thread, far fewer in a
+  debug build or in WebAssembly. Products (`m.m.m`) are not limited. `validate` computes no
+  suggestions for such an expression, `unit_multiply` and `unit_divide` return the error
+  when their result would nest too deep, and `evaluate` rejects a syntax tree built by hand
+  deeper than a parsed one can be.
 - The suggestions of `validate` for an invalid expression, and of `validate_in_property` for
   an unknown property, no longer compute an edit distance over the whole input against
   every unit or property: that took 200 ms for 50 KB in a release build, seconds for a
