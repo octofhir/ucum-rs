@@ -10,46 +10,70 @@ pub(crate) struct SuggestionEngine {
     all_units: Vec<&'static UnitRecord>,
     /// Their names in lower case, in the same order
     names_lower: Vec<String>,
+    /// The lengths in characters of their codes and of their lower case names
+    code_lengths: Vec<usize>,
+    name_lengths: Vec<usize>,
 }
 
 impl SuggestionEngine {
     /// Create a new suggestion engine
     pub fn new() -> Self {
         let all_units: Vec<&'static UnitRecord> = get_all_units().iter().collect();
-        let names_lower = all_units
+        let names_lower: Vec<String> = all_units
             .iter()
             .map(|u| u.display_name.to_lowercase())
             .collect();
         Self {
+            code_lengths: all_units.iter().map(|u| u.code.chars().count()).collect(),
+            name_lengths: names_lower.iter().map(|n| n.chars().count()).collect(),
             all_units,
             names_lower,
         }
     }
 
-    /// Similarity of two strings, 1 minus their Levenshtein distance over the length of the
-    /// longer one.
-    pub fn string_similarity(s1: &str, s2: &str) -> f64 {
-        if s1.is_empty() && s2.is_empty() {
-            return 1.0;
+    /// The similarity of two strings of `len1` and `len2` characters, 1 minus their
+    /// Levenshtein distance over the length of the longer one, if it is above `threshold`.
+    ///
+    /// The cost does not grow with a string much longer than the other: the distance is at
+    /// least the difference of the lengths, so such a pair is ruled out before any distance
+    /// is computed, and the computation stops as soon as every distance in its current row
+    /// is too large for the threshold.
+    pub fn similarity_above(
+        s1: &str,
+        len1: usize,
+        s2: &str,
+        len2: usize,
+        threshold: f64,
+    ) -> Option<f64> {
+        let longer = len1.max(len2);
+        if longer == 0 {
+            return (1.0 > threshold).then_some(1.0);
         }
-        if s1.is_empty() || s2.is_empty() {
-            return 0.0;
+        let similarity = |distance: usize| 1.0 - (distance as f64 / longer as f64);
+        if similarity(len1.abs_diff(len2)) <= threshold {
+            return None;
         }
-        let len2 = s2.chars().count();
+        // No distance above this one passes; the final check below is the exact one
+        let bound = crate::math::ceil((1.0 - threshold) * longer as f64) as usize;
         // One row of the distance matrix: distances from a prefix of s1 to each prefix of s2
         let mut row: Vec<usize> = (0..=len2).collect();
-        let mut len1 = 0;
         for (i, c1) in s1.chars().enumerate() {
-            len1 += 1;
             let mut diagonal = row[0];
             row[0] = i + 1;
+            let mut smallest = row[0];
             for (j, c2) in s2.chars().enumerate() {
                 let substitution = diagonal + usize::from(c1 != c2);
                 diagonal = row[j + 1];
                 row[j + 1] = substitution.min(row[j] + 1).min(row[j + 1] + 1);
+                smallest = smallest.min(row[j + 1]);
+            }
+            // Distances never decrease from one row to the next
+            if smallest > bound {
+                return None;
             }
         }
-        1.0 - (row[len2] as f64 / len1.max(len2) as f64)
+        let similarity = similarity(row[len2]);
+        (similarity > threshold).then_some(similarity)
     }
 
     /// Suggest corrections for an invalid unit
@@ -57,6 +81,8 @@ impl SuggestionEngine {
         let mut suggestions = Vec::new();
 
         let invalid_lower = invalid_unit.to_lowercase();
+        let invalid_len = invalid_unit.chars().count();
+        let invalid_lower_len = invalid_lower.chars().count();
 
         // First, check for exact case-insensitive matches
         for unit in &self.all_units {
@@ -67,9 +93,14 @@ impl SuggestionEngine {
 
         // Check for common typos and similar units
         let mut scored_suggestions = Vec::new();
-        for (unit, name_lower) in self.all_units.iter().zip(&self.names_lower) {
-            let similarity = Self::string_similarity(unit.code, invalid_unit);
-            if similarity > 0.5 {
+        for (i, unit) in self.all_units.iter().enumerate() {
+            if let Some(similarity) = Self::similarity_above(
+                unit.code,
+                self.code_lengths[i],
+                invalid_unit,
+                invalid_len,
+                0.5,
+            ) {
                 // 50% similarity threshold
                 scored_suggestions.push((
                     similarity,
@@ -79,8 +110,13 @@ impl SuggestionEngine {
             }
 
             // Also check display names
-            let display_similarity = Self::string_similarity(name_lower, &invalid_lower);
-            if display_similarity > 0.6 {
+            if let Some(display_similarity) = Self::similarity_above(
+                &self.names_lower[i],
+                self.name_lengths[i],
+                &invalid_lower,
+                invalid_lower_len,
+                0.6,
+            ) {
                 // 60% similarity for display names
                 scored_suggestions.push((
                     display_similarity,
@@ -223,12 +259,90 @@ impl Default for SuggestionEngine {
 mod tests {
     use super::*;
 
+    fn similarity(s1: &str, s2: &str, threshold: f64) -> Option<f64> {
+        SuggestionEngine::similarity_above(
+            s1,
+            s1.chars().count(),
+            s2,
+            s2.chars().count(),
+            threshold,
+        )
+    }
+
     #[test]
     fn test_string_similarity() {
-        assert!((SuggestionEngine::string_similarity("test", "test") - 1.0).abs() < f64::EPSILON);
-        assert!(SuggestionEngine::string_similarity("test", "") < 0.1);
-        assert!(SuggestionEngine::string_similarity("kg", "g") >= 0.5);
-        assert!(SuggestionEngine::string_similarity("meter", "metre") >= 0.6);
+        assert_eq!(similarity("test", "test", 0.5), Some(1.0));
+        assert_eq!(similarity("", "", 0.5), Some(1.0));
+        assert_eq!(similarity("test", "", 0.0), None);
+        assert_eq!(similarity("kg", "g", 0.4), Some(0.5));
+        assert_eq!(similarity("kg", "g", 0.5), None);
+        assert_eq!(similarity("meter", "metre", 0.5), Some(0.6));
+        assert_eq!(similarity("meter", "metre", 0.6), None);
+    }
+
+    /// The full Levenshtein distance, without bounds
+    fn distance(s1: &str, s2: &str) -> usize {
+        let b: Vec<char> = s2.chars().collect();
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for (i, c1) in s1.chars().enumerate() {
+            let mut diagonal = row[0];
+            row[0] = i + 1;
+            for (j, c2) in b.iter().enumerate() {
+                let substitution = diagonal + usize::from(c1 != *c2);
+                diagonal = row[j + 1];
+                row[j + 1] = substitution.min(row[j] + 1).min(row[j + 1] + 1);
+            }
+        }
+        row[b.len()]
+    }
+
+    #[test]
+    fn bounds_do_not_change_the_result() {
+        // Every pair of a few unit codes, names and typos, at both thresholds in use
+        let words = [
+            "",
+            "m",
+            "g",
+            "kg",
+            "Pa",
+            "pa",
+            "metr",
+            "meter",
+            "metre",
+            "meters",
+            "[in_i]",
+            "[in_x]",
+            "inch",
+            "degree fahrenheit",
+            "[degf]",
+            "international unit",
+            "[IU",
+            "IU]",
+            "hourr",
+            "hour",
+            "xyzzy",
+            "réaumur",
+            "µ",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ];
+        for a in words {
+            for b in words {
+                let longer = a.chars().count().max(b.chars().count());
+                let full = if longer == 0 {
+                    1.0
+                } else {
+                    1.0 - (distance(a, b) as f64 / longer as f64)
+                };
+                for threshold in [0.5, 0.6] {
+                    let expected = (full > threshold).then_some(full);
+                    assert_eq!(
+                        similarity(a, b, threshold),
+                        expected,
+                        "{a:?} {b:?} {threshold}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
