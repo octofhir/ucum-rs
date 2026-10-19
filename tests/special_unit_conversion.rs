@@ -344,33 +344,133 @@ mod algebra {
 mod non_finite {
     use super::*;
 
-    fn assert_overflow(value: f64, from: &str, to: &str) {
+    fn assert_error(value: f64, from: &str, to: &str, expected: fn(&ErrorKind) -> bool) {
         let err = convert(value, from, to).expect_err(from);
         assert!(
-            matches!(err.kind, ErrorKind::PrecisionOverflow { .. }),
-            "{value} {from}: {:?}",
+            expected(&err.kind),
+            "{value} {from} to {to}: {:?}",
             err.kind
         );
+    }
+
+    fn assert_non_finite(value: f64, from: &str, to: &str) {
+        assert_error(value, from, to, |kind| {
+            matches!(kind, ErrorKind::NonFiniteValue { .. })
+        });
+    }
+
+    fn assert_overflow(value: f64, from: &str, to: &str) {
+        assert_error(value, from, to, |kind| {
+            matches!(kind, ErrorKind::PrecisionOverflow { .. })
+        });
     }
 
     #[test]
     fn non_finite_values_are_errors() {
         for (from, to) in [("Cel", "K"), ("B", "1"), ("dB", "B"), ("[pH]", "mol/L")] {
-            assert_overflow(f64::NAN, from, to);
-        }
-        for (from, to) in [("Cel", "K"), ("B", "1"), ("dB", "B")] {
-            assert_overflow(f64::INFINITY, from, to);
+            assert_non_finite(f64::NAN, from, to);
+            assert_non_finite(f64::INFINITY, from, to);
+            assert_non_finite(f64::NEG_INFINITY, from, to);
         }
     }
 
     #[test]
     fn an_infinite_value_through_a_function_is_an_error() {
-        assert_overflow(f64::INFINITY, "[pH]", "mol/L");
+        // 10^-∞ would be 0 mol/L
+        assert_non_finite(f64::INFINITY, "[pH]", "mol/L");
     }
 
     #[test]
     fn a_level_beyond_the_f64_range_is_an_error() {
-        assert!(convert(400.0, "B", "1").is_err());
+        assert_overflow(400.0, "B", "1");
+        assert_overflow(1e5, "B", "1");
+    }
+
+    #[test]
+    fn a_level_below_the_f64_range_is_an_error() {
+        // 10^-400 mol/L is not zero, and no f64 is closer to it than zero
+        assert_overflow(400.0, "[pH]", "mol/L");
+        assert_overflow(-400.0, "B", "1");
+    }
+}
+
+mod domain {
+    //! §21.2: `f` and `f⁻¹` are mutually inverse real functions. A value outside the domain
+    //! of the function has no value in the special unit, or in its corresponding unit.
+    use super::*;
+
+    const ASD: &str = "[m/s2/Hz^(1/2)]";
+
+    fn assert_out_of_domain(value: f64, from: &str, to: &str, special: &str) {
+        let err = convert(value, from, to).expect_err(from);
+        match &err.kind {
+            ErrorKind::OutOfDomain { unit, .. } => {
+                assert_eq!(unit, special, "{value} {from} to {to}")
+            }
+            kind => panic!("{value} {from} to {to}: {kind:?}"),
+        }
+    }
+
+    #[test]
+    fn a_logarithm_takes_positive_values() {
+        assert_out_of_domain(0.0, "mol/L", "[pH]", "[pH]");
+        assert_out_of_domain(-1e-7, "mol/L", "[pH]", "[pH]");
+        assert_out_of_domain(0.0, "W", "B[W]", "B[W]");
+        assert_out_of_domain(-1.0, "W", "B[W]", "B[W]");
+        assert_out_of_domain(-1.0, "mV", "dB[mV]", "dB[mV]");
+        assert_out_of_domain(0.0, "1", "Np", "Np");
+        assert_out_of_domain(0.0, "1", "[hp'_X]", "[hp'_X]");
+        assert_out_of_domain(-4.0, "1", "[hp'_X]", "[hp'_X]");
+        // Any level is a value: it maps to a positive ratio
+        assert_close(conv(-3.0, "B", "1"), 1e-3, "-3 B");
+        assert_eq!(conv(1.0, "1", "B"), 0.0);
+    }
+
+    #[test]
+    fn a_square_root_is_never_negative() {
+        assert_out_of_domain(-1.0, "m2/s4/Hz", ASD, ASD);
+        assert_out_of_domain(-3.0, ASD, "m2/s4/Hz", ASD);
+        assert_eq!(conv(0.0, "m2/s4/Hz", ASD), 0.0);
+        assert_eq!(conv(0.0, ASD, "m2/s4/Hz"), 0.0);
+    }
+
+    #[test]
+    fn a_tangent_takes_its_principal_branch() {
+        // Beyond a right angle, 100 tan x is not invertible: 2 rad would be -218 %[slope],
+        // which is -1.14 rad
+        assert_out_of_domain(2.0, "rad", "%[slope]", "%[slope]");
+        assert_out_of_domain(-2.0, "rad", "[p'diop]", "[p'diop]");
+        assert_out_of_domain(100.0, "deg", "%[slope]", "%[slope]");
+        assert_close(conv(-45.0, "deg", "%[slope]"), -100.0, "-45 deg");
+        assert_eq!(conv(0.0, "rad", "%[slope]"), 0.0);
+        assert!(conv(1.57, "rad", "%[slope]") > 1e5);
+        // Any value in the special unit is an angle of the principal branch
+        assert_close(
+            conv(-1e300, "%[slope]", "rad"),
+            -core::f64::consts::FRAC_PI_2,
+            "-1e300",
+        );
+    }
+
+    #[test]
+    fn a_prefix_or_a_factor_does_not_change_the_domain() {
+        assert_out_of_domain(0.0, "W", "dB[W]", "dB[W]");
+        assert_out_of_domain(0.0, "mol/L", "2.[pH]", "2.[pH]");
+    }
+
+    #[test]
+    fn an_interval_scale_has_no_limit() {
+        // The functions of the temperatures are defined on all real numbers
+        assert_close(conv(-300.0, "Cel", "K"), -26.85, "-300 Cel");
+    }
+
+    #[test]
+    fn the_error_names_the_value_and_the_special_unit() {
+        let err = convert(0.0, "mol/L", "[pH]").unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("0.0 mol/L"), "{message}");
+        assert!(message.contains("[pH]"), "{message}");
+        assert!(message.contains("§21.2"), "{message}");
     }
 }
 

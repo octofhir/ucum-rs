@@ -163,34 +163,41 @@ impl SpecialKind {
     }
 
     /// `f(x)`: the value in the special unit of a proper quantity `x` times its
-    /// corresponding unit.
-    pub(crate) fn forward(&self, x: f64) -> f64 {
+    /// corresponding unit. `None` outside the domain of `f`: `f` and `f⁻¹` are mutually
+    /// inverse real functions (UCUM §21.2), so a logarithm takes `x > 0`, a square root
+    /// `x ≥ 0` and `100 tan x` the principal branch, `|x| < π/2`.
+    pub(crate) fn forward(&self, x: f64) -> Option<f64> {
         if let Some(offset) = self.offset() {
-            return x - offset.to_f64();
+            return Some(x - offset.to_f64());
         }
         if let Some(((num, den), base)) = self.logarithm() {
-            return num as f64 * crate::math::ln(x) / (den as f64 * crate::math::ln(base));
+            return (x > 0.0)
+                .then(|| num as f64 * crate::math::ln(x) / (den as f64 * crate::math::ln(base)));
         }
         match self {
-            SpecialKind::TanTimes100 => 100.0 * crate::math::tan(x),
-            SpecialKind::Sqrt => crate::math::sqrt(x),
-            _ => x,
+            // `FRAC_PI_2` is below π/2, so every `f64` up to it is inside the open interval
+            SpecialKind::TanTimes100 => {
+                (x.abs() <= core::f64::consts::FRAC_PI_2).then(|| 100.0 * crate::math::tan(x))
+            }
+            SpecialKind::Sqrt => (x >= 0.0).then(|| crate::math::sqrt(x)),
+            _ => Some(x),
         }
     }
 
     /// `f⁻¹(r)`: the proper quantity, in multiples of the corresponding unit, of a value
-    /// `r` in the special unit.
-    pub(crate) fn inverse(&self, r: f64) -> f64 {
+    /// `r` in the special unit. `None` outside the domain of `f⁻¹`, the range of `f`: a
+    /// square root is never negative.
+    pub(crate) fn inverse(&self, r: f64) -> Option<f64> {
         if let Some(offset) = self.offset() {
-            return r + offset.to_f64();
+            return Some(r + offset.to_f64());
         }
         if let Some(((num, den), base)) = self.logarithm() {
-            return crate::math::powf(base, r * den as f64 / num as f64);
+            return Some(crate::math::powf(base, r * den as f64 / num as f64));
         }
         match self {
-            SpecialKind::TanTimes100 => crate::math::atan(r / 100.0),
-            SpecialKind::Sqrt => r * r,
-            _ => r,
+            SpecialKind::TanTimes100 => Some(crate::math::atan(r / 100.0)),
+            SpecialKind::Sqrt => (r >= 0.0).then_some(r * r),
+            _ => Some(r),
         }
     }
 }

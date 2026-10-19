@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Error kinds (breaking)**: `PrecisionOverflow` is only a result too large or too small for
+  an `f64` (or a factor whose exponent does not fit). What it also reported before has a
+  kind of its own:
+  - `NonFiniteValue`: an operand that is infinite or NaN, which is not a real number
+    (UCUM §18.5), in `convert`, `convert_with_context`, `multiply` and `divide_by`;
+  - `DivisionByZero`: `divide_by` with a divisor value of zero;
+  - `OutOfDomain { unit, value }`: a value outside the domain of the function of a special
+    unit (UCUM §21.2), such as 0 `mol/L` to `[pH]` or -1 `W` to `B[W]`.
+- `ErrorKind` and `UcumError` are `#[non_exhaustive]`, so that new kinds and fields are no
+  longer breaking: a `match` on `ErrorKind` needs a `_` arm, and a `UcumError` is built with
+  its constructors.
+- The functions of the special units are restricted to the domain where they are mutually
+  inverse (UCUM §21.2): a square root takes no negative value, and `100tan` (`%[slope]`,
+  `[p'diop]`) takes its principal branch, angles of less than a right angle. 2 `rad` used to
+  convert to -218.5 `%[slope]`, which converts back to -1.14 `rad`.
+
 ### Fixed
+
+- A conversion whose result is too small for an `f64` is a `PrecisionOverflow`, as in
+  `multiply` and `divide_by`, instead of a silent zero: 400 `[pH]` is 10⁻⁴⁰⁰ `mol/L`.
+- The documentation of `convert`, `divide_by` and `unit_divide` no longer mentions a unit
+  `"0"`, which is not UCUM (a number is a positive integer, §8.1).
 
 - An expression nested deeper than 128 levels (`MAX_NESTING_DEPTH`: parentheses, solidi and
   products of several terms) is an `InvalidExpression` instead of a stack overflow that aborted

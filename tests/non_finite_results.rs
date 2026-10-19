@@ -1,9 +1,10 @@
-//! Quantity and unit arithmetic must report a result that is not a number (infinite or
-//! NaN) or that is too small for an `f64`, instead of returning it as a success.
+//! Quantity and unit arithmetic report an operand that is not a real number (infinite or
+//! NaN), a division by zero, and a result too large or too small for an `f64`, each as its
+//! own error, instead of returning a value that is not a number as a success.
 
 mod common;
 
-use common::assert_overflow;
+use common::{assert_division_by_zero, assert_non_finite, assert_overflow};
 use octofhir_ucum::{ErrorKind, divide_by, multiply, unit_divide, unit_multiply};
 
 #[test]
@@ -49,10 +50,12 @@ fn only_the_result_has_to_fit() {
 #[test]
 fn non_finite_operands_are_an_error() {
     for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert_overflow(multiply(value, "m", 2.0, "s"), "multiply left");
-        assert_overflow(multiply(2.0, "m", value, "s"), "multiply right");
-        assert_overflow(divide_by(value, "m", 2.0, "s"), "divide_by dividend");
-        assert_overflow(divide_by(2.0, "m", value, "s"), "divide_by divisor");
+        assert_non_finite(multiply(value, "m", 2.0, "s"), "multiply left");
+        assert_non_finite(multiply(2.0, "m", value, "s"), "multiply right");
+        assert_non_finite(divide_by(value, "m", 2.0, "s"), "divide_by dividend");
+        assert_non_finite(divide_by(2.0, "m", value, "s"), "divide_by divisor");
+        // Not a division by zero: the operand is not a number to begin with
+        assert_non_finite(divide_by(value, "m", 0.0, "s"), "divide_by NaN by zero");
     }
 }
 
@@ -69,9 +72,13 @@ fn error_names_the_operation_and_the_operands() {
 }
 
 #[test]
-fn division_by_a_zero_value_is_the_same_error() {
-    assert_overflow(divide_by(10.0, "m", 0.0, "s"), "divide_by");
-    assert_overflow(divide_by(0.0, "m", 0.0, "s"), "divide_by 0/0");
+fn division_by_a_zero_value_is_a_division_by_zero() {
+    assert_division_by_zero(divide_by(10.0, "m", 0.0, "s"), "divide_by");
+    assert_division_by_zero(divide_by(0.0, "m", 0.0, "s"), "divide_by 0/0");
+    assert_division_by_zero(divide_by(10.0, "m", -0.0, "s"), "divide_by -0");
+    // Not an overflow: the message says what happened
+    let err = divide_by(1.0, "m", 0.0, "s").unwrap_err();
+    assert!(err.to_string().starts_with("Division by zero"), "{err}");
 }
 
 #[test]

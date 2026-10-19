@@ -1,9 +1,10 @@
-//! A conversion reports a result that is not a number (infinite or NaN) instead of returning
-//! it as a success, and does not panic on factors of any magnitude.
+//! A conversion reports an operand that is not a real number (infinite or NaN) and a result
+//! too large or too small for an `f64` instead of returning them as a success, and does not
+//! panic on factors of any magnitude.
 
 mod common;
 
-use common::assert_overflow;
+use common::{assert_non_finite, assert_overflow};
 use octofhir_ucum::{
     AdvancedConversionContext, DecimalPrecision, ErrorKind, RoundingMode, convert,
     convert_with_context,
@@ -33,10 +34,24 @@ fn a_zero_unit_is_not_ucum() {
 fn converted_value_out_of_range_is_an_error() {
     assert_overflow(convert(1e300, "km", "nm"), "out of range");
     assert_overflow(convert(1e300, "Ym", "ym"), "out of range");
+}
+
+#[test]
+fn converted_value_too_small_is_an_error() {
+    // 1e-326 is not zero, and no f64 is closer to it than zero
+    assert_overflow(convert(1e-323, "m", "km"), "too small");
+    assert_overflow(convert(1e-300, "ym", "Ym"), "too small");
+    assert_eq!(convert(1e-320, "m", "km").unwrap(), 1e-323);
+}
+
+#[test]
+fn operand_that_is_not_a_number_is_an_error() {
+    // A measurement value is a real number (UCUM §18.5)
     for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert_overflow(convert(value, "km", "m"), "operand");
-        assert_overflow(convert(value, "Cel", "K"), "operand of a temperature");
-        assert_overflow(convert(value, "dB", "B"), "operand of a level");
+        assert_non_finite(convert(value, "km", "m"), "operand");
+        assert_non_finite(convert(value, "Cel", "K"), "operand of a temperature");
+        assert_non_finite(convert(value, "dB", "B"), "operand of a level");
+        assert_non_finite(convert(value, "[pH]", "mol/L"), "operand of a function");
     }
 }
 
@@ -110,8 +125,8 @@ mod fhir {
     use octofhir_ucum::fhir::{FhirError, FhirQuantity, are_equivalent, convert_quantity};
     use octofhir_ucum::{ErrorKind, UcumError};
 
-    fn assert_overflow<T: std::fmt::Debug>(result: Result<T, FhirError>, what: &str) {
-        let result = result.map_err(|err| match err {
+    fn ucum(err: FhirError) -> UcumError {
+        match err {
             FhirError::UcumError(err) => err,
             other => UcumError::new(
                 ErrorKind::InvalidExpression {
@@ -119,8 +134,7 @@ mod fhir {
                 },
                 other.to_string(),
             ),
-        });
-        super::assert_overflow(result, what);
+        }
     }
 
     #[test]
@@ -146,9 +160,12 @@ mod fhir {
     #[test]
     fn converted_value_out_of_range_is_an_error() {
         let quantity = FhirQuantity::with_ucum_code(1e300, "km");
-        assert_overflow(convert_quantity(&quantity, "nm"), "out of range");
+        super::assert_overflow(
+            convert_quantity(&quantity, "nm").map_err(ucum),
+            "out of range",
+        );
         let nan = FhirQuantity::with_ucum_code(f64::NAN, "km");
-        assert_overflow(convert_quantity(&nan, "m"), "NaN");
+        super::assert_non_finite(convert_quantity(&nan, "m").map_err(ucum), "NaN");
     }
 
     #[test]

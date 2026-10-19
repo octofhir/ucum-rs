@@ -112,8 +112,11 @@ cannot be mixed.
 
 Errors are `UcumError` values whose `kind` tells what failed: `InvalidExpression` (syntax),
 `UnitNotFound`, `ConversionError` (units not commensurable), `SpecialUnitError` (a special
-unit in algebra, or without a linear canonical form), `PrecisionOverflow` (a result that is
-infinite, NaN or out of range).
+unit in algebra, or without a linear canonical form), `NonFiniteValue` (an operand that is
+infinite or NaN, §18.5), `DivisionByZero` (a divisor value of zero), `OutOfDomain` (a value
+outside the domain of the function of a special unit, §21.2: 0 `mol/L` has no `[pH]`) and
+`PrecisionOverflow` (a result too large or too small for an `f64`). `ErrorKind` and
+`UcumError` are `#[non_exhaustive]`: a `match` on the kind needs a `_` arm.
 
 ## Command-line interface
 

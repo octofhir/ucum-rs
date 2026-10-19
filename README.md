@@ -48,6 +48,7 @@ Where the sources disagree, this is what the library does:
 | Annotation on a number: `1{c}` | the grammar forbids it; official test 1-117 accepts it | accepted |
 | `%[slope]` | the `<function>` element of the XML says `deg`; its definition and the specification say `rad` | `100tan(1 rad)` |
 | White space | §3 allows implementations to reject it or to ignore it | rejected |
+| Domain of `100tan` (`%[slope]`) | §21.2 requires `f` and `f⁻¹` to be mutually inverse, which `tan` is only on one branch | principal branch, \|x\| < π/2 rad |
 | Empty string | not a term (§7); official test 2-101 gives it the display name "(unity)" | invalid, except for `display_name` |
 
 Found a deviation? Please [open an issue](https://github.com/octofhir/ucum-rs/issues) with

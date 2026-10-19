@@ -123,14 +123,10 @@ fn divide(a: EvalResult, b: EvalResult) -> Result<EvalResult, UcumError> {
     {
         let inverse = Number::ONE
             .checked_div(b.factor)
-            .ok_or_else(|| division_by_zero(&b))?;
+            .ok_or_else(|| overflow("division"))?;
         return scaled(a, special, inverse);
     }
     multiply(a, power(b, -1)?)
-}
-
-fn division_by_zero(_divisor: &EvalResult) -> UcumError {
-    UcumError::precision_overflow("division", "division by a unit of factor zero")
 }
 
 fn power(term: EvalResult, exp: i32) -> Result<EvalResult, UcumError> {
@@ -143,13 +139,11 @@ fn power(term: EvalResult, exp: i32) -> Result<EvalResult, UcumError> {
     }
     let mut dim = [0; 7];
     add_scaled_dim(&mut dim, &term.dim, exp)?;
-    let factor = term.factor.checked_powi(exp).ok_or_else(|| {
-        if term.factor.is_zero() {
-            division_by_zero(&term)
-        } else {
-            overflow("exponentiation")
-        }
-    })?;
+    // A unit is never zero: a number is a positive integer (UCUM §8.1)
+    let factor = term
+        .factor
+        .checked_powi(exp)
+        .ok_or_else(|| overflow("exponentiation"))?;
     Ok(EvalResult {
         factor,
         dim: Dimension(dim),
@@ -430,43 +424,67 @@ pub(crate) fn linear_conversion(from: &EvalResult, to: &EvalResult) -> Option<Li
     None
 }
 
+/// `value` if it fits in an `f64`: finite, and zero only where the exact value is zero.
+fn fits(value: f64, is_zero_expected: bool) -> Option<f64> {
+    (value.is_finite() && (value != 0.0 || is_zero_expected)).then_some(value)
+}
+
 /// Convert a measurement `value` from one commensurable term to another (UCUM §21.2,
 /// §22.4): exactly through decimal arithmetic when the mapping is linear, through the
 /// functions of the special units otherwise.
 pub(crate) fn convert_value(
     value: f64,
-    from: &EvalResult,
-    to: &EvalResult,
+    from: &str,
+    from_eval: &EvalResult,
+    to: &str,
+    to_eval: &EvalResult,
 ) -> Result<f64, UcumError> {
-    let operands = || format!("{value:?}");
-    // A function can map an infinite value to a finite one: 10^-∞ is 0
+    let operands = || format!("{value:?} {from} to {to}");
+    // A measurement value is a real number (UCUM §18.5); a function would also map an
+    // infinite value to a finite one: 10^-∞ is 0
     if !value.is_finite() {
-        return Err(UcumError::precision_overflow("conversion", &operands()));
+        return Err(UcumError::non_finite_value("conversion", &operands()));
     }
-    if let (Some(a), Some(b)) = (affine(from), affine(to)) {
-        return Number::from_f64(value)
-            .and_then(|v| affine_value(v, a, b))
-            .map(Number::to_f64)
-            .ok_or_else(|| UcumError::precision_overflow("conversion", &operands()));
+    let overflow = || UcumError::precision_overflow("conversion", &operands());
+    let exact = |result: Option<Number>| {
+        let result = result.ok_or_else(overflow)?;
+        fits(result.to_f64(), result.is_zero()).ok_or_else(overflow)
+    };
+    let out_of_domain = |unit: &str| UcumError::out_of_domain(unit, &format!("{value:?} {from}"));
+    if let (Some(a), Some(b)) = (affine(from_eval), affine(to_eval)) {
+        return exact(Number::from_f64(value).and_then(|v| affine_value(v, a, b)));
     }
-    if let Some(linear) = linear_conversion(from, to) {
-        let result = Number::from_f64(value)
-            .and_then(|v| v.checked_mul(linear.factor))
-            .and_then(|v| v.checked_add(linear.offset))
-            .ok_or_else(|| UcumError::precision_overflow("conversion", &operands()))?;
-        return Ok(result.to_f64());
+    if let Some(linear) = linear_conversion(from_eval, to_eval) {
+        return exact(
+            Number::from_f64(value)
+                .and_then(|v| v.checked_mul(linear.factor))
+                .and_then(|v| v.checked_add(linear.offset)),
+        );
     }
-    // In multiples of the magnitude of `from`, then of `to`
-    let x = match from.special {
-        Some(special) => special.unit.special.inverse(special.scale.to_f64() * value),
+    // In multiples of the magnitude of `from`, then of `to`. A function result of zero is
+    // a value only where the function has a zero
+    let x = match from_eval.special {
+        Some(special) => {
+            let kind = special.unit.special;
+            let r = exact(Number::from_f64(value).and_then(|v| v.checked_mul(special.scale)))?;
+            let x = kind.inverse(r).ok_or_else(|| out_of_domain(from))?;
+            fits(x, kind.forward(0.0) == Some(r)).ok_or_else(overflow)?
+        }
         None => value,
     };
-    let ratio = magnitude(from)
-        .checked_div(magnitude(to))
-        .ok_or_else(|| UcumError::precision_overflow("conversion", &operands()))?;
-    let y = x * ratio.to_f64();
-    Ok(match to.special {
-        Some(special) => special.unit.special.forward(y) / special.scale.to_f64(),
-        None => y,
-    })
+    let ratio = magnitude(from_eval).checked_div(magnitude(to_eval));
+    let y = exact(
+        Number::from_f64(x)
+            .zip(ratio)
+            .and_then(|(x, ratio)| x.checked_mul(ratio)),
+    )?;
+    match to_eval.special {
+        Some(special) => {
+            let kind = special.unit.special;
+            let r = kind.forward(y).ok_or_else(|| out_of_domain(to))?;
+            let r = fits(r, kind.inverse(0.0) == Some(y)).ok_or_else(overflow)?;
+            exact(Number::from_f64(r).and_then(|r| r.checked_div(special.scale)))
+        }
+        None => Ok(y),
+    }
 }

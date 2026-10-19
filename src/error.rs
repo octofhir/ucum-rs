@@ -5,6 +5,7 @@ use crate::types::Dimension;
 
 /// Specific error kinds with detailed context
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ErrorKind {
     /// Dimension mismatch with specific dimensions
     DimensionMismatch {
@@ -20,8 +21,16 @@ pub enum ErrorKind {
         to: String,
         reason: String,
     },
-    /// Precision overflow during calculation
+    /// A result too large or too small for an `f64`, or a factor whose exponent does not
+    /// fit
     PrecisionOverflow { operation: String, value: String },
+    /// A quantity divided by a value of zero
+    DivisionByZero { operation: String, value: String },
+    /// An operand that is infinite or NaN, which is not a real number (UCUM §18.5)
+    NonFiniteValue { operation: String, value: String },
+    /// A value outside the domain of the function of a special unit (UCUM §21.2), such as
+    /// zero or a negative value for a logarithmic unit
+    OutOfDomain { unit: String, value: String },
     /// Invalid expression structure
     InvalidExpression { reason: String },
     /// Invalid property for unit validation
@@ -32,6 +41,7 @@ pub enum ErrorKind {
 
 /// Enhanced UCUM error with detailed context and suggestions
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct UcumError {
     /// The specific kind of error that occurred
     pub kind: ErrorKind,
@@ -114,6 +124,41 @@ impl UcumError {
                 value: value.to_string(),
             },
             format!("Precision overflow during {operation}: {value}"),
+        )
+    }
+
+    /// Create a division by zero error
+    pub fn division_by_zero(operation: &str, value: &str) -> Self {
+        Self::new(
+            ErrorKind::DivisionByZero {
+                operation: operation.to_string(),
+                value: value.to_string(),
+            },
+            format!("Division by zero during {operation}: {value}"),
+        )
+    }
+
+    /// Create an error for an operand that is infinite or NaN
+    pub fn non_finite_value(operation: &str, value: &str) -> Self {
+        Self::new(
+            ErrorKind::NonFiniteValue {
+                operation: operation.to_string(),
+                value: value.to_string(),
+            },
+            format!("Operand of {operation} is not a finite number (UCUM §18.5): {value}"),
+        )
+    }
+
+    /// Create an error for a value outside the domain of the function of a special unit
+    pub fn out_of_domain(unit: &str, value: &str) -> Self {
+        Self::new(
+            ErrorKind::OutOfDomain {
+                unit: unit.to_string(),
+                value: value.to_string(),
+            },
+            format!(
+                "{value} is outside the domain of the function of the special unit '{unit}' (UCUM §21.2)"
+            ),
         )
     }
 

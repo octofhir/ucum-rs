@@ -412,8 +412,8 @@ fn check_arithmetic_operand(
     }
 }
 
-/// A result of quantity or unit arithmetic must be a number: an infinite or NaN value, or a
-/// zero that only comes from a result too small for an `f64`, is an error.
+/// A result of quantity or unit arithmetic must fit in an `f64`: an infinite value, or a zero
+/// that only comes from a result too small, is a `PrecisionOverflow`.
 fn check_number(
     value: f64,
     is_zero_expected: bool,
@@ -445,8 +445,8 @@ fn base_value(value: f64, factor: Number) -> Option<Number> {
 /// # Errors
 ///
 /// A special unit (`Cel`, `B`, `[pH]`) takes no part in the product (UCUM §22.1) and is a
-/// `SpecialUnitError`. A result that does not fit in an `f64`, or an operand that is
-/// infinite or NaN, is a `PrecisionOverflow`.
+/// `SpecialUnitError`. An operand that is infinite or NaN is a `NonFiniteValue` (UCUM §18.5),
+/// a result that does not fit in an `f64` is a `PrecisionOverflow`.
 pub fn multiply(
     value1: f64,
     unit1: &str,
@@ -468,8 +468,7 @@ pub fn multiply(
 ///
 /// # Errors
 ///
-/// As `multiply`; a division by zero, by the value or by a unit such as `"0"`, is a
-/// `PrecisionOverflow`.
+/// As `multiply`; a divisor value of zero is a `DivisionByZero`.
 pub fn divide_by(
     dividend_value: f64,
     dividend_unit: &str,
@@ -500,6 +499,13 @@ fn arithmetic(
     check_arithmetic_operand(unit2, &b, operation)?;
     let operator = if exp == 1 { '*' } else { '/' };
     let operands = || format!("{value1:?} {unit1} {operator} {value2:?} {unit2}");
+    // A scalar is a real number (UCUM §18.5)
+    if !value1.is_finite() || !value2.is_finite() {
+        return Err(UcumError::non_finite_value(operation, &operands()));
+    }
+    if exp == -1 && value2 == 0.0 {
+        return Err(UcumError::division_by_zero(operation, &operands()));
+    }
     let overflow = || UcumError::precision_overflow(operation, &operands());
     let left = base_value(value1, a.factor).ok_or_else(overflow)?;
     let right = base_value(value2, b.factor).ok_or_else(overflow)?;
@@ -590,20 +596,14 @@ pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, U
 ///
 /// # Errors
 ///
-/// A special unit is a `SpecialUnitError` (UCUM §22.1); a divisor with a factor of zero,
-/// such as `"0"`, is a `PrecisionOverflow`. Operands that, joined, nest deeper than
+/// A special unit is a `SpecialUnitError` (UCUM §22.1), a factor that does not fit in an
+/// `f64` is a `PrecisionOverflow`. Operands that, joined, nest deeper than
 /// [`MAX_NESTING_DEPTH`] levels are an `InvalidExpression`.
 pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticResult, UcumError> {
     let (left, a) = eval(numerator)?;
     let (right, b) = eval(denominator)?;
     check_arithmetic_operand(numerator, &a, "division")?;
     check_arithmetic_operand(denominator, &b, "division")?;
-    if b.factor.is_zero() {
-        return Err(UcumError::precision_overflow(
-            "division",
-            &format!("{numerator} / {denominator}"),
-        ));
-    }
     let expression = match (&left, &right) {
         (_, UnitExpr::Numeric(n)) if *n == Number::ONE => left.to_string(),
         (UnitExpr::Numeric(n), _) if *n == Number::ONE => {
@@ -1054,8 +1054,10 @@ pub struct AdvancedConversionResult {
 ///
 /// # Errors
 ///
-/// Units that are not commensurable are a `ConversionError`. A result that is infinite or
-/// NaN (a target unit such as `"0"`, a value out of range) is a `PrecisionOverflow`.
+/// Units that are not commensurable are a `ConversionError`. A value that is infinite or NaN
+/// is a `NonFiniteValue` (UCUM §18.5). A value outside the domain of the function of a
+/// special unit is an `OutOfDomain` (UCUM §21.2): 0 `mol/L` has no `[pH]`, -1 `W` has no
+/// `B[W]`. A result too large or too small for an `f64` is a `PrecisionOverflow`.
 pub fn convert(value: f64, from: &str, to: &str) -> Result<f64, UcumError> {
     convert_with_context(value, from, to, &AdvancedConversionContext::default())
         .map(|result| result.value)
@@ -1138,13 +1140,7 @@ pub(crate) fn convert_evaluated(
         };
         return Err(UcumError::conversion_error(from, to, reason));
     }
-    let converted = evaluator::convert_value(value, from_eval, to_eval)?;
-    if !converted.is_finite() {
-        return Err(UcumError::precision_overflow(
-            "conversion",
-            &format!("{value:?} {from} to {to}"),
-        ));
-    }
+    let converted = evaluator::convert_value(value, from, from_eval, to, to_eval)?;
     Ok((converted, evaluator::linear_conversion(from_eval, to_eval)))
 }
 
