@@ -33,7 +33,7 @@ pub use crate::evaluator::{
     Case, EvalResult, SpecialTerm, evaluate, evaluate_with_case, lookup_unit,
 };
 pub use crate::number::Number;
-pub use crate::parser::parse_expression;
+pub use crate::parser::{MAX_NESTING_DEPTH, parse_expression};
 pub use crate::registry::{UCUM_REVISION_DATE, UCUM_VERSION};
 pub use crate::types::{Dimension, Prefix, Quantity, SpecialKind, UnitRecord};
 
@@ -100,7 +100,15 @@ pub fn validate(expression: &str) -> Result<(), UcumError> {
 /// ```
 pub fn validate_with_case(expression: &str, case: Case) -> Result<(), UcumError> {
     let parsed = parse_expression(expression).map_err(|e| {
-        let suggestions = SUGGESTION_ENGINE.suggest_corrections(expression);
+        // No unit to suggest for an expression nested too deep, which can be long: the
+        // suggestions compare the whole input with every unit
+        let too_deep = matches!(&e.kind, ErrorKind::InvalidExpression { reason }
+            if reason.starts_with(crate::parser::TOO_DEEP));
+        let suggestions = if too_deep {
+            Vec::new()
+        } else {
+            SUGGESTION_ENGINE.suggest_corrections(expression)
+        };
         e.with_suggestions(suggestions)
             .with_context(format!("While parsing UCUM expression: '{expression}'"))
     })?;
@@ -543,7 +551,8 @@ pub struct UnitArithmeticResult {
 ///
 /// # Errors
 ///
-/// A special unit is a `SpecialUnitError` (UCUM §22.1).
+/// A special unit is a `SpecialUnitError` (UCUM §22.1). Operands that, joined, nest deeper
+/// than [`MAX_NESTING_DEPTH`] levels are an `InvalidExpression`.
 pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, UcumError> {
     let (left, a) = eval(unit1)?;
     let (right, b) = eval(unit2)?;
@@ -578,7 +587,8 @@ pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, U
 /// # Errors
 ///
 /// A special unit is a `SpecialUnitError` (UCUM §22.1); a divisor with a factor of zero,
-/// such as `"0"`, is a `PrecisionOverflow`.
+/// such as `"0"`, is a `PrecisionOverflow`. Operands that, joined, nest deeper than
+/// [`MAX_NESTING_DEPTH`] levels are an `InvalidExpression`.
 pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticResult, UcumError> {
     let (left, a) = eval(numerator)?;
     let (right, b) = eval(denominator)?;
@@ -606,6 +616,9 @@ fn unit_arithmetic(
     b: &EvalResult,
     exp: i32,
 ) -> Result<UnitArithmeticResult, UcumError> {
+    // Two operands each nested up to the limit can join into an expression nested deeper,
+    // which would not parse back
+    parse_expression(&expression)?;
     let factor = if exp == 1 {
         a.factor.checked_mul(b.factor)
     } else {
