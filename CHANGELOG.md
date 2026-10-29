@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `search_units_fuzzy` (and `search_units_filtered` with fuzzy matching) no longer compares
+  the query with fields shorter than it, which cannot match: a 1 MB query took 0.8 s in a
+  release build, and now about 50 µs. The scores are unchanged.
+- `search_units_fuzzy` with a threshold of 0 or less no longer returns, with a score of 0,
+  the units that do not match at all; they ranked above real matches with a negative
+  score.
+
 ## [0.8.0] - 2026-10-20
 
 ### Changed
