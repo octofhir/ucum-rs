@@ -31,6 +31,9 @@ const OPERANDS: &[(&str, &str)] = &[
     ("ug", "mL"),
     ("[IU]", "mL"),
     ("k[IU]/L", "[arb'U]"),
+    // Numbers of 21 digits or more
+    ("1000000000000000000000", "m"),
+    ("s", "1234567890123456789012345678.m"),
 ];
 
 fn eval(expr: &str) -> EvalResult {

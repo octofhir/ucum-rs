@@ -83,11 +83,11 @@ impl Number {
                 shift += 1;
             }
         }
+        let mantissa = normalized.normalize();
         let exponent = i32::try_from(i64::from(exponent) + shift).ok()?;
-        Some(Self {
-            mantissa: normalized.normalize(),
-            exponent,
-        })
+        // So that the exponent of `to_integer_and_exponent` fits too
+        exponent.checked_sub(mantissa.scale() as i32)?;
+        Some(Self { mantissa, exponent })
     }
 
     /// An integer.
