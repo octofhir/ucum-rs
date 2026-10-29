@@ -47,7 +47,11 @@ units convert to each other. `Hz` and `rad/s` are not commensurable, since the r
 base unit.
 
 Magnitudes are exact decimal numbers of any size (`Number`): `[in_i]` is exactly 2.54 cm,
-and the Planck constant `[h]` is 6.62607015·10⁻³¹ `g.m2.s-1`.
+and the Planck constant `[h]` is 6.62607015·10⁻³¹ `g.m2.s-1`. `analyse`,
+`get_canonical_units`, `unit_multiply`, `unit_divide` and the linear mapping of
+`convert_with_context` return them as `Number`, with 28 significant digits and any
+exponent, so `10*1000` has a factor of exactly 10¹⁰⁰⁰; `Number::to_f64` rounds one to the
+nearest `f64`. Values of quantities, in `convert` and `multiply`, are `f64`.
 
 ### Special units (§21-23)
 
@@ -115,7 +119,8 @@ Errors are `UcumError` values whose `kind` tells what failed: `InvalidExpression
 unit in algebra, or without a linear canonical form), `NonFiniteValue` (an operand that is
 infinite or NaN, §18.5), `DivisionByZero` (a divisor value of zero), `OutOfDomain` (a value
 outside the domain of the function of a special unit, §21.2: 0 `mol/L` has no `[pH]`) and
-`PrecisionOverflow` (a result too large or too small for an `f64`). `ErrorKind` and
+`PrecisionOverflow` (a value too large or too small for an `f64`, or a factor whose power
+of ten does not fit in a `Number`). `ErrorKind` and
 `UcumError` are `#[non_exhaustive]`: a `match` on the kind needs a `_` arm.
 
 ## Command-line interface

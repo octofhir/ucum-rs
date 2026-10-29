@@ -2,7 +2,7 @@
 //! unit strings must name the gram too, so the numbers returned next to them are on the
 //! scale of the string.
 
-use octofhir_ucum::{analyse, divide_by, get_canonical_units, multiply};
+use octofhir_ucum::{Number, analyse, divide_by, get_canonical_units, multiply};
 
 fn close(a: f64, b: f64) -> bool {
     (a - b).abs() <= 1e-9 * a.abs().max(b.abs())
@@ -11,23 +11,19 @@ fn close(a: f64, b: f64) -> bool {
 #[test]
 fn canonical_unit_of_mass_is_the_gram() {
     for (unit, canonical, factor) in [
-        ("g", "g", 1.0),
-        ("kg", "g", 1e3),
-        ("mg", "g", 1e-3),
-        ("t", "g", 1e6),
-        ("N", "g.m.s-2", 1e3),
-        ("J", "g.m2.s-2", 1e3),
-        ("Pa", "g.m-1.s-2", 1e3),
-        ("/kg", "g-1", 1e-3),
-        ("g2", "g2", 1.0),
+        ("g", "g", "1"),
+        ("kg", "g", "1e3"),
+        ("mg", "g", "1e-3"),
+        ("t", "g", "1e6"),
+        ("N", "g.m.s-2", "1e3"),
+        ("J", "g.m2.s-2", "1e3"),
+        ("Pa", "g.m-1.s-2", "1e3"),
+        ("/kg", "g-1", "1e-3"),
+        ("g2", "g2", "1"),
     ] {
         let result = get_canonical_units(unit).unwrap();
         assert_eq!(result.unit, canonical, "{unit}");
-        assert!(
-            close(result.factor, factor),
-            "1 {unit} is {} {canonical}, expected {factor}",
-            result.factor
-        );
+        assert_eq!(result.factor, Number::parse(factor).unwrap(), "{unit}");
     }
 }
 
@@ -45,14 +41,14 @@ fn canonical_factor_is_the_analysis_factor() {
 #[test]
 fn units_without_mass_are_unchanged() {
     for (unit, canonical, factor) in [
-        ("km", "m", 1e3),
-        ("m/s", "m.s-1", 1.0),
-        ("h", "s", 3600.0),
-        ("1", "1", 1.0),
+        ("km", "m", 1000),
+        ("m/s", "m.s-1", 1),
+        ("h", "s", 3600),
+        ("1", "1", 1),
     ] {
         let result = get_canonical_units(unit).unwrap();
         assert_eq!(result.unit, canonical, "{unit}");
-        assert!(close(result.factor, factor), "{unit}: {}", result.factor);
+        assert_eq!(result.factor, Number::from(factor), "{unit}");
     }
 }
 

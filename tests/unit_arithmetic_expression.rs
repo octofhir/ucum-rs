@@ -6,8 +6,8 @@
 //! operations. Arbitrary units take part, as their own atoms (§25).
 
 use octofhir_ucum::{
-    ErrorKind, EvalResult, UnitArithmeticResult, divide_by, evaluate, multiply, parse_expression,
-    unit_divide, unit_multiply,
+    ErrorKind, EvalResult, Number, UnitArithmeticResult, divide_by, evaluate, multiply,
+    parse_expression, unit_divide, unit_multiply,
 };
 
 /// Operand pairs: simple units, products, quotients, parentheses, annotations, numbers and
@@ -61,11 +61,7 @@ fn assert_result(result: &UnitArithmeticResult, a: &str, b: &str, exp: i32) {
         *d += r * exp as i8;
     }
     assert_eq!(result.dimension.0, dim, "{what}");
-    assert!(
-        close(result.factor, expected.to_f64()),
-        "{what}: {}",
-        result.factor
-    );
+    assert_eq!(result.factor, expected, "{what}");
 
     let parsed = eval(&result.expression);
     assert_eq!(parsed.dim.0, dim, "{what}: `{}`", result.expression);
@@ -155,19 +151,14 @@ fn factors_are_exact_ratios() {
     let result = unit_divide("u", "kg").unwrap();
     assert_eq!(
         result.factor,
-        eval("u")
-            .factor
-            .checked_div(eval("kg").factor)
-            .unwrap()
-            .to_f64()
+        eval("u").factor.checked_div(eval("kg").factor).unwrap()
     );
-    assert!(
-        close(result.factor, 1.660_539_066_6e-27),
-        "{}",
-        result.factor
+    assert_eq!(result.factor, Number::parse("1.6605390666e-27").unwrap());
+    assert_eq!(
+        unit_multiply("km", "km").unwrap().factor,
+        Number::from(1_000_000)
     );
-    assert_eq!(unit_multiply("km", "km").unwrap().factor, 1e6);
-    assert_eq!(unit_divide("km", "s").unwrap().factor, 1e3);
+    assert_eq!(unit_divide("km", "s").unwrap().factor, Number::from(1000));
 }
 
 #[test]

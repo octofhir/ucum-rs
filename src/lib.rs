@@ -138,33 +138,40 @@ fn eval(expression: &str) -> Result<(UnitExpr, EvalResult), UcumError> {
 ///
 /// let analysis = analyse("km/h").unwrap();
 /// assert_eq!(analysis.dimension.to_string(), "L.T-1");
-/// assert!((analysis.factor - 1000.0 / 3600.0).abs() < 1e-15);
+/// assert!((analysis.factor.to_f64() - 1000.0 / 3600.0).abs() < 1e-15);
+/// // To 28 significant digits, whatever the magnitude
+/// assert_eq!(analysis.factor.to_string(), "0.2777777777777777777777777778");
+/// assert_eq!(analyse("10*1000").unwrap().factor.to_string(), "1e1000");
 /// ```
 pub fn analyse(expression: &str) -> Result<UnitAnalysis, UcumError> {
     let (parsed, result) = eval(expression)?;
-    let (scale, offset) = match result.special {
-        Some(special) => {
-            let offset = special
-                .unit
-                .special
-                .offset()
-                .and_then(|o| o.checked_mul(result.factor))
-                .unwrap_or(Number::ZERO);
-            (special.scale.to_f64(), offset.to_f64())
-        }
-        None => (1.0, 0.0),
-    };
+    let scale = result.special.map_or(Number::ONE, |special| special.scale);
+    let offset = temperature_offset(&result).unwrap_or(Number::ZERO);
     Ok(UnitAnalysis {
         expression: expression.to_string(),
         parsed_ast: parsed,
         dimension: result.dim,
-        factor: result.factor.to_f64(),
+        factor: result.factor,
         scale,
         offset,
         is_dimensionless: result.dim.is_dimensionless() && result.arbitrary.is_empty(),
         arbitrary: result.arbitrary,
         special: result.special.map(|s| s.unit.special),
     })
+}
+
+/// For a temperature (UCUM §22.4), the proper quantity at 0 in base units: the offset of
+/// its function times the factor of its proper unit, 273.15 for `Cel`. `None` for another
+/// unit.
+fn temperature_offset(result: &EvalResult) -> Option<Number> {
+    // The factor is that of the proper unit (1 K, 5/9 K), since a prefix or a number goes
+    // into the scale (§22.3), so the product fits
+    result
+        .special?
+        .unit
+        .special
+        .offset()?
+        .checked_mul(result.factor)
 }
 
 /// Detailed analysis of a UCUM expression.
@@ -176,13 +183,14 @@ pub struct UnitAnalysis {
     pub parsed_ast: UnitExpr,
     /// Dimension; for a special unit, of its corresponding proper unit
     pub dimension: Dimension,
-    /// Magnitude in base units; for a special unit, of its corresponding proper unit
-    pub factor: f64,
+    /// Magnitude in base units, as computed (28 significant digits, any exponent); for a
+    /// special unit, of its corresponding proper unit
+    pub factor: Number,
     /// Scale of a special unit (UCUM §22.4): 0.1 for `dB`, 2 for `2.Cel`; 1 otherwise
-    pub scale: f64,
+    pub scale: Number,
     /// For a temperature, the proper quantity at 0 in base units: 273.15 for `Cel`, so that
     /// a value `r` is `factor × scale × r + offset` kelvins; 0 otherwise
-    pub offset: f64,
+    pub offset: Number,
     /// Arbitrary atoms and their exponents (`[IU]/mL` has `[("[iU]", 1)]`)
     pub arbitrary: Vec<(&'static str, i32)>,
     /// The kind of the special unit, if the expression is one
@@ -275,7 +283,7 @@ pub fn validate_in_property(expression: &str, property: &str) -> Result<bool, Uc
 ///
 /// let canonical = get_canonical_units("km").unwrap();
 /// assert_eq!(canonical.unit, "m");
-/// assert_eq!(canonical.factor, 1000.0);
+/// assert_eq!(canonical.factor.to_f64(), 1000.0);
 /// ```
 ///
 /// # Errors
@@ -288,26 +296,23 @@ pub fn get_canonical_units(expression: &str) -> Result<CanonicalUnit, UcumError>
     let (factor, offset) = match result.special {
         None => (result.factor, Number::ZERO),
         Some(special) => {
-            let offset = special.unit.special.offset().ok_or_else(|| {
+            let offset = temperature_offset(&result).ok_or_else(|| {
                 UcumError::special_unit_error(
                     expression,
                     "a unit on a logarithmic or non-linear scale has no linear canonical unit",
                 )
             })?;
-            let overflow = || UcumError::precision_overflow("canonical form", expression);
-            (
-                special
-                    .scale
-                    .checked_mul(result.factor)
-                    .ok_or_else(overflow)?,
-                offset.checked_mul(result.factor).ok_or_else(overflow)?,
-            )
+            let factor = special
+                .scale
+                .checked_mul(result.factor)
+                .ok_or_else(|| UcumError::precision_overflow("canonical form", expression))?;
+            (factor, offset)
         }
     };
     Ok(CanonicalUnit {
         unit: canonical_unit_string(&result.dim, &result.arbitrary),
-        factor: factor.to_f64(),
-        offset: offset.to_f64(),
+        factor,
+        offset,
         dimension: result.dim,
     })
 }
@@ -318,10 +323,11 @@ pub fn get_canonical_units(expression: &str) -> Result<CanonicalUnit, UcumError>
 pub struct CanonicalUnit {
     /// Canonical unit (`g.m.s-2` for the newton)
     pub unit: String,
-    /// Magnitude of the unit in the canonical unit
-    pub factor: f64,
+    /// Magnitude of the unit in the canonical unit, as computed (28 significant digits, any
+    /// exponent)
+    pub factor: Number,
     /// Offset of a temperature
-    pub offset: f64,
+    pub offset: Number,
     /// Dimension vector
     pub dimension: Dimension,
 }
@@ -412,7 +418,7 @@ fn check_arithmetic_operand(
     }
 }
 
-/// A result of quantity or unit arithmetic must fit in an `f64`: an infinite value, or a zero
+/// A result of quantity arithmetic must fit in an `f64`: an infinite value, or a zero
 /// that only comes from a result too small, is a `PrecisionOverflow`.
 fn check_number(
     value: f64,
@@ -542,8 +548,9 @@ pub struct UnitResult {
 pub struct UnitArithmeticResult {
     /// Resulting unit expression
     pub expression: String,
-    /// Magnitude of the result in base units
-    pub factor: f64,
+    /// Magnitude of the result in base units, as computed (28 significant digits, any
+    /// exponent)
+    pub factor: Number,
     /// Dimension of the result
     pub dimension: Dimension,
     /// Whether the result has no dimension and no arbitrary atom
@@ -562,7 +569,8 @@ pub struct UnitArithmeticResult {
 /// # Errors
 ///
 /// A special unit is a `SpecialUnitError` (UCUM §22.1). Operands that, joined, nest deeper
-/// than [`MAX_NESTING_DEPTH`] levels are an `InvalidExpression`.
+/// than [`MAX_NESTING_DEPTH`] levels are an `InvalidExpression`. A factor whose power of
+/// ten does not fit in a `Number` (`10*2000000000` times itself) is a `PrecisionOverflow`.
 pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, UcumError> {
     let (left, a) = eval(unit1)?;
     let (right, b) = eval(unit2)?;
@@ -596,9 +604,9 @@ pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, U
 ///
 /// # Errors
 ///
-/// A special unit is a `SpecialUnitError` (UCUM §22.1), a factor that does not fit in an
-/// `f64` is a `PrecisionOverflow`. Operands that, joined, nest deeper than
-/// [`MAX_NESTING_DEPTH`] levels are an `InvalidExpression`.
+/// A special unit is a `SpecialUnitError` (UCUM §22.1). Operands that, joined, nest deeper
+/// than [`MAX_NESTING_DEPTH`] levels are an `InvalidExpression`. A factor whose power of
+/// ten does not fit in a `Number` (`10*2000000000` times itself) is a `PrecisionOverflow`.
 pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticResult, UcumError> {
     let (left, a) = eval(numerator)?;
     let (right, b) = eval(denominator)?;
@@ -633,9 +641,7 @@ fn unit_arithmetic(
     evaluator::add_scaled_dim(&mut dim, &b.dim, exp)?;
     let arbitrary = evaluator::combine(&a.arbitrary, &b.arbitrary, exp);
     Ok(UnitArithmeticResult {
-        factor: check_number(factor.to_f64(), factor.is_zero(), "unit arithmetic", || {
-            expression.clone()
-        })?,
+        factor,
         is_dimensionless: dim == [0; 7] && arbitrary.is_empty(),
         expression,
         dimension: Dimension(dim),
@@ -1032,11 +1038,12 @@ pub struct AdvancedConversionResult {
     pub value: f64,
     /// Target unit
     pub unit: String,
-    /// When the conversion is linear, `value = input × factor + offset`; `None` for a
-    /// conversion through the function of a special unit (`B` to `1`, `[pH]` to `mol/L`)
-    pub factor: Option<f64>,
+    /// When the conversion is linear, `value = input × factor + offset`, as computed (28
+    /// significant digits, any exponent); `None` for a conversion through the function of a
+    /// special unit (`B` to `1`, `[pH]` to `mol/L`)
+    pub factor: Option<Number>,
     /// Offset of a linear conversion (temperatures, levels with different references)
-    pub offset: Option<f64>,
+    pub offset: Option<Number>,
     /// Description of the rounding
     pub precision_info: String,
     /// Whether a special unit took part in the conversion
@@ -1122,8 +1129,8 @@ pub fn convert_with_context(
     Ok(AdvancedConversionResult {
         value: final_value,
         unit: to.to_string(),
-        factor: linear.map(|l| l.factor.to_f64()),
-        offset: linear.map(|l| l.offset.to_f64()),
+        factor: linear.map(|l| l.factor),
+        offset: linear.map(|l| l.offset),
         precision_info,
         used_special_units: from_eval.special.is_some() || to_eval.special.is_some(),
     })

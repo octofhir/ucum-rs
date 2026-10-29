@@ -110,7 +110,7 @@ fn handle_analyze(expr: &str) -> anyhow::Result<()> {
             }
             if let Some(kind) = analysis.special {
                 println!("   Special unit: {kind:?}, scale {}", analysis.scale);
-                if analysis.offset != 0.0 {
+                if !analysis.offset.is_zero() {
                     println!("   Offset: {}", analysis.offset);
                 }
             }
@@ -130,7 +130,7 @@ fn handle_canonical(expr: &str) -> anyhow::Result<()> {
             println!("📐 Canonical form of '{}':", expr);
             println!("   Unit: {}", canonical.unit);
             println!("   Factor: {}", canonical.factor);
-            if canonical.offset != 0.0 {
+            if !canonical.offset.is_zero() {
                 println!("   Offset: {}", canonical.offset);
             }
             println!("   Dimension: {}", canonical.dimension);
