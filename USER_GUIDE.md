@@ -114,14 +114,33 @@ cannot be mixed.
 | `display_name`, `generate_display_name`, `get_common_display` | Names |
 | `get_model`, `validate_ucum` | The tables and their consistency |
 
-Errors are `UcumError` values whose `kind` tells what failed: `InvalidExpression` (syntax),
-`UnitNotFound`, `ConversionError` (units not commensurable), `SpecialUnitError` (a special
-unit in algebra, or without a linear canonical form), `NonFiniteValue` (an operand that is
-infinite or NaN, §18.5), `DivisionByZero` (a divisor value of zero), `OutOfDomain` (a value
-outside the domain of the function of a special unit, §21.2: 0 `mol/L` has no `[pH]`) and
-`PrecisionOverflow` (a value too large or too small for an `f64`, or a factor whose power
-of ten does not fit in a `Number`). `ErrorKind` and
-`UcumError` are `#[non_exhaustive]`: a `match` on the kind needs a `_` arm.
+### Errors
+
+Errors are `UcumError` values: a `kind` that tells what failed, with its data, a `message`
+for people, and `suggestions` (`Did you mean 'Pa'?`): every function suggests corrections
+for an unknown unit, and `validate` also for a syntax error. `kind.code()` names the kind with a
+stable string, which a service can return to its clients. The last column is the HTTP
+status such a service would typically answer with; the library itself never panics.
+
+| Kind | `code()` | When | HTTP |
+|---|---|---|---|
+| `InvalidExpression { reason, expression, position }` | `invalid_expression` | Not UCUM syntax (§1-10): `m//s`, `0.m`, white space; `position` is the byte offset in `expression` where parsing stopped, which tells the two operands of `convert` apart | 400 |
+| `NestingTooDeep { limit }` | `nesting_too_deep` | Nested deeper than `MAX_NESTING_DEPTH` levels (a tree built by hand: 3 more nodes), a limit of this library | 400 |
+| `UnitNotFound { unit }` | `unit_not_found` | An atom that is not in the tables | 400 |
+| `InvalidProperty { property }` | `invalid_property` | A property no unit has | 400 |
+| `InvalidPattern { pattern, reason }` | `invalid_pattern` | A search pattern that is not a regular expression | 400 |
+| `NonFiniteValue` | `non_finite_value` | An operand that is infinite or NaN (§18.5) | 400 |
+| `DimensionMismatch { expected, found, from, to, .. }` | `dimension_mismatch` | Units of different dimensions (§17): `m` to `kg` | 422 |
+| `ConversionError` | `conversion_error` | Different arbitrary units of one dimension (§25): `[IU]` to `[arb'U]` | 422 |
+| `SpecialUnitError` | `special_unit_error` | A special unit in algebra (§22.1), or without a linear canonical form | 422 |
+| `OutOfDomain { unit, value }` | `out_of_domain` | A value outside the domain of a special unit's function (§21.2): 0 `mol/L` to `[pH]` | 422 |
+| `DivisionByZero` | `division_by_zero` | A divisor value of zero | 422 |
+| `PrecisionOverflow` | `precision_overflow` | A value too large or too small for an `f64`, or a factor whose power of ten does not fit in a `Number` | 422 |
+
+`ErrorKind` and each of its variants are `#[non_exhaustive]`: a `match` on the kind needs
+a `_` arm and a pattern needs `..` (`ErrorKind::InvalidExpression { position, .. }`), so
+that new kinds and fields are not breaking. Errors are built with the constructors of
+`UcumError` (`UcumError::invalid_expression`).
 
 ## Command-line interface
 
@@ -144,7 +163,9 @@ cargo install octofhir-ucum --features cli
 
 The npm package `@octofhir/ucum-wasm` exports `validate`, `analyze`, `get_canonical`,
 `get_unit_info`, `search`, `list_units`, `comparable`, `convert`, `multiply_units` and
-`divide_units`. Errors are thrown as `{ message, error_type }` objects.
+`divide_units`. Errors are thrown as `{ message, error_type, code, expression, position,
+suggestions, context }` objects: `code` is `ErrorKind::code()`, `position` the offset of a
+syntax error in `expression`.
 
 ## FHIR
 

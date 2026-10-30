@@ -4,9 +4,9 @@
 //! published to npm as `@octofhir/ucum-wasm` via `wasm-pack`.
 
 use octofhir_ucum::{
-    Number, UcumError, UnitArithmeticResult, UnitRecord, analyse, convert as core_convert,
-    find_unit, get_canonical_units, is_comparable, search_units as core_search_units, unit_divide,
-    unit_multiply, validate as core_validate,
+    ErrorKind, Number, UcumError, UnitArithmeticResult, UnitRecord, analyse,
+    convert as core_convert, find_unit, get_canonical_units, is_comparable,
+    search_units as core_search_units, unit_divide, unit_multiply, validate as core_validate,
 };
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::to_value;
@@ -21,6 +21,17 @@ pub fn start() {
 pub struct JsError {
     pub message: String,
     pub error_type: String,
+    /// The stable code of the kind (`ErrorKind::code`): `invalid_expression`,
+    /// `unit_not_found`, `dimension_mismatch`...
+    pub code: String,
+    /// For a syntax error, the byte offset in the expression where parsing stopped
+    pub position: Option<usize>,
+    /// For a syntax error, the expression `position` refers to
+    pub expression: Option<String>,
+    /// Corrections to propose (`Did you mean 'Pa'?`)
+    pub suggestions: Vec<String>,
+    /// Where the error happened (`In expression: 'mg/xyz'`)
+    pub context: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -79,16 +90,35 @@ pub struct JsSearchResult {
 }
 
 fn convert_error(err: UcumError) -> JsError {
+    let (expression, position) = match &err.kind {
+        ErrorKind::InvalidExpression {
+            expression,
+            position,
+            ..
+        } => (Some(expression.clone()), *position),
+        _ => (None, None),
+    };
     JsError {
-        message: err.to_string(),
+        // The suggestions have a field of their own
+        message: err.message,
         error_type: "UcumError".to_string(),
+        code: err.kind.code().to_string(),
+        position,
+        expression,
+        suggestions: err.suggestions,
+        context: err.context,
     }
 }
 
-fn create_simple_js_error(message: String, error_type: String) -> JsError {
+fn create_simple_js_error(message: String, error_type: String, code: &str) -> JsError {
     JsError {
         message,
         error_type,
+        code: code.to_string(),
+        position: None,
+        expression: None,
+        suggestions: Vec::new(),
+        context: Vec::new(),
     }
 }
 
@@ -195,6 +225,7 @@ pub fn get_unit_info(code: &str) -> Result<JsValue, JsValue> {
             let js_error = create_simple_js_error(
                 format!("Unit '{}' not found", code),
                 "NotFound".to_string(),
+                "unit_not_found",
             );
             Err(to_value(&js_error)?)
         }
@@ -265,5 +296,23 @@ mod tests {
         let analysis = analyse("10*1000").unwrap();
         assert_eq!(js_number(analysis.factor), None);
         assert_eq!(analysis.factor.to_string(), "1e1000");
+    }
+
+    #[test]
+    fn errors_carry_their_code_position_and_suggestions() {
+        let err = convert_error(core_validate("m//s").unwrap_err());
+        assert_eq!(
+            (err.code.as_str(), err.position),
+            ("invalid_expression", Some(2))
+        );
+        assert_eq!(err.expression.as_deref(), Some("m//s"));
+        assert!(!err.context.is_empty());
+        let err = convert_error(core_validate("metr").unwrap_err());
+        assert_eq!((err.code.as_str(), err.position), ("unit_not_found", None));
+        assert!(!err.suggestions.is_empty());
+        // Once, in their own field
+        assert!(!err.message.contains("Suggestions"), "{}", err.message);
+        let err = convert_error(core_convert(1.0, "m", "kg").unwrap_err());
+        assert_eq!(err.code, "dimension_mismatch");
     }
 }

@@ -5,7 +5,9 @@
 //! It's only available when the "fhir" feature is enabled.
 
 use crate::prelude::*;
-use crate::{Quantity as UcumQuantity, UcumError, convert_evaluated, evaluate, parse_expression};
+use crate::{
+    Case, Quantity as UcumQuantity, UcumError, convert_evaluated, evaluate_in, parse_expression,
+};
 use thiserror::Error;
 
 use serde::{Deserialize, Serialize};
@@ -140,7 +142,7 @@ impl FhirQuantity {
         let code = self.code.as_ref().ok_or(FhirError::MissingField("code"))?;
 
         let expr = parse_expression(code)?;
-        evaluate(&expr)?;
+        evaluate_in(&expr, Case::Sensitive)?;
 
         // Create a UCUM Quantity
         Ok(UcumQuantity {
@@ -196,9 +198,9 @@ pub fn convert_quantity(
     let (value, _) = convert_evaluated(
         source.value,
         &source.unit.to_string(),
-        &evaluate(&source.unit)?,
+        &evaluate_in(&source.unit, Case::Sensitive)?,
         target_unit,
-        &evaluate(&target_expr)?,
+        &evaluate_in(&target_expr, Case::Sensitive)?,
     )?;
     Ok(FhirQuantity {
         value,
@@ -221,9 +223,9 @@ pub fn are_equivalent(a: &FhirQuantity, b: &FhirQuantity) -> Result<bool, FhirEr
     let (b_value, _) = convert_evaluated(
         b_ucum.value,
         &b_ucum.unit.to_string(),
-        &evaluate(&b_ucum.unit)?,
+        &evaluate_in(&b_ucum.unit, Case::Sensitive)?,
         &a_ucum.unit.to_string(),
-        &evaluate(&a_ucum.unit)?,
+        &evaluate_in(&a_ucum.unit, Case::Sensitive)?,
     )?;
     const EPSILON: f64 = 1e-6;
     let diff = (a_ucum.value - b_value).abs();

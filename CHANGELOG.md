@@ -22,6 +22,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   magnitude as a number, `null` when it is out of the range of a JavaScript number, and
   as a string with all its digits (`factor_exact`, `scale_exact`, `offset_exact`). Unit
   arithmetic out of that range was an error, and analysis an `Infinity` or 0.
+- **Structured errors (breaking)**: each failure has a kind with the data a caller needs
+  to report it, and a stable name.
+  - `ErrorKind::code()` returns a stable snake-case name per kind (`invalid_expression`,
+    `unit_not_found`, `dimension_mismatch`...), for instance for the body of an HTTP
+    error. USER_GUIDE lists the kinds with the HTTP status they usually map to.
+  - `InvalidExpression` has the `expression` that was parsed and a `position`, the byte
+    offset in it where parsing stopped (`m//s` at 2, `None` for an empty expression), so
+    that a client can tell which operand of `convert` is wrong.
+  - An expression nested deeper than `MAX_NESTING_DEPTH` is a `NestingTooDeep { limit }`,
+    not an `InvalidExpression`: it is a limit of this library, not of UCUM.
+  - Units of different dimensions are a `DimensionMismatch` (UCUM §17), with the
+    dimensions of the target and of the source (`expected`, `found`) and, for a
+    conversion, the two units (`from`, `to`); it was never returned before.
+    `ConversionError` is left for different arbitrary units of one dimension (§25).
+  - An invalid pattern in `search_units_regex` is an `InvalidPattern { pattern, reason }`,
+    not an `InvalidExpression`, with the reason the regex crate gives ("unclosed
+    character class").
+  - Every function that evaluates an expression (`convert`, `analyse`,
+    `get_canonical_units`, `multiply`, `unit_multiply`, `display_name`, the FHIR
+    functions...) suggests corrections for an unknown unit, with case sensitive or
+    insensitive codes, not only `validate`.
+  - Messages change: a syntax error ends with "... at position N" (no comma before it),
+    an invalid pattern reads "Invalid search pattern: ...", units of different dimensions
+    "Dimension mismatch in conversion from 'm' to 'kg': expected M, found L".
+  - Each variant of `ErrorKind` is `#[non_exhaustive]` too, so that new fields are not
+    breaking: a pattern needs `..`, and errors are built with the constructors of
+    `UcumError` (`invalid_expression_in`, `nesting_too_deep`, `invalid_pattern` are new).
+  - WASM errors also carry `code`, `expression`, `position`, `suggestions` and
+    `context`; their `message` no longer repeats the suggestions and the context.
 
 ### Fixed
 

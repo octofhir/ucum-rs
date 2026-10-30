@@ -102,8 +102,7 @@ pub fn validate_with_case(expression: &str, case: Case) -> Result<(), UcumError>
     let parsed = parse_expression(expression).map_err(|e| {
         // No unit to suggest for an expression nested too deep, which can be long: the
         // suggestions compare the whole input with every unit
-        let too_deep = matches!(&e.kind, ErrorKind::InvalidExpression { reason }
-            if reason.starts_with(crate::parser::TOO_DEEP));
+        let too_deep = matches!(e.kind, ErrorKind::NestingTooDeep { .. });
         let suggestions = if too_deep {
             Vec::new()
         } else {
@@ -112,22 +111,29 @@ pub fn validate_with_case(expression: &str, case: Case) -> Result<(), UcumError>
         e.with_suggestions(suggestions)
             .with_context(format!("While parsing UCUM expression: '{expression}'"))
     })?;
-    evaluate_with_case(&parsed, case).map(|_| ()).map_err(|e| {
-        let suggestions = match (&e.kind, case) {
-            (ErrorKind::UnitNotFound { unit }, Case::Sensitive) => {
-                SUGGESTION_ENGINE.suggest_corrections(unit)
-            }
+    evaluate_in(&parsed, case)
+        .map(|_| ())
+        .map_err(|e| e.with_context(format!("In expression: '{expression}'")))
+}
+
+/// Evaluate an expression, with corrections for a unit that is not in the tables. Only
+/// the unknown symbol is compared with the units, so this is cheap, unlike the suggestions
+/// for a syntax error, which `validate` alone computes. The suggestions ignore case, so
+/// they serve case insensitive lookups too.
+pub(crate) fn evaluate_in(expr: &UnitExpr, case: Case) -> Result<EvalResult, UcumError> {
+    evaluate_with_case(expr, case).map_err(|e| {
+        let suggestions = match &e.kind {
+            ErrorKind::UnitNotFound { unit, .. } => SUGGESTION_ENGINE.suggest_corrections(unit),
             _ => Vec::new(),
         };
         e.with_suggestions(suggestions)
-            .with_context(format!("In expression: '{expression}'"))
     })
 }
 
 /// Parse and evaluate an expression with case sensitive symbols.
 fn eval(expression: &str) -> Result<(UnitExpr, EvalResult), UcumError> {
     let parsed = parse_expression(expression)?;
-    let result = evaluate(&parsed)?;
+    let result = evaluate_in(&parsed, Case::Sensitive)?;
     Ok((parsed, result))
 }
 
@@ -569,7 +575,7 @@ pub struct UnitArithmeticResult {
 /// # Errors
 ///
 /// A special unit is a `SpecialUnitError` (UCUM §22.1). Operands that, joined, nest deeper
-/// than [`MAX_NESTING_DEPTH`] levels are an `InvalidExpression`. A factor whose power of
+/// than [`MAX_NESTING_DEPTH`] levels are a `NestingTooDeep`. A factor whose power of
 /// ten does not fit in a `Number` (`10*2000000000` times itself) is a `PrecisionOverflow`.
 pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, UcumError> {
     let (left, a) = eval(unit1)?;
@@ -605,7 +611,7 @@ pub fn unit_multiply(unit1: &str, unit2: &str) -> Result<UnitArithmeticResult, U
 /// # Errors
 ///
 /// A special unit is a `SpecialUnitError` (UCUM §22.1). Operands that, joined, nest deeper
-/// than [`MAX_NESTING_DEPTH`] levels are an `InvalidExpression`. A factor whose power of
+/// than [`MAX_NESTING_DEPTH`] levels are a `NestingTooDeep`. A factor whose power of
 /// ten does not fit in a `Number` (`10*2000000000` times itself) is a `PrecisionOverflow`.
 pub fn unit_divide(numerator: &str, denominator: &str) -> Result<UnitArithmeticResult, UcumError> {
     let (left, a) = eval(numerator)?;
@@ -630,6 +636,7 @@ fn unit_arithmetic(
 ) -> Result<UnitArithmeticResult, UcumError> {
     // Two operands each nested up to the limit can join into an expression nested deeper,
     // which would not parse back
+    // An error refers to the joined expression, which it holds
     parse_expression(&expression)?;
     let factor = if exp == 1 {
         a.factor.checked_mul(b.factor)
@@ -711,7 +718,11 @@ pub fn search_units_by_property(property: &str) -> Vec<&'static UnitRecord> {
 /// assert!(!forms.iter().any(|u| u.code == "g"));
 /// ```
 pub fn get_defined_forms(expression: &str) -> Vec<&'static UnitRecord> {
-    let Ok((_, result)) = eval(expression) else {
+    // No suggestions to compute for an error that is not returned
+    let Some(result) = parse_expression(expression)
+        .ok()
+        .and_then(|expr| evaluate(&expr).ok())
+    else {
         return Vec::new();
     };
     get_all_units()
@@ -741,8 +752,19 @@ pub fn search_units_regex(
     } else {
         format!("(?i){pattern}")
     };
-    let regex = Regex::new(&regex_pattern)
-        .map_err(|_| UcumError::invalid_expression("Invalid regex pattern"))?;
+    let regex = Regex::new(&regex_pattern).map_err(|err| {
+        // The last line of a syntax error says what is wrong ("unclosed character class");
+        // the lines before repeat the pattern, which can be long
+        let text = err.to_string();
+        let reason = match err {
+            regex::Error::CompiledTooBig(_) => "too large to compile",
+            _ => text
+                .lines()
+                .find_map(|line| line.strip_prefix("error: "))
+                .unwrap_or("not a valid regular expression"),
+        };
+        UcumError::invalid_pattern(pattern, reason)
+    })?;
     let mut results: Vec<&'static UnitRecord> = get_all_units()
         .iter()
         .filter(|unit| {
@@ -978,7 +1000,7 @@ pub fn display_name(code: &str) -> Result<String, UcumError> {
         return Ok("(unity)".to_string());
     }
     let expr = parse_expression(code)?;
-    evaluate(&expr)?;
+    evaluate_in(&expr, Case::Sensitive)?;
     Ok(generate_display_name(&expr))
 }
 
@@ -1067,7 +1089,9 @@ pub struct AdvancedConversionResult {
 ///
 /// # Errors
 ///
-/// Units that are not commensurable are a `ConversionError`. A value that is infinite or NaN
+/// Units of different dimensions are a `DimensionMismatch` (UCUM §17), with both
+/// dimensions; units of the same dimension with different arbitrary units are a
+/// `ConversionError` (UCUM §25). A value that is infinite or NaN
 /// is a `NonFiniteValue` (UCUM §18.5). A value outside the domain of the function of a
 /// special unit is an `OutOfDomain` (UCUM §21.2): 0 `mol/L` has no `[pH]`, -1 `W` has no
 /// `B[W]`. A result too large or too small for an `f64` is a `PrecisionOverflow`.
@@ -1098,8 +1122,8 @@ pub fn convert_with_context(
     to: &str,
     context: &AdvancedConversionContext,
 ) -> Result<AdvancedConversionResult, UcumError> {
-    let from_eval = evaluate_with_case(&parse_expression(from)?, context.case)?;
-    let to_eval = evaluate_with_case(&parse_expression(to)?, context.case)?;
+    let from_eval = evaluate_in(&parse_expression(from)?, context.case)?;
+    let to_eval = evaluate_in(&parse_expression(to)?, context.case)?;
     let (converted, linear) = convert_evaluated(value, from, &from_eval, to, &to_eval)?;
 
     let round = |x: f64| match context.rounding {
@@ -1146,12 +1170,15 @@ pub(crate) fn convert_evaluated(
     to_eval: &EvalResult,
 ) -> Result<(f64, Option<evaluator::Linear>), UcumError> {
     if !from_eval.is_commensurable(to_eval) {
-        let reason = if from_eval.arbitrary != to_eval.arbitrary {
-            "an arbitrary unit converts only to the same arbitrary unit (UCUM §25)"
+        return Err(if from_eval.dim != to_eval.dim {
+            UcumError::incommensurable_dimensions(from, to, to_eval.dim, from_eval.dim)
         } else {
-            "the units are not commensurable: they have different dimensions"
-        };
-        return Err(UcumError::conversion_error(from, to, reason));
+            UcumError::conversion_error(
+                from,
+                to,
+                "an arbitrary unit converts only to the same arbitrary unit (UCUM §25)",
+            )
+        });
     }
     let converted = evaluator::convert_value(value, from, from_eval, to, to_eval)?;
     Ok((converted, evaluator::linear_conversion(from_eval, to_eval)))
