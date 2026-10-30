@@ -174,7 +174,7 @@ export default function UnitInfoTab() {
                 color: isDark ? theme.colors.gray[2] : theme.colors.gray[8],
               }}
             >
-              {info.factor}
+              {info.factor_exact ?? info.factor}
             </Code>
           </Table.Td>
         </Table.Tr>
@@ -192,7 +192,7 @@ export default function UnitInfoTab() {
                 color: isDark ? theme.colors.gray[2] : theme.colors.gray[8],
               }}
             >
-              {info.offset}
+              {info.offset_exact ?? info.offset}
             </Code>
           </Table.Td>
         </Table.Tr>

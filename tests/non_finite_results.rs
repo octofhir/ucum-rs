@@ -5,7 +5,7 @@
 mod common;
 
 use common::{assert_division_by_zero, assert_non_finite, assert_overflow};
-use octofhir_ucum::{ErrorKind, divide_by, multiply, unit_divide, unit_multiply};
+use octofhir_ucum::{ErrorKind, Number, divide_by, multiply, unit_divide, unit_multiply};
 
 #[test]
 fn a_zero_unit_is_not_ucum() {
@@ -93,8 +93,11 @@ fn result_too_small_is_an_error() {
 fn finite_results_still_work() {
     assert_eq!(multiply(5.0, "m", 2.0, "s").unwrap().value, 10.0);
     assert_eq!(divide_by(10.0, "m", 2.0, "s").unwrap().value, 5.0);
-    assert_eq!(unit_multiply("km", "km").unwrap().factor, 1e6);
-    assert_eq!(unit_divide("km", "s").unwrap().factor, 1e3);
+    assert_eq!(
+        unit_multiply("km", "km").unwrap().factor,
+        Number::from(1_000_000)
+    );
+    assert_eq!(unit_divide("km", "s").unwrap().factor, Number::from(1000));
 
     // A zero value is a number: only the division by it is rejected
     assert_eq!(multiply(0.0, "m", 2.0, "s").unwrap().value, 0.0);

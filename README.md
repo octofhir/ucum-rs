@@ -88,7 +88,7 @@ assert!(!is_comparable("[IU]", "[arb'U]")?);
 // Analysis: magnitude in base units and dimension
 let info = analyse("mg/dL")?;
 assert_eq!(info.dimension.to_string(), "L-3.M");
-assert!((info.factor - 10.0).abs() < 1e-12); // 10 g/m3
+assert_eq!(info.factor.to_string(), "10"); // 10 g/m3, exact
 
 // Unit arithmetic
 let force = unit_multiply("kg", "m/s2")?;
@@ -151,7 +151,7 @@ let context = AdvancedConversionContext {
 };
 let result = convert_with_context(1.0, "[IN_I]", "CM", &context)?;
 assert_eq!(result.value, 2.54);
-assert_eq!(result.factor, Some(2.54)); // None for a non-linear conversion
+assert_eq!(result.factor.map(|f| f.to_f64()), Some(2.54)); // None for a non-linear conversion
 # Ok::<(), octofhir_ucum::UcumError>(())
 ```
 
@@ -162,7 +162,7 @@ use octofhir_ucum::{get_canonical_units, optimize_expression, simplify_expressio
 
 let canonical = get_canonical_units("N")?;
 assert_eq!(canonical.unit, "g.m.s-2");
-assert_eq!(canonical.factor, 1000.0);
+assert_eq!(canonical.factor.to_string(), "1000");
 
 assert_eq!(optimize_expression("g.m2.s-2")?, "mJ");
 assert_eq!(simplify_expression("km.s/s")?, "km");

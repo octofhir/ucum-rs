@@ -4,8 +4,8 @@
 //! published to npm as `@octofhir/ucum-wasm` via `wasm-pack`.
 
 use octofhir_ucum::{
-    UcumError, UnitArithmeticResult, UnitRecord, analyse, convert as core_convert, find_unit,
-    get_canonical_units, is_comparable, search_units as core_search_units, unit_divide,
+    Number, UcumError, UnitArithmeticResult, UnitRecord, analyse, convert as core_convert,
+    find_unit, get_canonical_units, is_comparable, search_units as core_search_units, unit_divide,
     unit_multiply, validate as core_validate,
 };
 use serde::{Deserialize, Serialize};
@@ -30,14 +30,24 @@ pub struct UnitInfo {
     pub property: String,
 }
 
+/// A magnitude as a JavaScript number, rounded, and `null` when it is out of the range of
+/// one (`10*1000`); the `*_exact` fields hold it with all its digits ("1e1000", "0.0254").
+fn js_number(n: Number) -> Option<f64> {
+    let x = n.to_f64();
+    (x.is_finite() && (x != 0.0 || n.is_zero())).then_some(x)
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct JsUnitAnalysis {
     pub expression: String,
-    pub factor: f64,
+    pub factor: Option<f64>,
+    pub factor_exact: String,
     /// Exponents of m, s, g, rad, K, C, cd
     pub dimension: [i8; 7],
-    pub scale: f64,
-    pub offset: f64,
+    pub scale: Option<f64>,
+    pub scale_exact: String,
+    pub offset: Option<f64>,
+    pub offset_exact: String,
     pub arbitrary: Vec<(String, i32)>,
     /// Kind of the special unit (`Celsius`, `Lg`), if the expression is one
     pub special: Option<String>,
@@ -47,7 +57,8 @@ pub struct JsUnitAnalysis {
 #[derive(Serialize, Deserialize)]
 pub struct JsUnitArithmetic {
     pub expression: String,
-    pub factor: f64,
+    pub factor: Option<f64>,
+    pub factor_exact: String,
     pub dimension: [i8; 7],
     pub is_dimensionless: bool,
 }
@@ -55,8 +66,10 @@ pub struct JsUnitArithmetic {
 #[derive(Serialize, Deserialize)]
 pub struct JsCanonicalUnit {
     pub unit: String,
-    pub factor: f64,
-    pub offset: f64,
+    pub factor: Option<f64>,
+    pub factor_exact: String,
+    pub offset: Option<f64>,
+    pub offset_exact: String,
     pub dimension: [i8; 7],
 }
 
@@ -104,10 +117,13 @@ pub fn analyze(expression: &str) -> Result<JsValue, JsValue> {
         Ok(analysis) => {
             let js_analysis = JsUnitAnalysis {
                 expression: analysis.expression,
-                factor: analysis.factor,
+                factor: js_number(analysis.factor),
+                factor_exact: analysis.factor.to_string(),
                 dimension: analysis.dimension.0,
-                scale: analysis.scale,
-                offset: analysis.offset,
+                scale: js_number(analysis.scale),
+                scale_exact: analysis.scale.to_string(),
+                offset: js_number(analysis.offset),
+                offset_exact: analysis.offset.to_string(),
                 arbitrary: analysis
                     .arbitrary
                     .iter()
@@ -131,8 +147,10 @@ pub fn get_canonical(expression: &str) -> Result<JsValue, JsValue> {
         Ok(canonical) => {
             let js_canonical = JsCanonicalUnit {
                 unit: canonical.unit,
-                factor: canonical.factor,
-                offset: canonical.offset,
+                factor: js_number(canonical.factor),
+                factor_exact: canonical.factor.to_string(),
+                offset: js_number(canonical.offset),
+                offset_exact: canonical.offset.to_string(),
                 dimension: canonical.dimension.0,
             };
             Ok(to_value(&js_canonical)?)
@@ -208,7 +226,8 @@ fn arithmetic_result(result: Result<UnitArithmeticResult, UcumError>) -> Result<
     match result {
         Ok(result) => Ok(to_value(&JsUnitArithmetic {
             expression: result.expression,
-            factor: result.factor,
+            factor: js_number(result.factor),
+            factor_exact: result.factor.to_string(),
             dimension: result.dimension.0,
             is_dimensionless: result.is_dimensionless,
         })?),
@@ -230,4 +249,21 @@ pub fn divide_units(unit1: &str, unit2: &str) -> Result<JsValue, JsValue> {
 pub fn convert(value: f64, from_unit: &str, to_unit: &str) -> Result<f64, JsValue> {
     core_convert(value, from_unit, to_unit)
         .map_err(|err| to_value(&convert_error(err)).unwrap_or(JsValue::NULL))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn magnitudes_out_of_the_range_of_a_javascript_number_are_null() {
+        let n = |text: &str| Number::parse(text).unwrap();
+        assert_eq!(js_number(n("0.0254")), Some(0.0254));
+        assert_eq!(js_number(Number::ZERO), Some(0.0));
+        assert_eq!(js_number(n("1e1000")), None);
+        assert_eq!(js_number(n("1e-1000")), None);
+        let analysis = analyse("10*1000").unwrap();
+        assert_eq!(js_number(analysis.factor), None);
+        assert_eq!(analysis.factor.to_string(), "1e1000");
+    }
 }

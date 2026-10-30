@@ -9,9 +9,14 @@
 //! - §22.3-4: it may be scaled by a prefix or a numeric factor, which scales the value.
 
 use octofhir_ucum::{
-    AdvancedConversionContext, ErrorKind, SpecialKind, analyse, convert, convert_with_context,
-    divide_by, get_canonical_units, is_comparable, multiply, unit_divide, unit_multiply, validate,
+    AdvancedConversionContext, ErrorKind, Number, SpecialKind, analyse, convert,
+    convert_with_context, divide_by, get_canonical_units, is_comparable, multiply, unit_divide,
+    unit_multiply, validate,
 };
+
+fn n(text: &str) -> Number {
+    Number::parse(text).unwrap()
+}
 
 fn conv(value: f64, from: &str, to: &str) -> f64 {
     convert(value, from, to).unwrap_or_else(|err| panic!("{value} {from} to {to}: {err}"))
@@ -90,7 +95,7 @@ mod temperatures {
                     .unwrap();
             let (factor, offset) = (result.factor.unwrap(), result.offset.unwrap());
             assert_close(
-                value * factor + offset,
+                value * factor.to_f64() + offset.to_f64(),
                 result.value,
                 &format!("{from} to {to}"),
             );
@@ -107,17 +112,20 @@ mod temperatures {
     fn canonical_unit_of_a_temperature_is_kelvin_with_an_offset() {
         let canonical = get_canonical_units("Cel").unwrap();
         assert_eq!(canonical.unit, "K");
-        assert_eq!((canonical.factor, canonical.offset), (1.0, 273.15));
+        assert_eq!((canonical.factor, canonical.offset), (n("1"), n("273.15")));
         let canonical = get_canonical_units("mCel").unwrap();
-        assert_eq!((canonical.factor, canonical.offset), (0.001, 273.15));
+        assert_eq!(
+            (canonical.factor, canonical.offset),
+            (n("0.001"), n("273.15"))
+        );
     }
 
     #[test]
     fn analysis_reports_the_function_scale_and_offset() {
         let analysis = analyse("Cel").unwrap();
         assert_eq!(analysis.special, Some(SpecialKind::Celsius));
-        assert_eq!((analysis.scale, analysis.offset), (1.0, 273.15));
-        assert_eq!(analyse("mCel").unwrap().scale, 0.001);
+        assert_eq!((analysis.scale, analysis.offset), (n("1"), n("273.15")));
+        assert_eq!(analyse("mCel").unwrap().scale, n("0.001"));
         assert_eq!(analyse("K").unwrap().special, None);
     }
 }
@@ -150,7 +158,10 @@ mod levels {
         );
         let result =
             convert_with_context(20.0, "dB", "B", &AdvancedConversionContext::default()).unwrap();
-        assert_eq!((result.factor, result.offset), (Some(0.1), Some(0.0)));
+        assert_eq!(
+            (result.factor, result.offset),
+            (Some(n("0.1")), Some(Number::ZERO))
+        );
     }
 
     #[test]
@@ -220,7 +231,7 @@ mod levels {
     fn analysis_of_a_level() {
         let analysis = analyse("dB").unwrap();
         assert_eq!(analysis.special, Some(SpecialKind::Lg));
-        assert_eq!(analysis.scale, 0.1);
+        assert_eq!(analysis.scale, n("0.1"));
         assert!(analysis.is_dimensionless);
         assert_eq!(analyse("[pH]").unwrap().special, Some(SpecialKind::PH));
     }

@@ -6,7 +6,7 @@ mod common;
 
 use common::{assert_non_finite, assert_overflow};
 use octofhir_ucum::{
-    AdvancedConversionContext, DecimalPrecision, ErrorKind, RoundingMode, convert,
+    AdvancedConversionContext, DecimalPrecision, ErrorKind, Number, RoundingMode, convert,
     convert_with_context,
 };
 
@@ -98,7 +98,7 @@ fn finite_conversions_still_work() {
         convert_with_context(1.0, "km", "m", &default)
             .unwrap()
             .factor,
-        Some(1000.0)
+        Some(Number::from(1000))
     );
 }
 

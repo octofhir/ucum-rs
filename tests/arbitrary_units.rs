@@ -5,8 +5,8 @@
 //! tables and is the same unit.
 
 use octofhir_ucum::{
-    ErrorKind, SpecialKind, analyse, convert, find_unit, get_canonical_units, is_comparable,
-    multiply, unit_divide, unit_multiply, validate, validate_in_property,
+    ErrorKind, Number, SpecialKind, analyse, convert, find_unit, get_canonical_units,
+    is_comparable, multiply, unit_divide, unit_multiply, validate, validate_in_property,
 };
 
 fn assert_no_conversion(from: &str, to: &str) {
@@ -81,7 +81,7 @@ fn analysis_lists_the_arbitrary_atoms() {
     assert!(!analysis.is_dimensionless);
     assert_eq!(analysis.dimension.to_string(), "L-3");
     assert_eq!(analyse("[arb'U]").unwrap().arbitrary, vec![("[arb'U]", 1)]);
-    assert_eq!(analyse("5.[IU]").unwrap().factor, 5.0);
+    assert_eq!(analyse("5.[IU]").unwrap().factor, Number::from(5));
     assert_eq!(find_unit("[IU]").unwrap().special, SpecialKind::Arbitrary);
 }
 
@@ -89,7 +89,7 @@ fn analysis_lists_the_arbitrary_atoms() {
 fn the_canonical_unit_keeps_the_arbitrary_atoms() {
     let canonical = get_canonical_units("[IU]/mL").unwrap();
     assert_eq!(canonical.unit, "m-3.[iU]");
-    assert_eq!(canonical.factor, 1e6);
+    assert_eq!(canonical.factor, Number::from(1_000_000));
     assert_eq!(get_canonical_units("[arb'U]").unwrap().unit, "[arb'U]");
 }
 

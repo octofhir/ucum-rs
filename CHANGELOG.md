@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Unit magnitudes as `Number` (breaking)**: the magnitudes of units are `Number`, as the
+  library computes them (28 significant digits, any exponent), instead of `f64`: `factor`,
+  `scale` and `offset` of `UnitAnalysis`, `factor` and `offset` of `CanonicalUnit`,
+  `factor` of `UnitArithmeticResult`, and `factor` and `offset` of
+  `AdvancedConversionResult`. A factor out of the `f64` range was `inf` or `0`
+  (`analyse("10*1000")`, `get_canonical_units("Ym20")`), and `unit_multiply` /
+  `unit_divide` returned a `PrecisionOverflow` for a valid product such as
+  `10*1000.10*1000`; they now return 10^1000 and 10^2000. `to_f64` gives the previous
+  values. Values of quantities (`convert`, `multiply`, `divide_by`) stay `f64`.
+- WASM: `analyze`, `get_canonical`, `multiply_units` and `divide_units` return each
+  magnitude as a number, `null` when it is out of the range of a JavaScript number, and
+  as a string with all its digits (`factor_exact`, `scale_exact`, `offset_exact`). Unit
+  arithmetic out of that range was an error, and analysis an `Infinity` or 0.
+
 ### Fixed
 
 - `search_units_fuzzy` (and `search_units_filtered` with fuzzy matching) no longer compares
