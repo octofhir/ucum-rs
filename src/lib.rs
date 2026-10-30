@@ -765,14 +765,20 @@ pub fn search_units_regex(
 #[cfg(feature = "std")]
 pub fn search_units_fuzzy(query: &str, threshold: i64) -> Vec<(&'static UnitRecord, i64)> {
     let matcher = SkimMatcherV2::default();
+    // `SkimMatcherV2` (fuzzy-matcher 0.3, `cheap_matches`) takes one character of the field
+    // for each character of the query, in order, so a field with fewer characters cannot
+    // match. A field has at least as many bytes as characters, so one with fewer bytes than
+    // the query has characters is skipped without converting the query again.
+    let query_len = query.chars().count();
     let mut results: Vec<(&'static UnitRecord, i64)> = get_all_units()
         .iter()
         .filter_map(|unit| {
+            // A unit whose fields do not match is not a result, whatever the threshold
             let score = [unit.code, unit.display_name, unit.property]
                 .iter()
+                .filter(|field| field.len() >= query_len)
                 .filter_map(|field| matcher.fuzzy_match(field, query))
-                .max()
-                .unwrap_or(0);
+                .max()?;
             (score >= threshold).then_some((unit, score))
         })
         .collect();
@@ -1282,5 +1288,88 @@ fn collect_terms(
             collect_terms(denominator, exp.checked_neg()?, number, symbols)
         }
         UnitExpr::Reciprocal(inner) => collect_terms(inner, exp.checked_neg()?, number, symbols),
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+
+    /// The matches of `search_units_fuzzy` as 0.8.0 computed them, with every field
+    /// matched: the score of each unit with a field that matches.
+    fn unfiltered_matches(query: &str) -> Vec<(&'static str, i64)> {
+        let matcher = SkimMatcherV2::default();
+        let mut results: Vec<(&'static str, i64)> = get_all_units()
+            .iter()
+            .filter_map(|unit| {
+                let score = [unit.code, unit.display_name, unit.property]
+                    .iter()
+                    .filter_map(|field| matcher.fuzzy_match(field, query))
+                    .max()?;
+                Some((unit.code, score))
+            })
+            .collect();
+        results.sort_by_key(|a| core::cmp::Reverse(a.1));
+        results
+    }
+
+    #[test]
+    fn skipping_short_fields_does_not_change_fuzzy_matches() {
+        let mut queries: Vec<String> = [
+            "",
+            "m",
+            "M",
+            "metr",
+            // "[BAU]" scores -1
+            "ay",
+            "Pascal",
+            "inch",
+            "[in_i]",
+            "é",
+            "µ",
+            "°",
+            "kilogram per",
+            "international unit",
+            "10*",
+            "'",
+            "{",
+        ]
+        .iter()
+        .map(|q| q.to_string())
+        .collect();
+        // Fields themselves, and one character longer or shorter than them
+        let fields = || {
+            get_all_units()
+                .iter()
+                .flat_map(|unit| [unit.code, unit.display_name, unit.property])
+        };
+        for field in fields().step_by(11) {
+            queries.push(field.to_string());
+            queries.push(format!("{field}s"));
+            queries.push(field.chars().skip(1).collect());
+            queries.push(field.to_uppercase());
+        }
+        // The longest field, and queries of about its length
+        let longest = fields().max_by_key(|field| field.chars().count()).unwrap();
+        let length = longest.chars().count();
+        queries.push(longest.to_string());
+        queries.push(format!("{longest}s"));
+        queries.push("e".repeat(length));
+        queries.push("e".repeat(length + 1));
+        for query in &queries {
+            let expected = unfiltered_matches(query);
+            for threshold in [i64::MIN, 0, 30] {
+                let actual: Vec<(&str, i64)> = search_units_fuzzy(query, threshold)
+                    .into_iter()
+                    .map(|(unit, score)| (unit.code, score))
+                    .collect();
+                let expected: Vec<(&str, i64)> = expected
+                    .iter()
+                    .copied()
+                    .filter(|(_, score)| *score >= threshold)
+                    .collect();
+                assert_eq!(actual, expected, "{query:?} {threshold}");
+            }
+        }
     }
 }
