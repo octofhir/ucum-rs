@@ -122,18 +122,13 @@ fn rounding_modes_are_applied() {
 
 #[cfg(feature = "fhir")]
 mod fhir {
+    use octofhir_ucum::UcumError;
     use octofhir_ucum::fhir::{FhirError, FhirQuantity, are_equivalent, convert_quantity};
-    use octofhir_ucum::{ErrorKind, UcumError};
 
     fn ucum(err: FhirError) -> UcumError {
         match err {
             FhirError::UcumError(err) => err,
-            other => UcumError::new(
-                ErrorKind::InvalidExpression {
-                    reason: other.to_string(),
-                },
-                other.to_string(),
-            ),
+            other => UcumError::invalid_expression(&other.to_string()),
         }
     }
 

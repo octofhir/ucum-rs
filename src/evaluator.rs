@@ -288,7 +288,7 @@ const MAX_TREE_HEIGHT: usize = crate::parser::MAX_NESTING_DEPTH + 3;
 /// # Errors
 ///
 /// Besides the errors of the units themselves, a syntax tree built by hand deeper than
-/// `parse_expression` allows is an `InvalidExpression`.
+/// `parse_expression` allows is a `NestingTooDeep`.
 pub fn evaluate_with_case(expr: &UnitExpr, case: Case) -> Result<EvalResult, UcumError> {
     evaluate_at(expr, case, 1)
 }
@@ -296,11 +296,7 @@ pub fn evaluate_with_case(expr: &UnitExpr, case: Case) -> Result<EvalResult, Ucu
 /// `evaluate_with_case` for a node at `depth` in the tree.
 fn evaluate_at(expr: &UnitExpr, case: Case, depth: usize) -> Result<EvalResult, UcumError> {
     if depth > MAX_TREE_HEIGHT {
-        return Err(UcumError::invalid_expression(&format!(
-            "{} {} levels",
-            crate::parser::TOO_DEEP,
-            crate::parser::MAX_NESTING_DEPTH
-        )));
+        return Err(UcumError::tree_too_deep(MAX_TREE_HEIGHT));
     }
     let child = |expr| evaluate_at(expr, case, depth + 1);
     match expr {

@@ -32,11 +32,8 @@ fn is_symbol_char(b: u8) -> bool {
 /// `(a/b)/c`, UCUM §7.4), and each product of several terms. `m/m/m` has 2 levels, `((m))` 2,
 /// `m/(m/m)` 3, `m.m/s` 2. The parser and the evaluator recurse once per level, so a deeper
 /// expression would overflow the stack (1 MiB in WebAssembly) and abort the process; it is
-/// an `InvalidExpression` instead.
+/// a `NestingTooDeep` instead.
 pub const MAX_NESTING_DEPTH: usize = 128;
-
-/// The start of the reason of the error for an expression nested too deep.
-pub(crate) const TOO_DEEP: &str = "Expression nested deeper than";
 
 struct Parser<'a> {
     input: &'a str,
@@ -52,7 +49,7 @@ type Result<T> = core::result::Result<T, UcumError>;
 
 impl<'a> Parser<'a> {
     fn error(&self, reason: &str) -> UcumError {
-        UcumError::invalid_expression(&format!("{reason} at position {}", self.pos))
+        UcumError::invalid_expression_in(self.input, reason, Some(self.pos))
     }
 
     /// `expr` and its levels of nesting, once checked against `MAX_NESTING_DEPTH` with the
@@ -65,7 +62,7 @@ impl<'a> Parser<'a> {
     }
 
     fn too_deep(&self) -> UcumError {
-        self.error(&format!("{TOO_DEEP} {MAX_NESTING_DEPTH} levels"))
+        UcumError::nesting_too_deep(MAX_NESTING_DEPTH)
     }
 
     /// A component one level below the current one: a term of a quotient or a product.
@@ -280,12 +277,15 @@ fn fold(mut terms: Vec<UnitExpr>) -> UnitExpr {
 ///
 /// The syntax is checked; whether the symbols are units is checked by evaluation (see
 /// `validate`). An expression nested deeper than [`MAX_NESTING_DEPTH`] levels (parentheses,
-/// solidi and products) is an `InvalidExpression`: the parser and the evaluator recurse once per level,
-/// and would otherwise overflow the stack.
+/// solidi and products) is a `NestingTooDeep`: the parser and the evaluator recurse once per
+/// level, and would otherwise overflow the stack. Other syntax errors are an
+/// `InvalidExpression` with the byte offset where the parser stopped.
 pub fn parse_expression(input: &str) -> Result<UnitExpr> {
     if input.is_empty() {
-        return Err(UcumError::invalid_expression(
+        return Err(UcumError::invalid_expression_in(
+            input,
             "Empty expression: the unity is written \"1\"",
+            None,
         ));
     }
     if let Some((pos, ch)) = input
@@ -297,9 +297,11 @@ pub fn parse_expression(input: &str) -> Result<UnitExpr> {
         } else {
             "A character outside ASCII 33-126"
         };
-        return Err(UcumError::invalid_expression(&format!(
-            "{what} ({ch:?}) is not allowed in UCUM expressions (UCUM §3.1), at position {pos}"
-        )));
+        return Err(UcumError::invalid_expression_in(
+            input,
+            &format!("{what} ({ch:?}) is not allowed in UCUM expressions (UCUM §3.1)"),
+            Some(pos),
+        ));
     }
     let mut parser = Parser {
         input,

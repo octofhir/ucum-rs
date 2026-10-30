@@ -2,7 +2,7 @@
 //! (`((((m))))`, or `m/m/m/m`, where each solidus nests the term before it, UCUM §7.4) used to
 //! overflow the stack and abort the process, which no `catch_unwind` can stop. Expressions
 //! nested deeper than `MAX_NESTING_DEPTH` levels (parentheses, solidi and products) are an
-//! `InvalidExpression` instead. Every test runs on a 1 MiB thread, the stack of a
+//! `NestingTooDeep` instead. Every test runs on a 1 MiB thread, the stack of a
 //! WebAssembly module.
 
 use octofhir_ucum::{
@@ -38,13 +38,20 @@ fn nested_quotients(levels: usize) -> String {
     format!("{}m{}", "m/(".repeat(levels), ")".repeat(levels))
 }
 
-fn assert_invalid<T: std::fmt::Debug>(result: Result<T, UcumError>) {
+/// A `NestingTooDeep` over `limit`: `MAX_NESTING_DEPTH` levels for a parsed expression,
+/// 3 more nodes for a tree built by hand
+fn assert_too_deep_for<T: std::fmt::Debug>(result: Result<T, UcumError>, limit: usize) {
     let err = result.expect_err("too deep");
     assert!(
-        matches!(err.kind, ErrorKind::InvalidExpression { .. }),
+        matches!(err.kind, ErrorKind::NestingTooDeep { limit: found, .. } if found == limit),
         "{:?}",
         err.kind
     );
+    assert_eq!(err.kind.code(), "nesting_too_deep");
+}
+
+fn assert_invalid<T: std::fmt::Debug>(result: Result<T, UcumError>) {
+    assert_too_deep_for(result, MAX_NESTING_DEPTH);
 }
 
 fn assert_too_deep(expression: &str) {
@@ -64,7 +71,7 @@ fn deep_expressions_are_an_error_not_a_crash() {
         }
         // `validate` returns the same error, without suggestions
         let err = validate(&quotient_chain(100_000)).expect_err("too deep");
-        assert!(matches!(err.kind, ErrorKind::InvalidExpression { .. }));
+        assert!(matches!(err.kind, ErrorKind::NestingTooDeep { .. }));
         assert!(err.suggestions.is_empty());
     });
 }
@@ -157,10 +164,13 @@ fn a_syntax_tree_built_by_hand_is_limited_too() {
         // As deep as a parsed tree can be: a node per level, and up to 3 for a component
         // (`m2{a}`: annotation, power, symbol)
         assert!(evaluate(&nested(MAX_NESTING_DEPTH + 3)).is_ok());
-        assert_invalid(evaluate(&nested(MAX_NESTING_DEPTH + 4)));
+        assert_too_deep_for(
+            evaluate(&nested(MAX_NESTING_DEPTH + 4)),
+            MAX_NESTING_DEPTH + 3,
+        );
         // Dropping a tree this deep would overflow the stack as well
         let deep = nested(100_000);
-        assert_invalid(evaluate(&deep));
+        assert_too_deep_for(evaluate(&deep), MAX_NESTING_DEPTH + 3);
         std::mem::forget(deep);
     });
 }
