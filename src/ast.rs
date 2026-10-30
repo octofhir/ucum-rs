@@ -38,10 +38,44 @@ pub enum UnitExpr {
 impl UnitExpr {
     /// Whether the expression needs parentheses to be one component of a term.
     fn is_compound(&self) -> bool {
-        matches!(
-            self,
-            UnitExpr::Product(_) | UnitExpr::Quotient(..) | UnitExpr::Reciprocal(_)
-        )
+        match self {
+            UnitExpr::Product(_) | UnitExpr::Quotient(..) | UnitExpr::Reciprocal(_) => true,
+            // Written as a product, "123.10*200"
+            UnitExpr::Numeric(n) => {
+                let (digits, exp) = n.to_integer_and_exponent();
+                digits > 1 && exp > MAX_ZEROS
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Zeros of an integer written out in full. A parsed number is no longer than the text it
+/// was read from, but one built by hand or deserialized can have any exponent, so a larger
+/// one is written with `10*`.
+const MAX_ZEROS: i32 = 100;
+
+/// The digits and trailing zeros of `n`, when it is a positive integer with at most
+/// `MAX_ZEROS` of them.
+pub(crate) fn plain_integer(n: Number) -> Option<(i128, usize)> {
+    let (digits, exp) = n.to_integer_and_exponent();
+    (digits > 0 && (0..=MAX_ZEROS).contains(&exp)).then_some((digits, exp as usize))
+}
+
+/// Write a number as UCUM writes it (§8.1): a positive integer with its digits
+/// ("1000000000000000000000"), or as a power of ten past `MAX_ZEROS` zeros ("10*200",
+/// "123.10*198"). A number that is not a positive integer has no UCUM form; only a tree
+/// built by hand holds one, and it is written in decimal.
+fn write_number(f: &mut fmt::Formatter<'_>, n: Number) -> fmt::Result {
+    let (digits, exp) = n.to_integer_and_exponent();
+    if digits <= 0 || exp < 0 {
+        write!(f, "{n}")
+    } else if exp <= MAX_ZEROS {
+        write!(f, "{digits}{:0<zeros$}", "", zeros = exp as usize)
+    } else if digits == 1 {
+        write!(f, "10*{exp}")
+    } else {
+        write!(f, "{digits}.10*{exp}")
     }
 }
 
@@ -65,7 +99,7 @@ impl fmt::Display for Component<'_> {
 fn write_term(f: &mut fmt::Formatter<'_>, expr: &UnitExpr, top: bool) -> fmt::Result {
     match expr {
         UnitExpr::Symbol(symbol) => f.write_str(symbol),
-        UnitExpr::Numeric(n) => write!(f, "{n}"),
+        UnitExpr::Numeric(n) => write_number(f, *n),
         UnitExpr::Power(base, exp) => write!(f, "{}{exp}", Component(base)),
         UnitExpr::Annotation(text) => write!(f, "{{{text}}}"),
         UnitExpr::Annotated(expr, text) => write!(f, "{}{{{text}}}", Component(expr)),

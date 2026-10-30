@@ -98,4 +98,11 @@ fn splits_into_integer_and_exponent() {
     assert_eq!(n("6300000").to_integer_and_exponent(), (63, 5));
     assert_eq!(n("1").to_integer_and_exponent(), (1, 0));
     assert_eq!(n("-0.05").to_integer_and_exponent(), (-5, -2));
+    // The exponent of the integer fits in an i32
+    assert_eq!(n("1e-2147483648").to_integer_and_exponent(), (1, i32::MIN));
+    assert_eq!(
+        n("1.5e-2147483647").to_integer_and_exponent(),
+        (15, i32::MIN)
+    );
+    assert_eq!(Number::parse("1.5e-2147483648"), None);
 }

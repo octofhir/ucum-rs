@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `search_units_fuzzy` with a threshold of 0 or less no longer returns, with a score of 0,
   the units that do not match at all; they ranked above real matches with a negative
   score.
+- A number of 21 digits or more displays with its digits (§8.1), not as `1e21`, which is
+  not UCUM: a printed expression and the expressions of `unit_multiply` and `unit_divide`
+  (`1000000000000000000000.m`) parse back, and `generate_display_name` shows the same
+  digits. A number keeps 28 significant digits, so a longer one is rounded when parsed.
+  An integer built by hand or deserialized with more than 100 trailing zeros is written
+  with `10*` (`10*2000000000`), instead of as a string of zeros.
+- A `Number` no longer has an exponent so close to `i32::MIN` (about 10^-2147483620) that
+  the exponent of `to_integer_and_exponent` overflowed: `Number::parse` returns `None` and
+  arithmetic reports an overflow.
 
 ## [0.8.0] - 2026-10-20
 

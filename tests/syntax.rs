@@ -2,8 +2,8 @@
 //! annotations, operators, numbers, exponents and parentheses.
 
 use octofhir_ucum::{
-    ErrorKind, Number, UnitExpr, evaluate, get_common_display, get_defined_forms, parse_expression,
-    validate,
+    ErrorKind, Number, UnitExpr, evaluate, generate_display_name, get_common_display,
+    get_defined_forms, parse_expression, validate,
 };
 
 fn symbol(s: &str) -> UnitExpr {
@@ -399,6 +399,61 @@ fn expressions_display_as_written() {
     }
     // A plus sign is not kept
     assert_eq!(parse("m+2").to_string(), "m2");
+}
+
+#[test]
+fn large_numbers_display_as_integers() {
+    // A number is written with its digits (§8.1), never as "1e21"
+    for (input, number) in [
+        ("100000000000000000000", "1e20"),
+        ("1000000000000000000000", "1e21"),
+        (
+            "1234567890123456789012345678.m",
+            "1.234567890123456789012345678e27",
+        ),
+        ("m/10000000000000000000000000000000", "1e-31"),
+    ] {
+        let displayed = parse(input).to_string();
+        assert_eq!(displayed, input);
+        assert_eq!(
+            factor(&displayed),
+            Number::parse(number).unwrap(),
+            "{input}"
+        );
+    }
+    assert_eq!(
+        generate_display_name(&parse("1000000000000000000000.m")),
+        "1000000000000000000000 * (meter)"
+    );
+}
+
+#[test]
+fn integers_built_by_hand_display_as_ucum() {
+    let numeric = |text: &str| UnitExpr::Numeric(Number::parse(text).unwrap());
+    let over = |expr: UnitExpr| UnitExpr::Quotient(Box::new(symbol("m")), Box::new(expr));
+    // Past 100 zeros, an integer is a power of ten, not a string of zeros
+    for (expr, shown) in [
+        (numeric("1e100"), format!("1{}", "0".repeat(100))),
+        (numeric("1e101"), "10*101".to_string()),
+        (over(numeric("1e101")), "m/10*101".to_string()),
+        (over(numeric("1.23e200")), "m/(123.10*198)".to_string()),
+        (numeric("1e2000000000"), "10*2000000000".to_string()),
+    ] {
+        assert_eq!(expr.to_string(), shown);
+        let parsed = parse(&shown);
+        if let Ok(expected) = evaluate(&expr) {
+            assert_eq!(
+                evaluate(&parsed).unwrap().factor,
+                expected.factor,
+                "{shown}"
+            );
+        }
+    }
+    // Other numbers have no UCUM form: they are written in decimal and do not parse back
+    for (text, shown) in [("0.5", "0.5"), ("-2", "-2"), ("0", "0")] {
+        assert_eq!(numeric(text).to_string(), shown);
+        assert!(parse_expression(shown).is_err(), "{shown}");
+    }
 }
 
 // Robustness

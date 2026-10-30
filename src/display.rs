@@ -1,7 +1,7 @@
 //! Display names of UCUM expressions, in the form of the official UCUM tests:
 //! "(millimeter)", "(meter ^ 3) * (kilogram ^ -1)", "4 * (the number pi) / (ampère ^ 2)".
 
-use crate::ast::UnitExpr;
+use crate::ast::{self, UnitExpr};
 use crate::evaluator::{Case, lookup_unit};
 use crate::prelude::*;
 
@@ -21,7 +21,11 @@ use crate::prelude::*;
 pub fn generate_display_name(expr: &UnitExpr) -> String {
     match expr {
         UnitExpr::Symbol(symbol) => format!("({})", unit_name(symbol)),
-        UnitExpr::Numeric(n) => format!("{n}"),
+        // An integer with its digits, not as "1e21"
+        UnitExpr::Numeric(n) => match ast::plain_integer(*n) {
+            Some((digits, zeros)) => format!("{digits}{:0<zeros$}", ""),
+            None => format!("{n}"),
+        },
         UnitExpr::Power(base, exp) => match base.as_ref() {
             UnitExpr::Symbol(symbol) => format!("({} ^ {exp})", unit_name(symbol)),
             other => format!("({} ^ {exp})", generate_display_name(other)),
