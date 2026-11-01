@@ -74,6 +74,9 @@ jobs:
       - name: Lint (clippy, bare-metal target)
         run: cargo clippy --no-default-features --target thumbv7em-none-eabihf -- -D warnings
 
+      - name: Build (no_std with serde, bare-metal target)
+        run: cargo build --no-default-features --features serde --target thumbv7em-none-eabihf --verbose
+
   wasm-test:
     runs-on: ubuntu-latest
     steps:

@@ -40,7 +40,11 @@ pub(crate) fn quoted(text: &str) -> String {
 /// The enum and each variant are `#[non_exhaustive]`: a `match` needs a `_` arm, a pattern
 /// needs `..`, and new kinds and fields are not breaking. [`ErrorKind::code`] names each
 /// kind with a stable string.
+///
+/// With the `serde` feature, a kind serializes as its fields alone, `{"unit": "xyz"}`: its
+/// code is [`ErrorKind::code`], which a serialized [`UcumError`] writes next to them.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize), serde(untagged))]
 #[non_exhaustive]
 pub enum ErrorKind {
     /// Proper units of different dimensions (UCUM §17, §19.1), which do not convert to each
@@ -144,6 +148,21 @@ impl ErrorKind {
 }
 
 /// Enhanced UCUM error with detailed context and suggestions
+///
+/// With the `serde` feature, an error serializes as a struct of five fields, which a
+/// service can return as the body of an HTTP error: `code` ([`ErrorKind::code`]),
+/// `message`, `suggestions`, `context`, and `details`, the fields of the kind. The fields
+/// keep the inputs whole, unlike the message.
+///
+/// ```
+/// # #[cfg(feature = "serde")] {
+/// use octofhir_ucum::validate;
+///
+/// let body = serde_json::to_value(validate("m//s").unwrap_err()).unwrap();
+/// assert_eq!(body["code"], "invalid_expression");
+/// assert_eq!(body["details"]["position"], 2);
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct UcumError {
@@ -401,6 +420,22 @@ impl UcumError {
             },
             format!("Special unit error for {}: {reason}", quoted(unit)),
         )
+    }
+}
+
+// By hand rather than derived: the code is the one of `ErrorKind::code`, and the fields of
+// the kind are apart from those of the error, so that no field added to a kind can clash
+#[cfg(feature = "serde")]
+impl serde::Serialize for UcumError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut error = serializer.serialize_struct("UcumError", 5)?;
+        error.serialize_field("code", self.kind.code())?;
+        error.serialize_field("message", &self.message)?;
+        error.serialize_field("suggestions", &self.suggestions)?;
+        error.serialize_field("context", &self.context)?;
+        error.serialize_field("details", &self.kind)?;
+        error.end()
     }
 }
 

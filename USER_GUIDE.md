@@ -144,6 +144,24 @@ a `_` arm and a pattern needs `..` (`ErrorKind::InvalidExpression { position, ..
 that new kinds and fields are not breaking. Errors are built with the constructors of
 `UcumError` (`UcumError::invalid_expression`).
 
+With the `serde` feature, an error serializes as a struct of five fields, ready to be the
+body of an HTTP error: `code` (`kind.code()`), `message`, `suggestions`, `context`, and
+`details`, the fields of the kind. `validate("m//s")` gives:
+
+```json
+{
+  "code": "invalid_expression",
+  "message": "Invalid UCUM expression: Unexpected character '/' at position 2",
+  "suggestions": ["Did you mean a prefixed version of 's'? (e.g., 'ks', 'ms', 'us')"],
+  "context": ["While parsing UCUM expression: 'm//s'"],
+  "details": {"reason": "Unexpected character '/'", "expression": "m//s", "position": 2}
+}
+```
+
+A `Dimension` serializes as its seven exponents, as elsewhere. The fields keep the inputs
+whole, unlike the message, and some repeat them (`operation` holds `from` and `to`): a
+service that echoes `details` answers a 1 MB input with several.
+
 ## Command-line interface
 
 ```sh
