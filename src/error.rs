@@ -54,9 +54,15 @@ pub enum ErrorKind {
         from: Option<String>,
         to: Option<String>,
     },
-    /// An atom that is not a unit of the tables, with a prefix or not
+    /// An atom that is not a unit of the tables, with a prefix or not: the symbol, the
+    /// expression it was read from (empty for a syntax tree built by hand), and the byte
+    /// offset in it where the symbol starts, when there is one
     #[non_exhaustive]
-    UnitNotFound { unit: String },
+    UnitNotFound {
+        unit: String,
+        expression: String,
+        position: Option<usize>,
+    },
     /// A conversion involving an arbitrary unit, to anything but the same arbitrary unit: an
     /// arbitrary unit has no dimension and is commensurable with no other unit (UCUM
     /// §24.3, §25)
@@ -227,11 +233,19 @@ impl UcumError {
         error
     }
 
-    /// Create a unit not found error
+    /// Create a unit not found error, for no expression in particular
     pub fn unit_not_found(unit: &str) -> Self {
+        Self::unit_not_found_in("", unit, None)
+    }
+
+    /// Create a unit not found error for the symbol `unit` of `expression`, which starts
+    /// at a byte offset of it
+    pub fn unit_not_found_in(expression: &str, unit: &str, position: Option<usize>) -> Self {
         Self::new(
             ErrorKind::UnitNotFound {
                 unit: unit.to_string(),
+                expression: expression.to_string(),
+                position,
             },
             format!("Unknown unit: {}", quoted(unit)),
         )

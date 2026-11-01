@@ -128,7 +128,7 @@ status such a service would typically answer with; the library itself never pani
 |---|---|---|---|
 | `InvalidExpression { reason, expression, position }` | `invalid_expression` | Not UCUM syntax (§1-10): `m//s`, `0.m`, white space; `position` is the byte offset in `expression` where parsing stopped, which tells the two operands of `convert` apart | 400 |
 | `NestingTooDeep { limit }` | `nesting_too_deep` | Nested deeper than `MAX_NESTING_DEPTH` levels (a tree built by hand: 3 more nodes), a limit of this library | 400 |
-| `UnitNotFound { unit }` | `unit_not_found` | An atom that is not in the tables | 400 |
+| `UnitNotFound { unit, expression, position }` | `unit_not_found` | An atom that is not in the tables; `position` is the byte offset in `expression` where its symbol starts (`m/qq` at 2) | 400 |
 | `InvalidProperty { property }` | `invalid_property` | A property no unit has | 400 |
 | `InvalidPattern { pattern, reason }` | `invalid_pattern` | A search pattern that is not a regular expression | 400 |
 | `NonFiniteValue` | `non_finite_value` | An operand that is infinite or NaN (§18.5) | 400 |
@@ -167,7 +167,7 @@ The WebAssembly bindings (`wasm/`, built with wasm-pack) export `validate`, `ana
 `get_unit_info`, `search`, `list_units`, `comparable`, `convert`, `multiply_units` and
 `divide_units`. Errors are thrown as `{ message, error_type, code, expression, position,
 suggestions, context }` objects: `code` is `ErrorKind::code()`, `position` the offset of a
-syntax error in `expression`.
+syntax error or of an unknown unit in `expression`.
 
 ## FHIR
 

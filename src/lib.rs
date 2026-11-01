@@ -114,32 +114,45 @@ pub fn validate_with_case(expression: &str, case: Case) -> Result<(), UcumError>
             error::quoted(expression)
         ))
     })?;
-    evaluate_in(&parsed, case)
+    evaluate_in(&parsed, expression, case)
         .map(|_| ())
         .map_err(|e| e.with_context(format!("In expression: {}", error::quoted(expression))))
 }
 
-/// Evaluate an expression, with corrections for a unit that is not in the tables. Only
-/// the unknown symbol is compared with the units, so this is cheap, unlike the suggestions
-/// for a syntax error, which `validate` alone computes. The suggestions are case sensitive
-/// codes, which mean other units when read case insensitively (§3.4: `Pa` is `PA`, the
-/// picoampere), so a case insensitive lookup gets none.
-pub(crate) fn evaluate_in(expr: &UnitExpr, case: Case) -> Result<EvalResult, UcumError> {
-    evaluate_with_case(expr, case).map_err(|e| {
-        let suggestions = match (&e.kind, case) {
-            (ErrorKind::UnitNotFound { unit, .. }, Case::Sensitive) => {
-                SUGGESTION_ENGINE.suggest_corrections(unit)
+/// Evaluate `expr`, parsed from `expression`. A unit that is not in the tables gets the
+/// expression, where its symbol starts in it, and corrections. Only the unknown symbol is
+/// compared with the units, so this is cheap, unlike the suggestions for a syntax error,
+/// which `validate` alone computes. The suggestions are case sensitive codes, which mean
+/// other units when read case insensitively (§3.4: `Pa` is `PA`, the picoampere), so a
+/// case insensitive lookup gets none.
+pub(crate) fn evaluate_in(
+    expr: &UnitExpr,
+    expression: &str,
+    case: Case,
+) -> Result<EvalResult, UcumError> {
+    evaluate_with_case(expr, case).map_err(|mut e| {
+        if let ErrorKind::UnitNotFound {
+            unit,
+            expression: text,
+            position,
+            ..
+        } = &mut e.kind
+        {
+            *position = parser::symbol_offset(expression, unit);
+            *text = expression.to_string();
+            if case == Case::Sensitive {
+                e.suggestions
+                    .extend(SUGGESTION_ENGINE.suggest_corrections(unit));
             }
-            _ => Vec::new(),
-        };
-        e.with_suggestions(suggestions)
+        }
+        e
     })
 }
 
 /// Parse and evaluate an expression with case sensitive symbols.
 fn eval(expression: &str) -> Result<(UnitExpr, EvalResult), UcumError> {
     let parsed = parse_expression(expression)?;
-    let result = evaluate_in(&parsed, Case::Sensitive)?;
+    let result = evaluate_in(&parsed, expression, Case::Sensitive)?;
     Ok((parsed, result))
 }
 
@@ -1022,7 +1035,7 @@ pub fn display_name(code: &str) -> Result<String, UcumError> {
         return Ok("(unity)".to_string());
     }
     let expr = parse_expression(code)?;
-    evaluate_in(&expr, Case::Sensitive)?;
+    evaluate_in(&expr, code, Case::Sensitive)?;
     Ok(generate_display_name(&expr))
 }
 
@@ -1144,8 +1157,8 @@ pub fn convert_with_context(
     to: &str,
     context: &AdvancedConversionContext,
 ) -> Result<AdvancedConversionResult, UcumError> {
-    let from_eval = evaluate_in(&parse_expression(from)?, context.case)?;
-    let to_eval = evaluate_in(&parse_expression(to)?, context.case)?;
+    let from_eval = evaluate_in(&parse_expression(from)?, from, context.case)?;
+    let to_eval = evaluate_in(&parse_expression(to)?, to, context.case)?;
     let (converted, linear) = convert_evaluated(value, from, &from_eval, to, &to_eval)?;
 
     let round = |x: f64| match context.rounding {

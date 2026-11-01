@@ -142,7 +142,7 @@ impl FhirQuantity {
         let code = self.code.as_ref().ok_or(FhirError::MissingField("code"))?;
 
         let expr = parse_expression(code)?;
-        evaluate_in(&expr, Case::Sensitive)?;
+        evaluate_in(&expr, code, Case::Sensitive)?;
 
         // Create a UCUM Quantity
         Ok(UcumQuantity {
@@ -195,12 +195,14 @@ pub fn convert_quantity(
 ) -> Result<FhirQuantity, FhirError> {
     let source = quantity.to_ucum_quantity()?;
     let target_expr = parse_expression(target_unit)?;
+    // Present: to_ucum_quantity checked it
+    let source_code = quantity.code.as_deref().unwrap_or_default();
     let (value, _) = convert_evaluated(
         source.value,
         &source.unit.to_string(),
-        &evaluate_in(&source.unit, Case::Sensitive)?,
+        &evaluate_in(&source.unit, source_code, Case::Sensitive)?,
         target_unit,
-        &evaluate_in(&target_expr, Case::Sensitive)?,
+        &evaluate_in(&target_expr, target_unit, Case::Sensitive)?,
     )?;
     Ok(FhirQuantity {
         value,
@@ -220,12 +222,17 @@ pub fn convert_quantity(
 pub fn are_equivalent(a: &FhirQuantity, b: &FhirQuantity) -> Result<bool, FhirError> {
     let a_ucum = a.to_ucum_quantity()?;
     let b_ucum = b.to_ucum_quantity()?;
+    // Present: to_ucum_quantity checked them
+    let (a_code, b_code) = (
+        a.code.as_deref().unwrap_or_default(),
+        b.code.as_deref().unwrap_or_default(),
+    );
     let (b_value, _) = convert_evaluated(
         b_ucum.value,
         &b_ucum.unit.to_string(),
-        &evaluate_in(&b_ucum.unit, Case::Sensitive)?,
+        &evaluate_in(&b_ucum.unit, b_code, Case::Sensitive)?,
         &a_ucum.unit.to_string(),
-        &evaluate_in(&a_ucum.unit, Case::Sensitive)?,
+        &evaluate_in(&a_ucum.unit, a_code, Case::Sensitive)?,
     )?;
     const EPSILON: f64 = 1e-6;
     let diff = (a_ucum.value - b_value).abs();

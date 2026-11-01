@@ -43,6 +43,9 @@ struct Parser<'a> {
     /// products it is a term of. The parser recurses through them, so it never goes deeper
     /// than `MAX_NESTING_DEPTH` either.
     depth: usize,
+    /// A symbol to look for, and the offset where it is first read, once found
+    wanted: Option<&'a str>,
+    found: Option<usize>,
 }
 
 type Result<T> = core::result::Result<T, UcumError>;
@@ -207,6 +210,9 @@ impl<'a> Parser<'a> {
         let digits = text.bytes().rev().take_while(u8::is_ascii_digit).count();
         let symbol_end = (self.pos - digits).max(bracket_end);
         let symbol = &self.input[start..symbol_end];
+        if self.found.is_none() && self.wanted == Some(symbol) {
+            self.found = Some(start);
+        }
         let unit = UnitExpr::Symbol(symbol.to_string());
 
         let exponent_start = symbol_end;
@@ -281,6 +287,17 @@ fn fold(mut terms: Vec<UnitExpr>) -> UnitExpr {
 /// level, and would otherwise overflow the stack. Other syntax errors are an
 /// `InvalidExpression` with the byte offset where the parser stopped.
 pub fn parse_expression(input: &str) -> Result<UnitExpr> {
+    parse(input, None).map(|(expr, _)| expr)
+}
+
+/// The byte offset in `input` where the symbol `symbol` is first written, if `input`
+/// parses: a whole symbol, never part of an annotation or of a longer symbol.
+pub(crate) fn symbol_offset(input: &str, symbol: &str) -> Option<usize> {
+    parse(input, Some(symbol)).ok()?.1
+}
+
+/// `parse_expression`, with the offset where `wanted`, if given, is first read as a symbol
+fn parse<'a>(input: &'a str, wanted: Option<&'a str>) -> Result<(UnitExpr, Option<usize>)> {
     if input.is_empty() {
         return Err(UcumError::invalid_expression_in(
             input,
@@ -308,13 +325,15 @@ pub fn parse_expression(input: &str) -> Result<UnitExpr> {
         bytes: input.as_bytes(),
         pos: 0,
         depth: 0,
+        wanted,
+        found: None,
     };
     let expr = parser.main_term()?;
     if parser.pos < input.len() {
         let ch = input.as_bytes()[parser.pos] as char;
         return Err(parser.error(&format!("Unexpected character '{ch}'")));
     }
-    Ok(expr)
+    Ok((expr, parser.found))
 }
 
 #[cfg(test)]

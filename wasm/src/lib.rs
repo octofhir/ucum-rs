@@ -24,9 +24,10 @@ pub struct JsError {
     /// The stable code of the kind (`ErrorKind::code`): `invalid_expression`,
     /// `unit_not_found`, `dimension_mismatch`...
     pub code: String,
-    /// For a syntax error, the byte offset in the expression where parsing stopped
+    /// For a syntax error, the byte offset in the expression where parsing stopped; for an
+    /// unknown unit, where its symbol starts
     pub position: Option<usize>,
-    /// For a syntax error, the expression `position` refers to
+    /// For a syntax error or an unknown unit, the expression `position` refers to
     pub expression: Option<String>,
     /// Corrections to propose (`Did you mean 'Pa'?`)
     pub suggestions: Vec<String>,
@@ -90,12 +91,19 @@ pub struct JsSearchResult {
 }
 
 fn convert_error(err: UcumError) -> JsError {
+    // An empty expression is none: an error built without one, or for a syntax tree built
+    // by hand
     let (expression, position) = match &err.kind {
         ErrorKind::InvalidExpression {
             expression,
             position,
             ..
-        } => (Some(expression.clone()), *position),
+        }
+        | ErrorKind::UnitNotFound {
+            expression,
+            position,
+            ..
+        } if !expression.is_empty() => (Some(expression.clone()), *position),
         _ => (None, None),
     };
     JsError {
@@ -307,11 +315,18 @@ mod tests {
         );
         assert_eq!(err.expression.as_deref(), Some("m//s"));
         assert!(!err.context.is_empty());
-        let err = convert_error(core_validate("metr").unwrap_err());
-        assert_eq!((err.code.as_str(), err.position), ("unit_not_found", None));
+        let err = convert_error(core_validate("m/metr").unwrap_err());
+        assert_eq!(
+            (err.code.as_str(), err.position),
+            ("unit_not_found", Some(2))
+        );
+        assert_eq!(err.expression.as_deref(), Some("m/metr"));
         assert!(!err.suggestions.is_empty());
         // Once, in their own field
         assert!(!err.message.contains("Suggestions"), "{}", err.message);
+        // No expression rather than an empty one
+        let err = convert_error(UcumError::unit_not_found("metr"));
+        assert_eq!((err.expression, err.position), (None, None));
         let err = convert_error(core_convert(1.0, "m", "kg").unwrap_err());
         assert_eq!(err.code, "dimension_mismatch");
     }

@@ -159,6 +159,56 @@ fn a_case_insensitive_lookup_gets_no_suggestions() {
 }
 
 #[test]
+fn an_unknown_unit_gives_where_its_symbol_starts() {
+    let found = |err: UcumError| match err.kind {
+        ErrorKind::UnitNotFound {
+            unit,
+            expression,
+            position,
+            ..
+        } => (unit, expression, position),
+        other => panic!("{other:?}"),
+    };
+    for (expression, unit, position) in [
+        ("qq", "qq", 0),
+        ("m/qq", "qq", 2),
+        ("mqq2", "mqq", 0),
+        // Not inside an annotation, nor inside a longer symbol
+        ("m{qq}.qq", "qq", 6),
+        ("kg.[in_i]/[qq]", "[qq]", 10),
+        ("4.qq-1", "qq", 2),
+    ] {
+        assert_eq!(
+            found(validate(expression).unwrap_err()),
+            (unit.to_string(), expression.to_string(), Some(position)),
+            "{expression}"
+        );
+    }
+    // The expression tells which operand it is
+    assert_eq!(
+        found(convert(1.0, "m", "s/qq").unwrap_err()),
+        ("qq".to_string(), "s/qq".to_string(), Some(2))
+    );
+    assert_eq!(
+        found(unit_multiply("s", "m.qq").unwrap_err()),
+        ("qq".to_string(), "m.qq".to_string(), Some(2))
+    );
+    assert_eq!(found(display_name("m/qq").unwrap_err()).2, Some(2));
+    // A case insensitive lookup, which reads the symbol as written
+    let context = AdvancedConversionContext {
+        case: Case::Insensitive,
+        ..Default::default()
+    };
+    assert_eq!(
+        found(convert_with_context(1.0, "M/QQ", "1", &context).unwrap_err()),
+        ("QQ".to_string(), "M/QQ".to_string(), Some(2))
+    );
+    // A syntax tree built by hand has no expression
+    let err = evaluate(&UnitExpr::Symbol("qq".into())).unwrap_err();
+    assert_eq!(found(err), ("qq".to_string(), String::new(), None));
+}
+
+#[test]
 fn a_tree_built_by_hand_too_deep_says_so_in_nodes() {
     let mut expr = UnitExpr::Symbol("m".into());
     for _ in 0..200 {
