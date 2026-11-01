@@ -1,12 +1,16 @@
-# UCUM-RS
+<p align="center"><img src=".github/banner.png" alt="octo/ucum — Units of measure, by the UCUM book" width="100%"></p>
 
-[![CI](https://github.com/octofhir/ucum-rs/workflows/CI/badge.svg)](https://github.com/octofhir/ucum-rs/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/octofhir-ucum.svg)](https://crates.io/crates/octofhir-ucum)
-[![Docs.rs](https://docs.rs/octofhir-ucum/badge.svg)](https://docs.rs/octofhir-ucum)
+<p align="center"><b>UCUM for Rust: validate, compare and convert unit expressions exactly as the specification defines them.</b></p>
+
+<p align="center">
+  <a href="https://github.com/octofhir/ucum-rs/actions/workflows/ci.yml"><img src="https://github.com/octofhir/ucum-rs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://crates.io/crates/octofhir-ucum"><img src="https://img.shields.io/crates/v/octofhir-ucum.svg" alt="crates.io"></a>
+  <a href="https://docs.rs/octofhir-ucum"><img src="https://docs.rs/octofhir-ucum/badge.svg" alt="docs.rs"></a>
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
 
 An implementation of the [Unified Code for Units of Measure](https://ucum.org/) (UCUM) in
-Rust: validate, compare and convert unit expressions exactly as the UCUM specification
-defines them.
+Rust.
 
 ## Specification conformance
 
@@ -203,7 +207,7 @@ cargo add octofhir-ucum --features fhir
 ```sh
 cd playground
 pnpm install
-npm run dev  # http://localhost:6000
+pnpm dev  # http://localhost:5555
 ```
 
 ## Performance
