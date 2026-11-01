@@ -41,8 +41,9 @@ pub(crate) fn quoted(text: &str) -> String {
 /// needs `..`, and new kinds and fields are not breaking. [`ErrorKind::code`] names each
 /// kind with a stable string.
 ///
-/// With the `serde` feature, a kind serializes as its fields alone, `{"unit": "xyz"}`: its
-/// code is [`ErrorKind::code`], which a serialized [`UcumError`] writes next to them.
+/// With the `serde` feature, a kind serializes as its fields alone,
+/// `{"property": "colour"}`: its code is [`ErrorKind::code`], which a serialized
+/// [`UcumError`] writes next to them.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize), serde(untagged))]
 #[non_exhaustive]

@@ -49,7 +49,10 @@ fn an_error_serializes_as_its_code_message_and_details() {
     let err = validate("Pascal").unwrap_err();
     let value = body(&err);
     assert_eq!(value["code"], "unit_not_found");
-    assert_eq!(value["details"], json!({"unit": "Pascal"}));
+    assert_eq!(
+        value["details"],
+        json!({"unit": "Pascal", "expression": "Pascal", "position": 0})
+    );
     assert_eq!(value["suggestions"], json!(err.suggestions));
     assert!(!err.suggestions.is_empty());
 }
