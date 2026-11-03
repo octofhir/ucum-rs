@@ -51,7 +51,7 @@ fn attributes(e: &quick_xml::events::BytesStart) -> HashMap<String, String> {
                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                 .expect("attribute value")
                 .into_owned();
-            (String::from_utf8_lossy(a.key.as_ref()).into_owned(), value)
+            (a.key.as_ref().to_owned(), value)
         })
         .collect()
 }
@@ -64,7 +64,7 @@ fn read_element(reader: &mut Reader<&[u8]>, start: &quick_xml::events::BytesStar
         attributes: attributes(start),
         ..Element::default()
     };
-    let tag = start.name().as_ref().to_vec();
+    let tag = start.name().as_ref().to_owned();
     let mut child: Option<String> = None;
     let mut depth = 0;
     let mut text = String::new();
@@ -72,7 +72,7 @@ fn read_element(reader: &mut Reader<&[u8]>, start: &quick_xml::events::BytesStar
         match reader.read_event().expect("well-formed XML") {
             Event::Start(e) => {
                 if depth == 0 {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                    let name = e.name().as_ref().to_owned();
                     if name == "value" {
                         element.value_attributes = attributes(&e);
                     }
@@ -83,16 +83,16 @@ fn read_element(reader: &mut Reader<&[u8]>, start: &quick_xml::events::BytesStar
             }
             Event::Empty(e) => match e.name().as_ref() {
                 // Inside <value>
-                b"function" => element.function = attributes(&e),
-                b"value" if depth == 0 => element.value_attributes = attributes(&e),
+                "function" => element.function = attributes(&e),
+                "value" if depth == 0 => element.value_attributes = attributes(&e),
                 _ => {}
             },
-            Event::Text(t) => text.push_str(&t.decode().expect("text")),
+            Event::Text(t) => text.push_str(t.as_ref()),
             Event::GeneralRef(r) => {
                 if let Some(ch) = r.resolve_char_ref().expect("character reference") {
                     text.push(ch);
                 } else {
-                    let name = String::from_utf8_lossy(&r).into_owned();
+                    let name = r.as_ref().to_owned();
                     text.push_str(match name.as_str() {
                         "amp" => "&",
                         "lt" => "<",
@@ -104,7 +104,7 @@ fn read_element(reader: &mut Reader<&[u8]>, start: &quick_xml::events::BytesStar
                 }
             }
             Event::End(e) => {
-                if depth == 0 && e.name().as_ref() == tag.as_slice() {
+                if depth == 0 && e.name().as_ref() == tag.as_str() {
                     return element;
                 }
                 depth -= 1;
@@ -356,11 +356,11 @@ fn main() {
     let mut reader = Reader::from_str(&xml);
     loop {
         match reader.read_event().expect("well-formed XML") {
-            Event::Start(e) if e.name().as_ref() == b"root" => root = attributes(&e),
+            Event::Start(e) if e.name().as_ref() == "root" => root = attributes(&e),
             Event::Start(e) => match e.name().as_ref() {
-                b"prefix" => prefixes.push(read_element(&mut reader, &e)),
-                b"base-unit" => base_units.push(read_element(&mut reader, &e)),
-                b"unit" => units.push(read_element(&mut reader, &e)),
+                "prefix" => prefixes.push(read_element(&mut reader, &e)),
+                "base-unit" => base_units.push(read_element(&mut reader, &e)),
+                "unit" => units.push(read_element(&mut reader, &e)),
                 _ => {}
             },
             Event::Eof => break,

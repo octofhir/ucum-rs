@@ -21,10 +21,10 @@ fn cases() -> HashMap<String, Vec<HashMap<String, String>>> {
     let mut group = String::new();
     loop {
         match reader.read_event().expect("well-formed test file") {
-            Event::Start(e) if e.name().as_ref() != b"ucumTests" => {
-                group = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+            Event::Start(e) if e.name().as_ref() != "ucumTests" => {
+                group = e.name().as_ref().to_owned();
             }
-            Event::Empty(e) if e.name().as_ref() == b"case" => {
+            Event::Empty(e) if e.name().as_ref() == "case" => {
                 let attributes = e
                     .attributes()
                     .map(|a| {
@@ -33,7 +33,7 @@ fn cases() -> HashMap<String, Vec<HashMap<String, String>>> {
                             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             .expect("attribute value")
                             .into_owned();
-                        (String::from_utf8_lossy(a.key.as_ref()).into_owned(), value)
+                        (a.key.as_ref().to_owned(), value)
                     })
                     .collect();
                 groups.entry(group.clone()).or_default().push(attributes);

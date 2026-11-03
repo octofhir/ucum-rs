@@ -68,7 +68,7 @@ cargo add octofhir-ucum
 cargo add octofhir-ucum --no-default-features
 ```
 
-Without the default `std` feature the crate is `no_std` + `alloc`: parsing, validation,
+With all features disabled the crate is `no_std` + `alloc`: parsing, validation,
 analysis, conversion and unit arithmetic all work, float math goes through `libm`. Only
 `search_units_regex` and `search_units_fuzzy` require `std`.
 
@@ -98,6 +98,19 @@ let force = unit_multiply("kg", "m/s2")?;
 assert_eq!(force.expression, "kg.m/s2");
 # Ok::<(), octofhir_ucum::UcumError>(())
 ```
+
+### Platform math without search dependencies
+
+Evaluator libraries can retain the default platform float behavior without the
+regex and fuzzy-search helpers:
+
+```toml
+octofhir-ucum = { version = "0.9.3", default-features = false, features = ["platform-math", "serde"] }
+```
+
+The default `std` feature still includes those search helpers and enables
+`platform-math`. With no features enabled, the crate remains `no_std` + `alloc`
+and uses `libm`. The existing `fhir` feature continues to include `std`.
 
 ### Command-Line Interface
 

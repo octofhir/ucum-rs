@@ -1,13 +1,13 @@
 //! The Unified Code for Units of Measure (UCUM): parsing, validation, comparison and
 //! conversion of unit expressions, following the UCUM specification (version 2.2).
 //!
-//! The crate is `no_std` + `alloc` compatible (disable default features).
+//! The crate is `no_std` + `alloc` compatible (disable all features).
 
 #![no_std]
 #![allow(clippy::result_large_err)] // UcumError is necessarily large due to comprehensive error context
 
 extern crate alloc;
-#[cfg(any(feature = "std", test))]
+#[cfg(any(feature = "platform-math", test))]
 #[cfg_attr(test, macro_use)]
 extern crate std;
 

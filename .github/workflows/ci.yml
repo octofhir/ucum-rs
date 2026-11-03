@@ -42,6 +42,22 @@ jobs:
       - name: Test (no default features)
         run: cargo test --no-default-features --verbose
       
+      - name: Test platform math without search
+        run: cargo test --locked -p octofhir-ucum --no-default-features --features platform-math,serde
+
+      - name: Compare platform and default math bit for bit
+        shell: bash
+        run: |
+          manifest=tests/platform-consumer/Cargo.toml
+          cargo run --quiet --manifest-path "$manifest" --features standard > standard-math.txt
+          cargo run --quiet --manifest-path "$manifest" --features platform > platform-math.txt
+          diff -u standard-math.txt platform-math.txt
+          cargo tree --manifest-path "$manifest" --features platform --edges normal,build --prefix none > platform-deps.txt
+          if grep -E '^(regex|fuzzy-matcher|clap|human-panic) v' platform-deps.txt; then
+            echo "Search or CLI dependencies leaked into platform math"
+            exit 1
+          fi
+
       - name: Lint (clippy, all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       

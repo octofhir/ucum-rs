@@ -1,7 +1,7 @@
 //! `f64` math that works with and without `std`.
 //!
 //! `core` does not provide transcendental or rounding functions on `f64`.
-//! With the `std` feature these delegate to the inherent `f64` methods;
+//! With the `platform-math` feature (also enabled by `std`) these delegate to the inherent `f64` methods;
 //! without it they are backed by `libm`.
 
 macro_rules! float_fn {
@@ -9,11 +9,11 @@ macro_rules! float_fn {
         $(#[$doc])*
         #[inline]
         pub(crate) fn $name($($arg: f64),*) -> f64 {
-            #[cfg(feature = "std")]
+            #[cfg(feature = "platform-math")]
             {
                 $std
             }
-            #[cfg(not(feature = "std"))]
+            #[cfg(not(feature = "platform-math"))]
             {
                 $libm
             }
@@ -35,11 +35,11 @@ float_fn!(round(x) => std: x.round(), libm: libm::round(x));
 /// Raise `x` to an integer power.
 #[inline]
 pub(crate) fn powi(x: f64, n: i32) -> f64 {
-    #[cfg(feature = "std")]
+    #[cfg(feature = "platform-math")]
     {
         x.powi(n)
     }
-    #[cfg(not(feature = "std"))]
+    #[cfg(not(feature = "platform-math"))]
     {
         libm::pow(x, n as f64)
     }

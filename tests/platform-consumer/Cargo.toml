@@ -1,0 +1,14 @@
+[package]
+name = "ucum-platform-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+standard = ["octofhir-ucum/std"]
+platform = ["octofhir-ucum/platform-math"]
+
+[dependencies]
+octofhir-ucum = { path = "../..", default-features = false }

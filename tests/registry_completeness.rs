@@ -21,13 +21,13 @@ fn elements() -> Vec<(String, HashMap<String, String>, String, String)> {
     loop {
         match reader.read_event().expect("well-formed XML") {
             Event::Start(e) | Event::Empty(e) => {
-                let tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let tag = e.name().as_ref().to_owned();
                 let attributes: HashMap<String, String> = e
                     .attributes()
                     .map(|a| {
                         let a = a.unwrap();
                         (
-                            String::from_utf8_lossy(a.key.as_ref()).into_owned(),
+                            a.key.as_ref().to_owned(),
                             a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
                                 .unwrap()
                                 .into_owned(),
@@ -53,7 +53,7 @@ fn elements() -> Vec<(String, HashMap<String, String>, String, String)> {
             }
             Event::Text(t) if in_name => {
                 if let Some(c) = current.as_mut() {
-                    c.2.push_str(&t.decode().unwrap());
+                    c.2.push_str(t.as_ref());
                 }
             }
             Event::GeneralRef(r) if in_name => {
@@ -64,8 +64,8 @@ fn elements() -> Vec<(String, HashMap<String, String>, String, String)> {
                 }
             }
             Event::End(e) => match e.name().as_ref() {
-                b"name" => in_name = false,
-                b"prefix" | b"base-unit" | b"unit" => elements.extend(current.take()),
+                "name" => in_name = false,
+                "prefix" | "base-unit" | "unit" => elements.extend(current.take()),
                 _ => {}
             },
             Event::Eof => return elements,

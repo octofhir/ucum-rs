@@ -1,6 +1,6 @@
 [package]
 name = "octofhir-ucum"
-version = "0.9.2"
+version = "0.9.3"
 edition = "2024"
 authors = ["OctoFHIR Team <funyloony@gmail.com>"]
 license = "Apache-2.0"
@@ -34,8 +34,10 @@ required-features = ["cli"]
 [features]
 default = ["std"]
 # `std` enables regex/fuzzy unit search and uses the platform float math.
-# Without it the crate is `no_std` + `alloc` and float math goes through `libm`.
-std = ["dep:regex", "dep:fuzzy-matcher", "rust_decimal/std", "serde?/std"]
+# With no features the crate is `no_std` + `alloc` and float math uses `libm`.
+std = ["platform-math", "dep:regex", "dep:fuzzy-matcher"]
+# Platform float operations without regex or fuzzy search; useful for evaluator libraries.
+platform-math = ["rust_decimal/std", "serde?/std"]
 serde = ["dep:serde"]
 cli = ["std", "dep:clap", "dep:anyhow", "dep:human-panic"]
 fhir = ["std", "serde", "dep:thiserror"]
@@ -60,11 +62,11 @@ human-panic = { version = "2.0.3", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-quick-xml = "0.41"
+quick-xml = "0.42"
 serde_json = "1.0"
 
 [build-dependencies]
-quick-xml = "0.41"
+quick-xml = "0.42"
 rust_decimal = "1.36"
 
 [[bench]]

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-04
+
+### Added
+
+- `platform-math` enables the same platform floating-point operations as `std`
+  without regex and fuzzy-search dependencies. Existing `std`, `fhir`, CLI and
+  default APIs retain their behavior, and the no-default build still uses libm.
+
+### Changed
+
+- Update the private XML build/test parser to quick-xml 0.42.
+
 ## [0.9.2] - 2026-11-01
 
 ### Added
